@@ -1,0 +1,38 @@
+{
+  "cv": {
+    "name": "Your Name",
+    "currentRole": "Your current job title / status",
+    "yearsOfExperience": 3,
+    "summary": "A 2-3 sentence pitch about who you are and what you bring. This is sent to the AI to judge how well each job fits you, so be concrete about your field, strengths, and what you're looking for.",
+    "education": [
+      "M.Sc. Your Field — Your University",
+      "B.Sc. Your Field — Your University (grade, optional)"
+    ],
+    "skills": {
+      "domain": ["Key skill", "Another skill", "Tool you know"],
+      "tools": ["Software A", "Software B"],
+      "programming": ["Python", "SQL"]
+    },
+    "languages": ["English (native)", "German (B2)"],
+    "experience": [
+      "Job title at Company — short description (years)",
+      "Earlier role at Company — short description (years)"
+    ]
+  },
+  "preferences": {
+    "desiredRoles": [
+      "Job Title You Want",
+      "Another Target Role",
+      "PhD",
+      "Research"
+    ],
+    "locations": ["Your City", "Nearby City", "Hybrid", "Remote"],
+    "industries": [
+      "Industry A",
+      "Industry B"
+    ],
+    "salaryMin": 50000,
+    "contractTypes": ["Full-time", "Permanent"],
+    "dealbreakers": ["sales", "internship", "no technical focus"]
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "job-alert-system",
+  "version": "1.0.0",
+  "description": "Automated job alert system with AI relevance analysis and Telegram notifications",
+  "type": "module",
+  "main": "index.js",
+  "license": "GPL-3.0-or-later",
+  "author": "Julian Friedle",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JulianFriedle/Job-Alert-Bot.git"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "run-once": "node index.js --once",
+    "test-scraper": "node src/scraper.js",
+    "test-notify": "node src/notifier.js --test",
+    "apply": "node src/apply.js",
+    "cover-letter": "node src/cover-letter.js",
+    "refetch-descriptions": "node scripts/refetch-descriptions.js",
+    "gui": "node src/server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "better-sqlite3": "^11.10.0",
+    "crawlee": "^3.13.3",
+    "dotenv": "^16.5.0",
+    "exceljs": "^4.4.0",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.66.0",
+    "playwright": "^1.52.0"
+  }
+}

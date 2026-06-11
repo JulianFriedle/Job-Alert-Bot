@@ -1,0 +1,11 @@
+{
+  "_comment": "Title-based pre-filters applied BEFORE Claude analysis. titleBlocklist: jobs whose title contains any of these substrings (case-insensitive) are skipped as irrelevant — cheap way to drop structurally-wrong postings. priorityKeywords: jobs whose title contains any of these get their score boosted to >=7. Both are tuned for a German engineering search — adjust for your language/field.",
+  "titleBlocklist": [
+    "praktikum", "ausbildung", "berufsausbildung", "schulpraktikum", "logistik", "buchhaltung", " sap ", "accounting", "werkschutz", "küche",
+    "duales studium", "dualer student", "kooperatives studium", "sales", " hr ", "elektroniker", "koch", "facility", "praktikant", " erp ", "schulpraktikant",
+    "vertrieb", "thesis", "internship", "abschlussarbeit", "ferienhelfer", "apprentice", "werkstudent", "ferienaushilfe", "ausbilder", "umkreissuche", "auszubildender"
+  ],
+  "priorityKeywords": [
+    "initiativbewerbung", "initiativ", "phd", "doktorand", "promotion", "wissenschaftlicher mitarbeiter", "wissenschaftliche mitarbeiterin"
+  ]
+}

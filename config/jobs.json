@@ -1,0 +1,277 @@
+{
+  "sources": [
+    {
+      "name": "Diehl",
+      "url": "https://www.diehl.com/career/de/jobs-bewerbung/stellenboerse/?c=de",
+      "type": "careers-page"
+    },
+    {
+      "name": "Keyence",
+      "url": "https://career.keyence.de/go/JOBS/2945201/",
+      "type": "careers-page"
+    },
+    {
+      "name": "Keyence",
+      "url": "https://career.keyence.de/go/SALES-JOB/2945801/",
+      "type": "careers-page"
+    },
+    {
+      "name": "Keyence",
+      "url": "https://career.keyence.de/go/HQ-JOBS/5126501/",
+      "type": "careers-page"
+    },
+        {
+      "name": "Rheinmetall",
+      "url": "https://www.rheinmetall.com/de/karriere/aktuelle-stellenangebote",
+      "type": "careers-page"
+    },
+        {
+      "name": "Trumpf",
+      "url": "https://trumpf.wd3.myworkdayjobs.com/de-DE/TRUMPF_Graduates_and_Professionals?locationCountry=dcc5b7608d8644b3a93716604e78e995",
+      "type": "careers-page"
+    },
+        {
+      "name": "Arburg",
+      "url": "https://jobs.arburg.com/go/Alle-Jobs/3765701/?q=&locationsearch=",
+      "type": "careers-page"
+    },
+        {
+      "name": "Renishaw",
+      "url": "https://renishaw.wd3.myworkdayjobs.com/de-DE/Renishaw?locationCountry=dcc5b7608d8644b3a93716604e78e995",
+      "type": "careers-page"
+    },
+        {
+      "name": "Rosswag Engineering",
+      "url": "https://www.rosswag-engineering.de/unternehmen/karriere/",
+      "type": "careers-page"
+    },
+        {
+      "name": "Mimplus",
+      "url": "https://mimplus.de/de/karriere",
+      "type": "careers-page"
+    },
+        {
+      "name": "Mercedes-Benz",
+      "url": "https://jobs.mercedes-benz.com/?TargetGroup.Code=4&PositionLocation.Country=%5B329%5D&CareerLevel.Code=%5B13%2C12%5D&PositionSchedule.Code=%5B12%5D",
+      "type": "careers-page"
+    },
+        {
+      "name": "Porsche",
+      "url": "https://jobs.porsche.com/index.php?ac=search_result&search_criterion_channel%5B%5D=12&search_criterion_entry_level%5B%5D=17&search_criterion_entry_level%5B%5D=12&search_criterion_entry_level%5B%5D=13&search_criterion_working_hour%5B%5D=1&search_criterion_country%5B%5D=46#skip-to-search-result-heading",
+      "type": "careers-page"
+    },
+        {
+      "name": "Bosch",
+      "url": "https://jobs.bosch.de/de?filter=locations.state%3ABaden-Württemberg%2Clocations.state%3ABayern%2CentryLevel%3AAbsolvent*in%2CentryLevel%3ABerufserfahrene%2CentryLevel%3A%28Technische%29+Fachkraft+%2F+Gewerbliche+Mitarbeiter*in%2CemploymentType%3AVollzeit",
+      "type": "careers-page",
+      "apiOnly": true
+    },
+        {
+      "name": "ZF",
+      "url": "https://jobs.zf.com/search/?createNewAlert=false&q=&locationsearch=&optionsFacetsDD_facility=&optionsFacetsDD_shifttype=&optionsFacetsDD_country=DE&optionsFacetsDD_customfield4=",
+      "type": "careers-page"
+    }, 
+        {
+      "name": "Mahle",
+      "url": "https://careers.mahle.com/search/?searchby=location&createNewAlert=false&q=&locationsearch=&geolocation=&optionsFacetsDD_country=DE&optionsFacetsDD_customfield1=&optionsFacetsDD_customfield2=&optionsFacetsDD_facility=&locale=de_DE",
+      "type": "careers-page"
+    }, 
+    {
+      "name": "Eberspächer",
+      "url": "https://www.eberspaecher-karriere.de/jobboerse",
+      "type": "careers-page"
+    }, 
+    {
+      "name": "Mann+Hummel",
+      "url": "https://www.mann-hummel.com/de/karriere/stellenangebote/stellenangebote-weltweit.html?Land%20oder%20Provinz%20=Deutschland",
+      "type": "careers-page"
+    },
+    {
+      "name": "Schaeffler",
+      "url": "https://jobs.schaeffler.com/?locale=de_DE&currentPage=1&pageSize=30&addresses%2FcountryCity=Deutschland%3ABebra&addresses%2FcountryCity=Deutschland%3ABerlin&addresses%2FcountryCity=Deutschland%3ABühl&addresses%2FcountryCity=Deutschland%3AChemnitz&addresses%2FcountryCity=Deutschland%3ADortmund&addresses%2FcountryCity=Deutschland%3AErlangen&addresses%2FcountryCity=Deutschland%3AFrankfurt+am+Main&addresses%2FcountryCity=Deutschland%3AGunzenhausen&addresses%2FcountryCity=Deutschland%3AHalle&addresses%2FcountryCity=Deutschland%3AHamburg&addresses%2FcountryCity=Deutschland%3AHerzogenaurach&addresses%2FcountryCity=Deutschland%3AHirschaid&addresses%2FcountryCity=Deutschland%3AHöchstadt&addresses%2FcountryCity=Deutschland%3AHomburg&addresses%2FcountryCity=Deutschland%3AKappelrodeck&addresses%2FcountryCity=Deutschland%3AKarlsruhe&addresses%2FcountryCity=Deutschland%3ALahr&addresses%2FcountryCity=Deutschland%3ALimbach-Oberfrohna&addresses%2FcountryCity=Deutschland%3AMünchen&addresses%2FcountryCity=Deutschland%3Anull&addresses%2FcountryCity=Deutschland%3ANürnberg&addresses%2FcountryCity=Deutschland%3ARegensburg&addresses%2FcountryCity=Deutschland%3ASchwalbach&addresses%2FcountryCity=Deutschland%3ASchweinfurt&jobTypeId=RC_jobTypeParent_Shopfloor%3AOP&jobTypeId=RC_jobTypeParent_Shopfloor%3AWO&jobTypeId=RC_jobTypeParent_Shopfloor%3ATLP&jobTypeId=RC_jobTypeParent_Others%3ATM&jobTypeId=RC_jobTypeParent_Professional%3AAD&jobTypeId=RC_jobTypeParent_Professional%3ATE&jobTypeId=RC_jobTypeParent_Professional%3ACO&jobTypeId=",
+      "type": "careers-page"
+    }, 
+    {
+      "name": "Webasto",
+      "url": "https://jobs.webasto.com/search/?q=&locationsearch=&markerViewed=&carouselIndex=&facetFilters=%7B%22jobLocationCountry%22%3A%5B%22Germany%22%5D%2C%22custEntryLevelDE%22%3A%5B%22Entry-Level+Jobs%22%2C%22Career+Starters+%280-3+years%29%22%2C%22Professionals+%283%2B+years%29%22%5D%7D&pageNumber=0",
+      "type": "careers-page"
+    }, 
+    {
+      "name": "Airbus",
+      "url": "https://ag.wd3.myworkdayjobs.com/de-DE/Airbus?locationCountry=dcc5b7608d8644b3a93716604e78e995&FullPartTime=70a157281071017ad8c0ee4170448100&workerSubType=f5811cef9cb501a69768a71d470a6d15",
+      "type": "careers-page"
+    }, 
+    {
+      "name": "Recaro",
+      "url": "https://de.jobs.recaro-as.de/stellenangebote.html?country=de#",
+      "type": "careers-page"
+    }, 
+    {
+      "name": "Tesat-Spacecom",
+      "url": "https://ag.wd3.myworkdayjobs.com/de-DE/Airbus?locationCountry=dcc5b7608d8644b3a93716604e78e995",
+      "type": "careers-page"
+    }, 
+    {
+      "name": "Thales",
+      "url": "https://careers.thalesgroup.com/de/de/search-results",
+      "type": "careers-page"
+    }, 
+    {
+      "name": "H2Fly",
+      "url": "https://www.h2fly.de/en/careers#jobs",
+      "type": "careers-page"
+    },
+    {
+      "name": "DLR",
+      "url": "https://jobs.dlr.de/go/Alle-Stellen/9261201/?sortBy=date&pageNumber=0",
+      "type": "careers-page",
+      "paginationParam": "pageNumber",
+      "paginationStep": 10,
+      "paginationMode": "index"
+    },
+    {
+      "name": "Fraunhofer",
+      "url": "https://jobs.fraunhofer.de/search/?createNewAlert=false&q=&locationsearch=&optionsFacetsDD_customfield1=Direkteinstieg&optionsFacetsDD_customfield2=&optionsFacetsDD_customfield3=&optionsFacetsDD_customfield5=&optionsFacetsDD_customfield4=&optionsFacetsDD_lang=",
+      "type": "careers-page"
+    }, 
+    {
+      "name": "Uni Stuttgart",
+      "url": "https://careers.uni-stuttgart.de/search/?createNewAlert=false&q=&optionsFacetsDD_customfield1=&optionsFacetsDD_customfield2=",
+      "type": "careers-page",
+      "allowExternalLinks": true,
+      "extraWait": 3000
+    },
+    {
+      "name": "Stellenwerk Stuttgart",
+      "url": "https://www.stellenwerk.de/stuttgart",
+      "type": "careers-page",
+      "allowExternalLinks": true,
+      "extraWait": 4000,
+      "jobUrlPattern": "/stuttgart/[^/]+-\\d{6}-\\d{6}$"
+    },
+    {
+      "name": "KIT",
+      "url": "https://www.kit.edu/karriere/stellenangebote.php",
+      "type": "careers-page"
+    }, 
+      {
+        "name": "Festo",
+        "url": "https://jobs.festo.com/search/?searchby=location&createNewAlert=false&q=&locationsearch=&geolocation=&optionsFacetsDD_customfield2=&optionsFacetsDD_customfield1=&optionsFacetsDD_country=DE",
+        "type": "careers-page"
+      }, 
+      {
+        "name": "Sick",
+        "url": "https://jobs.sick.com/search/?q=&locationsearch=&searchResultView=LIST",
+        "type": "careers-page",
+        "paginationParam": "pageNumber",
+        "paginationMode": "index",
+        "paginationStep": 10
+      }, 
+      {
+        "name": "Heidenhain",
+        "url": "https://www.heidenhain.de/karriere/professionals/stellenangebote",
+        "type": "careers-page"
+      }, 
+      {
+        "name": "Zeiss",
+        "url": "https://www.zeiss.com/career/de/stellensuche.html?page=1",
+        "type": "careers-page",
+        "paginationParam": "page",
+        "paginationMode": "index",
+        "paginationStep": 20
+      }, 
+      {
+        "name": "BBraun",
+        "url": "https://jobs.bbraun.com/search/?q=&locationsearch=&markerViewed=&carouselIndex=&facetFilters=%7B%22cust_country%22%3A%5B%22Germany%22%5D%7D&pageNumber=0",
+        "type": "careers-page",
+        "paginationParam": "pageNumber",
+        "paginationMode": "index",
+        "paginationStep": 10
+      }, 
+      {
+        "name": "Stryker",
+        "url": "https://careers.stryker.com/jobs?filter%5Bcountry%5D%5B0%5D=Germany",
+        "type": "careers-page"
+      }, 
+      {
+        "name": "kennametal",
+        "url": "https://jobs.kennametal.com/search/?createNewAlert=false&q=&locationsearch=&optionsFacetsDD_customfield3=",
+        "type": "careers-page"
+      }, 
+      {
+        "name": "Voith",
+        "url": "https://jobs.voith.com/search/?q=&locationsearch=&searchResultView=LIST&markerViewed=&carouselIndex=&facetFilters=%7B%22jobLocationCountry%22%3A%5B%22Germany%22%5D%7D&pageNumber=0",
+        "type": "careers-page"
+      },
+      {
+        "name": "EOS",
+        "url": "https://eosgroup.wd3.myworkdayjobs.com/de-DE/eos?locationCountry=dcc5b7608d8644b3a93716604e78e995",
+        "type": "careers-page"
+      },
+      {
+        "name": "Evonik",
+        "url": "https://www.evonik.com/de/karriere/jobs.html",
+        "type": "careers-page",
+        "extraWait": 3000
+      },
+      {
+        "name": "Daimler Truck",
+        "url": "https://jobsearch.daimlertruck.com/index.php?ac=search_result",
+        "type": "careers-page"
+      },
+      {
+        "name": "Dürr",
+        "url": "https://jobs.durr-group.com/#de/sites/CX_2/requisitions",
+        "type": "careers-page",
+        "extraWait": 3000
+      },
+      {
+        "name": "Schunk",
+        "url": "https://www.schunk.com/de/de/karriere/stellenangebote/",
+        "type": "careers-page",
+        "allowExternalLinks": true
+      },
+      {
+        "name": "Kärcher",
+        "url": "https://careers.kaercher.com/?locale=de_DE",
+        "type": "careers-page"
+      },
+      {
+        "name": "MTU Aero Engines",
+        "url": "https://www.mtu.de/de/karriere/jobboerse/",
+        "type": "careers-page"
+      },
+      {
+        "name": "Rolls-Royce",
+        "url": "https://careers.rolls-royce.com/de/stellenangebote",
+        "type": "careers-page",
+        "extraWait": 3000
+      },
+      {
+        "name": "Liebherr",
+        "url": "https://www.liebherr.com/de-de/karriere/offene-stellen-3364212",
+        "type": "careers-page"
+      },
+      {
+        "name": "Hensoldt",
+        "url": "https://jobs.hensoldt.net/go/Germany/9460255/",
+        "type": "careers-page"
+      },
+      {
+        "name": "Karl Storz",
+        "url": "https://career.karlstorz.com/",
+        "type": "careers-page"
+      },
+      {
+        "name": "Richard Wolf",
+        "url": "https://jobs.richard-wolf.com/RW",
+        "type": "careers-page"
+      },
+      {
+        "name": "Siemens Energy",
+        "url": "https://jobs.siemens-energy.com/jobs?location=Germany&employmentType=Full+Time",
+        "type": "careers-page"
+      }
+
+  ]
+}

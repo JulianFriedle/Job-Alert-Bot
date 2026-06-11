@@ -1,0 +1,19 @@
+node_modules/
+.env
+.DS_Store
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Personal data — each user provides their own (copy from *.example)
+config/profile.json
+
+# Generated exports + Excel lock files
+data/*.xlsx
+data/~$*
+
+# Crawlee storage
+storage/
+
+# Run logs
+logs/

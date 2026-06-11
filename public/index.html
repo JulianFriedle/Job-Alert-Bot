@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Alert · Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🎯</span>
+      <h1>Job&nbsp;Alert</h1>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="jobs">Jobs</button>
+      <button class="tab" data-tab="stats">Statistik</button>
+      <button class="tab" data-tab="sources">Quellen</button>
+      <button class="tab" data-tab="run">Lauf</button>
+    </nav>
+    <button class="btn btn-primary" id="quick-run">▶ Lauf starten</button>
+  </header>
+
+  <main>
+    <!-- ───────── JOBS ───────── -->
+    <section class="view active" id="view-jobs">
+      <div class="stats" id="stats"></div>
+
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Suche nach Titel, Firma, Ort…" autocomplete="off">
+        <select id="filter-source"><option value="">Alle Quellen</option></select>
+        <select id="filter-status">
+          <option value="">Alle Status</option>
+          <option value="none">Ohne Bewerbung</option>
+          <option value="applied">Beworben</option>
+          <option value="interview">Interview</option>
+          <option value="offer">Angebot</option>
+          <option value="rejected">Abgelehnt</option>
+        </select>
+        <select id="filter-score">
+          <option value="0">Score ≥ 0</option>
+          <option value="6">Score ≥ 6</option>
+          <option value="8">Score ≥ 8</option>
+        </select>
+        <span class="count" id="result-count"></span>
+      </div>
+
+      <div class="job-list" id="job-list"></div>
+      <div class="empty" id="jobs-empty" hidden>Keine Jobs gefunden.</div>
+    </section>
+
+    <!-- ───────── STATS ───────── -->
+    <section class="view" id="view-stats">
+      <div class="stats" id="stats-cards"></div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Bewerbungs-Aktivität</h2>
+          <span class="muted" id="activity-total"></span>
+        </div>
+        <div class="heatmap-wrap"><div class="heatmap" id="heatmap"></div></div>
+        <div class="heatmap-legend">
+          <span>weniger</span>
+          <span class="hm-cell l0"></span><span class="hm-cell l1"></span>
+          <span class="hm-cell l2"></span><span class="hm-cell l3"></span><span class="hm-cell l4"></span>
+          <span>mehr</span>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h2>Meiste Bewerbungen (Firmen)</h2></div>
+          <div id="chart-applied"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Top-Quellen (relevante Jobs)</h2></div>
+          <div id="chart-sources"></div>
+        </div>
+      </div>
+
+      <div class="card" id="card-runhistory" hidden>
+        <div class="card-head"><h2>Lauf-Verlauf</h2><span class="muted">gefunden vs. relevant pro Lauf</span></div>
+        <div id="chart-runs"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Lauf-Übersicht</h2>
+          <span class="muted" id="overview-sub"></span>
+        </div>
+        <div class="table-scroll"><table class="data-table" id="overview-table"></table></div>
+      </div>
+    </section>
+
+    <!-- ───────── SOURCES ───────── -->
+    <section class="view" id="view-sources">
+      <div class="panel-head">
+        <div>
+          <h2>Karriereseiten</h2>
+          <p class="muted" id="sources-count"></p>
+        </div>
+        <div class="panel-actions">
+          <button class="btn" id="add-source">+ Quelle</button>
+          <button class="btn btn-primary" id="save-sources">Speichern</button>
+        </div>
+      </div>
+      <div class="source-list" id="source-list"></div>
+      <p class="save-hint" id="sources-msg"></p>
+    </section>
+
+    <!-- ───────── RUN ───────── -->
+    <section class="view" id="view-run">
+      <div class="panel-head">
+        <div>
+          <h2>Pipeline-Lauf</h2>
+          <p class="muted">Startet <code>node index.js --once</code>: scrapen, analysieren, benachrichtigen, exportieren.</p>
+        </div>
+        <div class="panel-actions">
+          <span class="run-indicator" id="run-indicator">● bereit</span>
+          <button class="btn btn-primary" id="run-btn">▶ Lauf starten</button>
+        </div>
+      </div>
+      <pre class="console" id="console"><span class="console-placeholder">Noch keine Ausgabe. Starte einen Lauf, um Live-Logs zu sehen.</span></pre>
+    </section>
+  </main>
+
+  <!-- ───────── COVER-LETTER MODAL ───────── -->
+  <div class="modal-backdrop" id="cl-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cl-title">
+      <header class="modal-head">
+        <div>
+          <h2 id="cl-title">Anschreiben</h2>
+          <p class="muted" id="cl-sub"></p>
+        </div>
+        <button class="btn btn-ghost" id="cl-close" title="Schließen">✕</button>
+      </header>
+      <div class="modal-body" id="cl-body">
+        <div class="cl-loading" id="cl-loading">
+          <span class="spinner"></span> Anschreiben wird erstellt…
+        </div>
+        <textarea class="cl-text" id="cl-text" spellcheck="false" hidden></textarea>
+        <div class="cl-error" id="cl-error" hidden></div>
+      </div>
+      <footer class="modal-foot">
+        <button class="btn" id="cl-regen" hidden>↻ Neu generieren</button>
+        <button class="btn btn-primary" id="cl-copy" hidden>📋 Kopieren</button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
