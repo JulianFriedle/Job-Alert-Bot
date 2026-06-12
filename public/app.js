@@ -32,6 +32,8 @@ $('#tabs').addEventListener('click', (e) => {
   if (name === 'sources' && !sourcesLoaded) loadSources();
   if (name === 'stats') loadStats();
   if (name === 'settings' && !settingsLoaded) loadSettings();
+  if (name === 'profile' && !profileLoaded) loadProfile();
+  if (name === 'prompts' && !promptsLoaded) loadPrompts();
 });
 
 // ── JOBS ────────────────────────────────────────────────────────────────────
@@ -631,6 +633,198 @@ function refreshAfterRun() {
 
 $('#run-btn').addEventListener('click', startRun);
 $('#quick-run').addEventListener('click', startRun);
+
+// ── PROFILE (CV) ─────────────────────────────────────────────────────────────
+let profileLoaded = false;
+let profileData = {};   // full loaded object — preserves keys not shown in the form
+
+const PROFILE_FIELDS = [
+  { p: 'cv.name',                  t: 'text',     l: 'Name', group: 'Lebenslauf (CV)' },
+  { p: 'cv.currentRole',           t: 'text',     l: 'Aktuelle Rolle / Status', group: 'Lebenslauf (CV)' },
+  { p: 'cv.yearsOfExperience',     t: 'int',      l: 'Berufserfahrung (Jahre)', group: 'Lebenslauf (CV)' },
+  { p: 'cv.summary',               t: 'textarea', l: 'Kurzprofil', group: 'Lebenslauf (CV)',
+    h: '2–3 Sätze: Fachgebiet, Stärken, was du suchst. Geht direkt an die KI.' },
+  { p: 'cv.skills.domain',         t: 'list',     l: 'Fachliche Kompetenzen', group: 'Lebenslauf (CV)', h: 'Eine pro Zeile' },
+  { p: 'cv.skills.tools',          t: 'list',     l: 'Tools / Software', group: 'Lebenslauf (CV)' },
+  { p: 'cv.skills.programming',    t: 'list',     l: 'Programmierung', group: 'Lebenslauf (CV)' },
+  { p: 'cv.languages',             t: 'list',     l: 'Sprachen', group: 'Lebenslauf (CV)' },
+  { p: 'cv.education',             t: 'list',     l: 'Ausbildung', group: 'Lebenslauf (CV)', h: 'Ein Abschluss pro Zeile' },
+  { p: 'cv.experience',            t: 'list',     l: 'Berufserfahrung (Stationen)', group: 'Lebenslauf (CV)', h: 'Eine Station pro Zeile' },
+  { p: 'preferences.desiredRoles', t: 'list',     l: 'Wunsch-Rollen', group: 'Präferenzen', h: 'Job-Titel, die du suchst' },
+  { p: 'preferences.locations',    t: 'list',     l: 'Orte', group: 'Präferenzen', h: 'Städte, "Remote", "Hybrid" …' },
+  { p: 'preferences.industries',   t: 'list',     l: 'Branchen', group: 'Präferenzen' },
+  { p: 'preferences.salaryMin',    t: 'int',      l: 'Mindestgehalt (€/Jahr)', group: 'Präferenzen' },
+  { p: 'preferences.contractTypes',t: 'list',     l: 'Vertragsarten', group: 'Präferenzen' },
+  { p: 'preferences.dealbreakers', t: 'list',     l: 'No-Gos', group: 'Präferenzen', h: 'Was du auf keinen Fall willst' },
+];
+
+const getPath = (o, dotted) => dotted.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
+function setPath(o, dotted, value) {
+  const ks = dotted.split('.');
+  let cur = o;
+  for (let i = 0; i < ks.length - 1; i++) {
+    if (typeof cur[ks[i]] !== 'object' || cur[ks[i]] == null) cur[ks[i]] = {};
+    cur = cur[ks[i]];
+  }
+  cur[ks[ks.length - 1]] = value;
+}
+
+async function loadProfile() {
+  try {
+    const { profile } = await api('/api/profile');
+    profileData = profile || {};
+    renderProfile();
+    profileLoaded = true;
+  } catch (err) { toast('Fehler: ' + err.message); }
+}
+
+function profileField(f) {
+  const id = `pf-${f.p.replace(/\W/g, '_')}`;
+  const v = getPath(profileData, f.p);
+  const da = `data-path="${esc(f.p)}" data-type="${f.t}"`;
+  let control;
+  if (f.t === 'list') {
+    const text = Array.isArray(v) ? v.join('\n') : (v ?? '');
+    control = `<textarea id="${id}" class="set-input su-textarea" ${da} rows="4" spellcheck="false">${esc(text)}</textarea>`;
+  } else if (f.t === 'textarea') {
+    control = `<textarea id="${id}" class="set-input su-textarea" ${da} rows="4" spellcheck="false">${esc(v ?? '')}</textarea>`;
+  } else if (f.t === 'int') {
+    control = `<input id="${id}" class="set-input set-num" type="number" ${da} value="${esc(v ?? '')}">`;
+  } else {
+    control = `<input id="${id}" class="set-input" type="text" ${da} value="${esc(v ?? '')}" spellcheck="false">`;
+  }
+  const help = f.h ? ` <span class="set-default">${esc(f.h)}</span>` : '';
+  return `<div class="setting">
+    <label class="set-label" for="${id}">${esc(f.l)}</label>
+    <div class="set-control">${control}<p class="set-help">${help}</p></div>
+  </div>`;
+}
+
+function renderProfile() {
+  const groups = [...new Set(PROFILE_FIELDS.map(f => f.group))];
+  $('#profile-groups').innerHTML = groups.map(g => `
+    <div class="card">
+      <div class="card-head"><h2>${esc(g)}</h2></div>
+      <div class="setting-list">${PROFILE_FIELDS.filter(f => f.group === g).map(profileField).join('')}</div>
+    </div>`).join('');
+  $('#profile-msg').textContent = '';
+}
+
+$('#save-profile').addEventListener('click', async () => {
+  const next = JSON.parse(JSON.stringify(profileData || {}));   // preserve untouched keys
+  for (const inp of $$('#profile-groups [data-path]')) {
+    const p = inp.dataset.path, t = inp.dataset.type;
+    if (t === 'list') {
+      setPath(next, p, inp.value.split('\n').map(s => s.trim()).filter(Boolean));
+    } else if (t === 'int') {
+      const raw = inp.value.trim();
+      setPath(next, p, raw === '' ? undefined : Number(raw));
+    } else {
+      setPath(next, p, inp.value.trim());
+    }
+  }
+  try {
+    await api('/api/profile', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: next }),
+    });
+    profileData = next;
+    showProfileMsg('✓ Profil gespeichert. Greift beim nächsten Lauf / Anschreiben.', 'ok');
+    toast('Profil gespeichert');
+  } catch (err) { showProfileMsg('Fehler: ' + err.message, 'err'); }
+});
+
+$('#profile-reset').addEventListener('click', loadProfile);
+
+function showProfileMsg(msg, kind) {
+  const el = $('#profile-msg');
+  el.textContent = msg; el.className = 'save-hint ' + kind;
+  if (kind === 'ok') setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 5000);
+}
+
+// ── PROMPTS ──────────────────────────────────────────────────────────────────
+let promptsLoaded = false;
+let promptDefaults = {};
+
+async function loadPrompts() {
+  try {
+    const { fields, prompts, defaults } = await api('/api/prompts');
+    promptDefaults = defaults || {};
+    renderPrompts(fields, prompts);
+    promptsLoaded = true;
+  } catch (err) { toast('Fehler: ' + err.message); }
+}
+
+function renderPrompts(fields, values) {
+  const groups = [...new Set(fields.map(f => f.group))];
+  $('#prompts-groups').innerHTML = groups.map(g => `
+    <div class="card">
+      <div class="card-head"><h2>${esc(g)}</h2></div>
+      <div class="setting-list">
+        ${fields.filter(f => f.group === g).map(f => {
+          const id = `pr-${f.key}`;
+          return `<div class="setting">
+            <label class="set-label" for="${id}">${esc(f.label)}
+              <button type="button" class="btn btn-ghost prompt-default" data-key="${esc(f.key)}" title="Standard einsetzen">↺ Standard</button>
+            </label>
+            <div class="set-control">
+              <textarea id="${id}" class="set-input su-textarea" data-key="${esc(f.key)}" rows="5" spellcheck="false">${esc(values[f.key] ?? '')}</textarea>
+              <p class="set-help">${esc(f.help || '')}</p>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`).join('');
+  $('#prompts-msg').textContent = '';
+}
+
+// per-field "↺ Standard" button → drop the default text into that textarea
+$('#prompts-groups').addEventListener('click', (e) => {
+  const btn = e.target.closest('.prompt-default');
+  if (!btn) return;
+  const ta = $(`#prompts-groups textarea[data-key="${btn.dataset.key}"]`);
+  if (ta) { ta.value = promptDefaults[btn.dataset.key] ?? ''; ta.focus(); }
+});
+
+$('#save-prompts').addEventListener('click', async () => {
+  const prompts = {};
+  for (const ta of $$('#prompts-groups textarea[data-key]')) prompts[ta.dataset.key] = ta.value;
+  try {
+    await api('/api/prompts', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompts }),
+    });
+    showPromptsMsg('✓ Prompts gespeichert. Greifen sofort beim nächsten Lauf / Anschreiben.', 'ok');
+    toast('Prompts gespeichert');
+  } catch (err) { showPromptsMsg('Fehler: ' + err.message, 'err'); }
+});
+
+// reset all fields to defaults (in the form; takes effect on Save)
+$('#prompts-reset').addEventListener('click', () => {
+  for (const ta of $$('#prompts-groups textarea[data-key]')) ta.value = promptDefaults[ta.dataset.key] ?? '';
+  showPromptsMsg('Standardwerte eingesetzt – zum Übernehmen „Speichern“ klicken.', 'ok');
+});
+
+function showPromptsMsg(msg, kind) {
+  const el = $('#prompts-msg');
+  el.textContent = msg; el.className = 'save-hint ' + kind;
+  if (kind === 'ok') setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 5000);
+}
+
+// ── THEME (light / dark / auto) ───────────────────────────────────────────────
+function currentTheme() {
+  try { return localStorage.getItem('theme') || 'auto'; } catch { return 'auto'; }
+}
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem('theme', t); } catch { /* ignore */ }
+  $$('#theme-toggle .theme-opt').forEach(b => b.classList.toggle('active', b.dataset.themeVal === t));
+}
+$('#theme-toggle')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.theme-opt');
+  if (btn) applyTheme(btn.dataset.themeVal);
+});
+applyTheme(currentTheme());   // reflect the saved choice on the toggle buttons
 
 // ── init ────────────────────────────────────────────────────────────────────
 loadJobs();

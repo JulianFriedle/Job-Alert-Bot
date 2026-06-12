@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Job Alert · Dashboard</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
+  <script>
+    // Apply the saved theme before first paint to avoid a flash of the wrong scheme.
+    (function () {
+      try { document.documentElement.dataset.theme = localStorage.getItem('theme') || 'auto'; }
+      catch (e) { document.documentElement.dataset.theme = 'auto'; }
+    })();
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,6 +24,8 @@
       <button class="tab active" data-tab="jobs">Jobs</button>
       <button class="tab" data-tab="stats">Statistik</button>
       <button class="tab" data-tab="sources">Quellen</button>
+      <button class="tab" data-tab="profile">Profil</button>
+      <button class="tab" data-tab="prompts">Prompts</button>
       <button class="tab" data-tab="run">Lauf</button>
       <button class="tab" data-tab="settings">Einstellungen</button>
     </nav>
@@ -110,6 +119,38 @@
       <p class="save-hint" id="sources-msg"></p>
     </section>
 
+    <!-- ───────── PROFILE (CV) ───────── -->
+    <section class="view" id="view-profile">
+      <div class="panel-head">
+        <div>
+          <h2>Profil / Lebenslauf</h2>
+          <p class="muted">Diese Angaben sendet die KI bei jeder Bewertung und beim Anschreiben. Je konkreter, desto besser die Treffer. Mehrfachfelder: ein Eintrag pro Zeile.</p>
+        </div>
+        <div class="panel-actions">
+          <button class="btn" id="profile-reset">Zurücksetzen</button>
+          <button class="btn btn-primary" id="save-profile">Speichern</button>
+        </div>
+      </div>
+      <div class="settings-groups" id="profile-groups"></div>
+      <p class="save-hint" id="profile-msg"></p>
+    </section>
+
+    <!-- ───────── PROMPTS ───────── -->
+    <section class="view" id="view-prompts">
+      <div class="panel-head">
+        <div>
+          <h2>KI-Prompts</h2>
+          <p class="muted">Anweisungen, die an Claude gesendet werden. Änderungen greifen sofort beim nächsten Lauf / Anschreiben. Leeres Feld = Standard.</p>
+        </div>
+        <div class="panel-actions">
+          <button class="btn" id="prompts-reset">Zurücksetzen</button>
+          <button class="btn btn-primary" id="save-prompts">Speichern</button>
+        </div>
+      </div>
+      <div class="settings-groups" id="prompts-groups"></div>
+      <p class="save-hint" id="prompts-msg"></p>
+    </section>
+
     <!-- ───────── RUN ───────── -->
     <section class="view" id="view-run">
       <div class="panel-head">
@@ -139,6 +180,16 @@
       </div>
       <div class="settings-groups" id="settings-groups"></div>
       <p class="save-hint" id="settings-msg"></p>
+
+      <div class="card">
+        <div class="card-head"><h2>Darstellung</h2></div>
+        <p class="muted">Farbschema der Oberfläche. „Automatisch“ folgt der Einstellung deines Systems.</p>
+        <div class="theme-toggle" id="theme-toggle" role="group" aria-label="Farbschema">
+          <button class="btn theme-opt" data-theme-val="light">☀️ Hell</button>
+          <button class="btn theme-opt" data-theme-val="dark">🌙 Dunkel</button>
+          <button class="btn theme-opt" data-theme-val="auto">🖥️ Automatisch</button>
+        </div>
+      </div>
 
       <div class="card">
         <div class="card-head"><h2>Einrichtungs-Assistent</h2></div>

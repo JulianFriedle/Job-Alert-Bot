@@ -22,8 +22,28 @@
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
+/* Dark tokens. Applied when the theme is explicitly forced to "dark"… */
+:root[data-theme="dark"] {
+  --bg:        #0f1115;
+  --surface:   #181b20;
+  --surface-2: #1f232a;
+  --border:    #2a2f37;
+  --text:      #e8eaed;
+  --muted:     #9aa3ad;
+  --accent:    #4ade80;
+  --accent-ink:#86efac;
+  --accent-soft:#16261d;
+  --green-bg:  #14331f;
+  --yellow-bg: #332d12;
+  --blue-bg:   #16263f;
+  --shadow:    0 1px 2px rgba(0,0,0,.3);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,.45);
+}
+
+/* …or when on "automatic" (or unset) and the OS prefers dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root[data-theme="auto"],
+  :root:not([data-theme]) {
     --bg:        #0f1115;
     --surface:   #181b20;
     --surface-2: #1f232a;
@@ -306,6 +326,10 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   .set-control, .set-help { grid-column: 1; }
 }
 
+.theme-toggle { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.theme-opt.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.theme-opt.active:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
+
 .restart-card { border-color: color-mix(in srgb, var(--red) 25%, var(--border)); }
 .restart-card .muted { margin-bottom: 14px; }
 .btn-restart { border-color: color-mix(in srgb, var(--red) 40%, var(--border)); color: var(--red); }
@@ -423,6 +447,10 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .su-toggle input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .su-toggle-field .set-help { margin-top: 6px; }
 .su-dim { opacity: .45; transition: opacity .15s; }
+
+/* Prompts/Profile tab: inline "restore default" button + larger editors */
+.prompt-default { font-size: .7rem; padding: 2px 8px; margin-left: auto; }
+#prompts-groups .su-textarea { min-height: 110px; font-family: var(--mono); font-size: .82rem; line-height: 1.5; }
 
 .su-test { display: flex; align-items: center; gap: 12px; margin-top: 4px; flex-wrap: wrap; }
 .su-test-result { font-size: .82rem; color: var(--muted); }

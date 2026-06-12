@@ -156,6 +156,14 @@ Cheap title-based filters applied **before** any Claude call:
 
 Edit this file to tune what gets filtered. If the file is missing, built-in defaults are used.
 
+### AI prompts (`config/prompts.json`)
+
+The prompts sent to Claude (relevance-scoring system prompt + scoring guidance, and the
+cover-letter system prompt + task) are editable in the **Prompts** tab of the GUI. Overrides
+are stored in `config/prompts.json` (gitignored); anything not overridden falls back to the
+built-in defaults in `src/prompts.js`. The analyzer's strict JSON output format is fixed and
+not editable, so customizing prompts can't break parsing.
+
 ### 🌍 Locale note
 
 This project is tuned for the **German job market** out of the box:
@@ -199,6 +207,8 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 |---|---|
 | **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Set application status or hide a job with one click. |
 | **Quellen** | Edit `config/jobs.json` visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. |
+| **Profil** | Edit your CV & preferences (`config/profile.json`) in a structured form — this is what the AI matches jobs against and uses for cover letters. |
+| **Prompts** | Edit the actual prompts sent to Claude for relevance scoring and cover letters. Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
 | **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. |
 | **Statistik** | Application heatmap, top sources/companies, run history, and a per-run overview table. |
 | **Einstellungen** | Edit every `.env` variable from a form, restart the GUI, and re-open or test the **setup wizard**. |

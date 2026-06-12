@@ -8,6 +8,9 @@ data/*.db-wal
 # Personal data — each user provides their own (copy from *.example)
 config/profile.json
 
+# Custom AI prompt overrides (defaults live in src/prompts.js)
+config/prompts.json
+
 # Setup wizard state + debug-mode sandbox (per-user, never shipped)
 config/setup-state.json
 data/setup-debug/

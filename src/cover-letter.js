@@ -4,18 +4,14 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getJobById } from './database.js';
+import { loadPrompts } from './prompts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_PATH = path.join(__dirname, '..', 'config', 'profile.json');
 // Read at call time so changes from the GUI settings tab apply without a restart.
 const model = () => process.env.COVER_LETTER_MODEL || 'claude-sonnet-4-6';
 
-const SYSTEM_PROMPT =
-  'Du bist ein erfahrener Karriereberater und hilfst dabei, professionelle deutsche Anschreiben zu verfassen. ' +
-  'Schreibe immer vollständige, formelle Anschreiben im DIN-5008-Stil auf Deutsch. Verwende als Trennzeichen kein -.' +
-  'Gib nur den reinen Anschreiben-Text aus, ohne Erklärungen oder Kommentare.';
-
-function buildUserPrompt(profile, job) {
+function buildUserPrompt(profile, job, instructions) {
   return `Kandidatenprofil:
 ${JSON.stringify(profile, null, 2)}
 
@@ -27,19 +23,20 @@ Beschreibung:
 ${(job.description || 'k.A.').slice(0, 4000)}
 
 Aufgabe:
-Schreibe ein vollständiges, überzeugendes Anschreiben für diese Stelle. Beziehe dich konkret auf die Anforderungen der Stellenanzeige und hebe die passenden Stärken und Erfahrungen des Kandidaten hervor. Verwende einen professionellen, aber persönlichen Ton.`;
+${instructions}`;
 }
 
 // Generate a tailored German cover letter for a job row. Returns the letter text.
 export async function generateCoverLetter(job) {
   const profile = JSON.parse(await readFile(PROFILE_PATH, 'utf-8'));
+  const prompts = loadPrompts();   // read fresh so GUI edits apply without restart
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   const response = await client.messages.create({
     model: model(),
     max_tokens: 1500,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: buildUserPrompt(profile, job) }],
+    system: prompts.coverLetterSystem,
+    messages: [{ role: 'user', content: buildUserPrompt(profile, job, prompts.coverLetterInstructions) }],
   });
 
   return response.content[0]?.text ?? '';

@@ -14,11 +14,13 @@ import {
 } from './database.js';
 import { generateCoverLetter } from './cover-letter.js';
 import { handleSetupApi } from './setup.js';
+import { DEFAULT_PROMPTS, PROMPT_FIELDS, PROMPTS_PATH, loadPrompts } from './prompts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const JOBS_CONFIG = path.join(ROOT, 'config', 'jobs.json');
+const PROFILE_CONFIG = path.join(ROOT, 'config', 'profile.json');
 const ENV_FILE = path.join(ROOT, '.env');
 const PORT = process.env.GUI_PORT || 3000;
 
@@ -309,6 +311,54 @@ const server = http.createServer(async (req, res) => {
         }
         await writeFile(JOBS_CONFIG, JSON.stringify(parsed, null, 2) + '\n', 'utf-8');
         return sendJson(res, 200, { ok: true, count: parsed.sources.length });
+      }
+
+      // GET /api/profile — the CV/preferences JSON (empty object if not created yet)
+      if (method === 'GET' && pathname === '/api/profile') {
+        let profile = {};
+        try { profile = JSON.parse(await readFile(PROFILE_CONFIG, 'utf-8')); } catch { /* none yet */ }
+        return sendJson(res, 200, { profile });
+      }
+
+      // PUT /api/profile — overwrite profile.json with the full object
+      if (method === 'PUT' && pathname === '/api/profile') {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        const profile = body && body.profile;
+        if (!profile || typeof profile !== 'object' || Array.isArray(profile))
+          return sendJson(res, 400, { error: 'Erwarte { profile: { … } }' });
+        await writeFile(PROFILE_CONFIG, JSON.stringify(profile, null, 2) + '\n', 'utf-8');
+        return sendJson(res, 200, { ok: true });
+      }
+
+      // GET /api/prompts — editable prompt fields + current/default values
+      if (method === 'GET' && pathname === '/api/prompts') {
+        const current = loadPrompts();
+        return sendJson(res, 200, {
+          fields: PROMPT_FIELDS,
+          prompts: current,
+          defaults: DEFAULT_PROMPTS,
+        });
+      }
+
+      // PUT /api/prompts — persist overrides to config/prompts.json.
+      // Empty or default-equal values are dropped so the file stays minimal and
+      // future default changes still flow through for untouched fields.
+      if (method === 'PUT' && pathname === '/api/prompts') {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        const incoming = body && body.prompts;
+        if (!incoming || typeof incoming !== 'object')
+          return sendJson(res, 400, { error: 'Erwarte { prompts: { KEY: text } }' });
+        const overrides = {};
+        for (const key of Object.keys(DEFAULT_PROMPTS)) {
+          const v = incoming[key];
+          if (typeof v === 'string' && v.trim() !== '' && v !== DEFAULT_PROMPTS[key]) overrides[key] = v;
+        }
+        await writeFile(PROMPTS_PATH, JSON.stringify(overrides, null, 2) + '\n', 'utf-8');
+        return sendJson(res, 200, { ok: true });
       }
 
       // GET /api/settings — schema + current values.

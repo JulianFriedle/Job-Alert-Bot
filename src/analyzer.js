@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { loadPrompts } from './prompts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_PATH = path.join(__dirname, '..', 'config', 'profile.json');
@@ -35,24 +36,20 @@ function getClient() {
   return _client;
 }
 
-const SYSTEM_PROMPT =
-  'You are a career advisor. Analyze job postings and decide if they match ' +
-  "the candidate's profile. Respond ONLY with valid JSON.";
-
 function buildProfileBlock(profile) {
   return `Candidate Profile\n${JSON.stringify(profile)}`;
 }
 
-function buildJobBlock(job) {
+// `instructions` is the (editable) scoring guidance; the JSON contract below is
+// fixed so parsing never breaks regardless of what the user customizes.
+function buildJobBlock(job, instructions) {
   return `\nJob Posting
 Title: ${job.title || 'N/A'}
 Company: ${job.company || 'N/A'}
 Location: ${job.location || 'N/A'}
 Description: ${(job.description || 'N/A').slice(0, 4000)}
 
-Scoring priorities
-- Initiativbewerbung / spontaneous application listings: score at least 7 if the candidate's profile is a plausible fit, even without a specific role description.
-- PhD / Doktorand / Promotion / wissenschaftlicher Mitarbeiter positions: score at least 8 if topic area overlaps with candidate's background (additive manufacturing, lightweight design, materials, simulation, manufacturing IT).
+${instructions}
 
 Task
 Respond with this exact JSON structure:
@@ -68,19 +65,20 @@ Respond with this exact JSON structure:
 export async function analyzeJob(job) {
   const profile = await getProfile();
   const client = getClient();
+  const prompts = loadPrompts();   // read fresh so GUI edits apply without restart
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const response = await client.messages.create({
         model: MODEL,
         max_tokens: 800,
-        system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+        system: [{ type: 'text', text: prompts.analyzerSystem, cache_control: { type: 'ephemeral' } }],
         messages: [
           {
             role: 'user',
             content: [
               { type: 'text', text: buildProfileBlock(profile), cache_control: { type: 'ephemeral' } },
-              { type: 'text', text: buildJobBlock(job) },
+              { type: 'text', text: buildJobBlock(job, prompts.analyzerInstructions) },
             ],
           },
         ],
