@@ -18,6 +18,7 @@
       <button class="tab" data-tab="stats">Statistik</button>
       <button class="tab" data-tab="sources">Quellen</button>
       <button class="tab" data-tab="run">Lauf</button>
+      <button class="tab" data-tab="settings">Einstellungen</button>
     </nav>
     <button class="btn btn-primary" id="quick-run">▶ Lauf starten</button>
   </header>
@@ -122,6 +123,28 @@
         </div>
       </div>
       <pre class="console" id="console"><span class="console-placeholder">Noch keine Ausgabe. Starte einen Lauf, um Live-Logs zu sehen.</span></pre>
+    </section>
+
+    <!-- ───────── SETTINGS ───────── -->
+    <section class="view" id="view-settings">
+      <div class="panel-head">
+        <div>
+          <h2>Einstellungen</h2>
+          <p class="muted">Alle Variablen aus <code>.env</code>. Änderungen greifen beim nächsten Lauf; <code>GUI-Port</code> erst nach Neustart der GUI.</p>
+        </div>
+        <div class="panel-actions">
+          <button class="btn" id="settings-reset">Zurücksetzen</button>
+          <button class="btn btn-primary" id="save-settings">Speichern</button>
+        </div>
+      </div>
+      <div class="settings-groups" id="settings-groups"></div>
+      <p class="save-hint" id="settings-msg"></p>
+
+      <div class="card restart-card">
+        <div class="card-head"><h2>Dienst neu starten</h2></div>
+        <p class="muted">Startet den GUI-Server neu, damit Änderungen am <code>GUI-Port</code> übernommen werden. Laufende Pipeline-Läufe bitte vorher beenden.</p>
+        <button class="btn btn-restart" id="restart-btn">↻ Jetzt neu starten</button>
+      </div>
     </section>
   </main>
 

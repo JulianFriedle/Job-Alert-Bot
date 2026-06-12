@@ -31,6 +31,7 @@ $('#tabs').addEventListener('click', (e) => {
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
   if (name === 'sources' && !sourcesLoaded) loadSources();
   if (name === 'stats') loadStats();
+  if (name === 'settings' && !settingsLoaded) loadSettings();
 });
 
 // ── JOBS ────────────────────────────────────────────────────────────────────
@@ -468,6 +469,105 @@ function showSourcesMsg(msg, kind) {
   const el = $('#sources-msg');
   el.textContent = msg; el.className = 'save-hint ' + kind;
   if (kind === 'ok') setTimeout(() => { el.textContent = ''; }, 4000);
+}
+
+// ── SETTINGS ──────────────────────────────────────────────────────────────--
+let settingsSchema = [];
+let settingsLoaded = false;
+
+async function loadSettings() {
+  try {
+    const { settings } = await api('/api/settings');
+    settingsSchema = settings;
+    renderSettings();
+    settingsLoaded = true;
+  } catch (err) { toast('Fehler: ' + err.message); }
+}
+
+function renderSettings() {
+  const groups = [...new Set(settingsSchema.map(s => s.group))];
+  $('#settings-groups').innerHTML = groups.map(g => `
+    <div class="card">
+      <div class="card-head"><h2>${esc(g)}</h2></div>
+      <div class="setting-list">
+        ${settingsSchema.filter(s => s.group === g).map(settingField).join('')}
+      </div>
+    </div>`).join('');
+  $('#settings-msg').textContent = '';
+}
+
+function settingField(s) {
+  const id = `set-${s.key}`;
+  const req = s.required ? '<span class="req">erforderlich</span>' : '';
+  const da = `data-key="${esc(s.key)}" data-type="${s.type}"`;
+  let control;
+  if (s.type === 'secret') {
+    const ph = s.isSet ? '•••••••• gesetzt' : 'nicht gesetzt';
+    control = `<div class="secret-wrap">
+      <input id="${id}" class="set-input" type="password" ${da} value="${esc(s.value)}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false">
+      <button type="button" class="btn btn-ghost set-reveal" title="Anzeigen/Verbergen">👁</button>
+    </div>`;
+  } else if (s.type === 'int') {
+    control = `<input id="${id}" class="set-input set-num" type="number" ${da}
+      value="${esc(s.value)}" placeholder="${esc(s.default)}"${s.min != null ? ` min="${s.min}"` : ''}${s.max != null ? ` max="${s.max}"` : ''}>`;
+  } else {
+    control = `<input id="${id}" class="set-input" type="text" ${da}
+      value="${esc(s.value)}" placeholder="${esc(s.default)}" spellcheck="false">`;
+  }
+  const def = (s.type !== 'secret' && s.default) ? ` <span class="set-default">Standard: <code>${esc(s.default)}</code></span>` : '';
+  return `<div class="setting">
+    <label class="set-label" for="${id}">${esc(s.label)} ${req}</label>
+    <div class="set-control">${control}</div>
+    <p class="set-help">${esc(s.help)}${def}</p>
+  </div>`;
+}
+
+// reveal/hide a secret value
+$('#settings-groups').addEventListener('click', (e) => {
+  const btn = e.target.closest('.set-reveal');
+  if (!btn) return;
+  const input = btn.parentElement.querySelector('input');
+  input.type = input.type === 'password' ? 'text' : 'password';
+  btn.classList.toggle('on', input.type === 'text');
+});
+
+$('#save-settings').addEventListener('click', async () => {
+  const payload = {};
+  for (const inp of $$('#settings-groups .set-input')) {
+    if (inp.dataset.type === 'secret') {
+      if (inp.value !== '') payload[inp.dataset.key] = inp.value;   // only send if changed
+    } else {
+      payload[inp.dataset.key] = inp.value.trim();
+    }
+  }
+  try {
+    await api('/api/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: payload }),
+    });
+    showSettingsMsg('✓ Gespeichert. Änderungen greifen beim nächsten Lauf (GUI-Port erst nach Neustart).', 'ok');
+    toast('Einstellungen gespeichert');
+    loadSettings();   // refresh: clears secret fields, updates "gesetzt"-Status
+  } catch (err) { showSettingsMsg('Fehler: ' + err.message, 'err'); }
+});
+
+$('#settings-reset').addEventListener('click', loadSettings);
+
+$('#restart-btn').addEventListener('click', async () => {
+  if (!confirm('Den GUI-Dienst jetzt neu starten? Die Seite lädt anschließend neu.')) return;
+  const btn = $('#restart-btn');
+  try {
+    await api('/api/restart', { method: 'POST' });
+    btn.disabled = true; btn.textContent = '↻ Neustart läuft …';
+    toast('Dienst wird neu gestartet …');
+    setTimeout(() => location.reload(), 4500);
+  } catch (err) { toast('Fehler: ' + err.message); }
+});
+
+function showSettingsMsg(msg, kind) {
+  const el = $('#settings-msg');
+  el.textContent = msg; el.className = 'save-hint ' + kind;
+  if (kind === 'ok') setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 6000);
 }
 
 // ── RUN ─────────────────────────────────────────────────────────────────────

@@ -18,7 +18,89 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const JOBS_CONFIG = path.join(ROOT, 'config', 'jobs.json');
+const ENV_FILE = path.join(ROOT, '.env');
 const PORT = process.env.GUI_PORT || 3000;
+
+// ── Settings schema ─────────────────────────────────────────────────────────
+// Single source of truth for every variable shown in the GUI "Einstellungen" tab.
+// type: 'secret' (never sent to the browser), 'text', or 'int'.
+const SETTINGS_SCHEMA = [
+  { key: 'ANTHROPIC_API_KEY', group: 'Schlüssel & Telegram', label: 'Anthropic API Key', type: 'secret', required: true,
+    help: 'API-Schlüssel von console.anthropic.com' },
+  { key: 'TELEGRAM_BOT_TOKEN', group: 'Schlüssel & Telegram', label: 'Telegram Bot Token', type: 'secret', required: true,
+    help: 'Bot-Token von @BotFather' },
+  { key: 'TELEGRAM_CHAT_ID', group: 'Schlüssel & Telegram', label: 'Telegram Chat ID', type: 'secret', required: true,
+    help: 'Deine Chat-ID für Benachrichtigungen' },
+
+  { key: 'ANALYZER_MODEL', group: 'KI-Modelle', label: 'Analyse-Modell', type: 'text', default: 'claude-haiku-4-5-20251001',
+    help: 'Claude-Modell zur Relevanz-Bewertung (günstig/schnell empfohlen)' },
+  { key: 'COVER_LETTER_MODEL', group: 'KI-Modelle', label: 'Anschreiben-Modell', type: 'text', default: 'claude-sonnet-4-6',
+    help: 'Claude-Modell für Anschreiben (stärkeres Modell empfohlen)' },
+
+  { key: 'MIN_RELEVANCE_SCORE', group: 'Analyse & Filter', label: 'Min. Relevanz-Score', type: 'int', default: '4', min: 1, max: 10,
+    help: 'Mindest-Score (1–10), ab dem ein Job als relevant gilt' },
+  { key: 'EXPIRY_THRESHOLD_HOURS', group: 'Analyse & Filter', label: 'Ablauf-Schwelle (Std.)', type: 'int', default: '72', min: 1, max: 8760,
+    help: 'Stunden ohne erneute Sichtung, bis ein gemeldeter Job als abgelaufen markiert wird' },
+
+  { key: 'ANALYSIS_CONCURRENCY', group: 'Performance', label: 'Analyse-Parallelität', type: 'int', default: '2', min: 1, max: 20,
+    help: 'Parallele Claude-Analysen (vorsichtig erhöhen – Rate-Limits)' },
+  { key: 'SCRAPE_CONCURRENCY', group: 'Performance', label: 'Scraper-Parallelität', type: 'int', default: '4', min: 1, max: 20,
+    help: 'Parallele Browser-Worker beim Scrapen' },
+
+  { key: 'CRON_SCHEDULE', group: 'Server', label: 'Zeitplan (Cron)', type: 'text', default: '0 * * * *',
+    help: 'node-cron Ausdruck. Standard: stündlich zur vollen Stunde' },
+  { key: 'GUI_PORT', group: 'Server', label: 'GUI-Port', type: 'int', default: '3000', min: 1, max: 65535,
+    help: 'Port der Weboberfläche (Neustart der GUI nötig)' },
+];
+const SCHEMA_BY_KEY = Object.fromEntries(SETTINGS_SCHEMA.map(s => [s.key, s]));
+
+// Parse a .env file into { KEY: value }, ignoring comments and blank lines.
+function parseEnvFile(raw) {
+  const out = {};
+  for (const line of raw.split('\n')) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    let val = m[2].trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
+      val = val.slice(1, -1);
+    out[m[1]] = val;
+  }
+  return out;
+}
+
+async function readEnvMap() {
+  try { return parseEnvFile(await readFile(ENV_FILE, 'utf-8')); }
+  catch { return {}; }
+}
+
+function envQuote(v) {
+  return /[\s#"'=]/.test(v) ? `"${String(v).replace(/"/g, '\\"')}"` : v;
+}
+
+// Rebuild a tidy, grouped, commented .env from a { KEY: value } map.
+// Unknown keys (added by hand) are preserved in a trailing section.
+function buildEnvFile(values) {
+  const groups = [...new Set(SETTINGS_SCHEMA.map(s => s.group))];
+  let out = '# Verwaltet über den Einstellungen-Tab der Job-Alert-GUI.\n# Kann auch von Hand bearbeitet werden.\n\n';
+  for (const g of groups) {
+    out += `# ── ${g} ${'─'.repeat(Math.max(2, 56 - g.length))}\n`;
+    for (const s of SETTINGS_SCHEMA.filter(x => x.group === g)) {
+      out += `# ${s.help}\n`;
+      const v = values[s.key];
+      if (v == null || v === '') out += `# ${s.key}=${s.default ?? ''}\n`;
+      else out += `${s.key}=${envQuote(v)}\n`;
+    }
+    out += '\n';
+  }
+  const known = new Set(SETTINGS_SCHEMA.map(s => s.key));
+  const extras = Object.entries(values).filter(([k, v]) => !known.has(k) && v != null && v !== '');
+  if (extras.length) {
+    out += '# ── Weitere ──────────────────────────────────────────────\n';
+    for (const [k, v] of extras) out += `${k}=${envQuote(v)}\n`;
+    out += '\n';
+  }
+  return out;
+}
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [server] ${msg}`);
@@ -220,6 +302,74 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, count: parsed.sources.length });
       }
 
+      // GET /api/settings — schema + current values.
+      // Note: this is a localhost self-host tool; the operator owns these keys and
+      // explicitly wants to view/copy them, so secrets are returned too (hidden
+      // behind a reveal toggle in the UI). The .env is gitignored and never shipped.
+      if (method === 'GET' && pathname === '/api/settings') {
+        const current = await readEnvMap();
+        const settings = SETTINGS_SCHEMA.map(s => {
+          const raw = current[s.key];
+          const hasValue = raw != null && raw !== '';
+          const out = {
+            key: s.key, group: s.group, label: s.label, type: s.type,
+            default: s.default ?? '', required: !!s.required, help: s.help,
+            min: s.min, max: s.max,
+          };
+          if (s.type === 'secret') { out.isSet = hasValue; out.value = hasValue ? raw : ''; }
+          else out.value = hasValue ? raw : (s.default ?? '');   // prefill effective value
+          return out;
+        });
+        return sendJson(res, 200, { settings });
+      }
+
+      // PUT /api/settings — validate and persist to .env
+      if (method === 'PUT' && pathname === '/api/settings') {
+        let incoming;
+        try { incoming = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        const updates = incoming && incoming.settings;
+        if (!updates || typeof updates !== 'object')
+          return sendJson(res, 400, { error: 'Erwarte { settings: { KEY: value } }' });
+
+        const final = { ...(await readEnvMap()) };   // keep any unknown/extra keys
+        const errors = [];
+        for (const [key, rawVal] of Object.entries(updates)) {
+          const s = SCHEMA_BY_KEY[key];
+          if (!s) continue;   // ignore unknown keys from the client
+          const val = rawVal == null ? '' : String(rawVal).trim();
+
+          if (s.type === 'secret') {
+            if (val !== '') final[key] = val;   // empty = leave unchanged
+            continue;
+          }
+          if (val === '') { delete final[key]; continue; }   // unset → code default applies
+          if (s.type === 'int') {
+            if (!/^-?\d+$/.test(val)) { errors.push(`${s.label}: muss eine ganze Zahl sein`); continue; }
+            const n = Number(val);
+            if (s.min != null && n < s.min) { errors.push(`${s.label}: mindestens ${s.min}`); continue; }
+            if (s.max != null && n > s.max) { errors.push(`${s.label}: höchstens ${s.max}`); continue; }
+            final[key] = String(n);
+          } else if (key === 'CRON_SCHEDULE') {
+            const parts = val.split(/\s+/);
+            if (parts.length < 5 || parts.length > 6) { errors.push('Zeitplan (Cron): 5 Felder erwartet, z. B. 0 * * * *'); continue; }
+            final[key] = val;
+          } else {
+            final[key] = val;
+          }
+        }
+        if (errors.length) return sendJson(res, 400, { error: errors.join(' · ') });
+
+        await writeFile(ENV_FILE, buildEnvFile(final), 'utf-8');
+        // Reflect into the live process so freshly spawned runs (and in-process
+        // helpers that read process.env at call time) pick changes up immediately.
+        for (const s of SETTINGS_SCHEMA) {
+          if (final[s.key] != null && final[s.key] !== '') process.env[s.key] = final[s.key];
+          else delete process.env[s.key];
+        }
+        return sendJson(res, 200, { ok: true });
+      }
+
       // POST /api/run — start a pipeline run
       if (method === 'POST' && pathname === '/api/run') {
         const started = startRun();
@@ -247,6 +397,27 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      // POST /api/restart — restart the GUI server itself
+      if (method === 'POST' && pathname === '/api/restart') {
+        if (run.active) return sendJson(res, 409, { error: 'Ein Lauf ist aktiv – bitte zuerst beenden.' });
+        sendJson(res, 200, { ok: true });
+        log('Neustart angefordert …');
+        // Under pm2/systemd, exiting is enough — the manager restarts us. Otherwise
+        // re-exec a detached copy of this process. The new instance retries binding
+        // the port (see server 'error' handler) until this one has released it.
+        const managed = process.env.pm_id !== undefined;
+        setTimeout(() => {
+          if (!managed) {
+            const child = spawn(process.argv[0], process.argv.slice(1), {
+              cwd: ROOT, env: process.env, detached: true, stdio: 'inherit',
+            });
+            child.unref();
+          }
+          process.exit(0);
+        }, 300);
+        return;
+      }
+
       return sendJson(res, 404, { error: 'unknown endpoint' });
     }
 
@@ -261,6 +432,16 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  log(`GUI ready → http://localhost:${PORT}`);
+// On restart the freshly spawned process may briefly race the old one for the
+// port; retry binding until it is released instead of crashing.
+let bindRetries = 0;
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE' && bindRetries < 30) {
+    if (bindRetries++ === 0) log(`Port ${PORT} noch belegt – warte auf Freigabe …`);
+    setTimeout(() => server.listen(PORT), 300);
+  } else {
+    log(`FATAL: ${err.message}`);
+    process.exit(1);
+  }
 });
+server.listen(PORT, () => log(`GUI ready → http://localhost:${PORT}`));

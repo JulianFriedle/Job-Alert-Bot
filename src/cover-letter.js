@@ -7,7 +7,8 @@ import { getJobById } from './database.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_PATH = path.join(__dirname, '..', 'config', 'profile.json');
-const MODEL = process.env.COVER_LETTER_MODEL || 'claude-sonnet-4-6';
+// Read at call time so changes from the GUI settings tab apply without a restart.
+const model = () => process.env.COVER_LETTER_MODEL || 'claude-sonnet-4-6';
 
 const SYSTEM_PROMPT =
   'Du bist ein erfahrener Karriereberater und hilfst dabei, professionelle deutsche Anschreiben zu verfassen. ' +
@@ -35,7 +36,7 @@ export async function generateCoverLetter(job) {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   const response = await client.messages.create({
-    model: MODEL,
+    model: model(),
     max_tokens: 1500,
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: buildUserPrompt(profile, job) }],

@@ -272,6 +272,46 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .data-table .t-foot td { border-top: 2px solid var(--border); border-bottom: none; font-weight: 700; color: var(--text); }
 .data-table .t-foot td:first-child { color: var(--muted); }
 
+/* ── Settings ──────────────────────────────────────────────────────────── */
+.settings-groups { display: flex; flex-direction: column; }
+.setting-list { display: flex; flex-direction: column; gap: 18px; }
+.setting { display: grid; grid-template-columns: 220px 1fr; gap: 4px 18px; align-items: start; }
+.set-label {
+  grid-row: 1; font-size: .85rem; font-weight: 600; padding-top: 8px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.set-control { grid-column: 2; grid-row: 1; }
+.set-help { grid-column: 2; grid-row: 2; font-size: .78rem; color: var(--muted); margin: 0; }
+.set-default { color: var(--muted); }
+.set-default code { font-size: .9em; }
+.req {
+  font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent);
+  padding: 1px 7px; border-radius: 100px;
+}
+.set-input {
+  width: 100%; border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  border-radius: var(--radius-sm); padding: 8px 11px; font-size: .85rem; font-family: inherit;
+  outline: none; transition: border-color .12s, box-shadow .12s;
+}
+.set-input:focus { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px var(--accent-soft); }
+.set-input.set-num { max-width: 160px; }
+.secret-wrap { display: flex; gap: 6px; align-items: center; }
+.secret-wrap .set-input { font-family: var(--mono); font-size: .8rem; }
+.set-reveal { padding: 7px 10px; }
+.set-reveal.on { color: var(--accent); }
+@media (max-width: 640px) {
+  .setting { grid-template-columns: 1fr; }
+  .set-label { padding-top: 0; }
+  .set-control, .set-help { grid-column: 1; }
+}
+
+.restart-card { border-color: color-mix(in srgb, var(--red) 25%, var(--border)); }
+.restart-card .muted { margin-bottom: 14px; }
+.btn-restart { border-color: color-mix(in srgb, var(--red) 40%, var(--border)); color: var(--red); }
+.btn-restart:hover { background: color-mix(in srgb, var(--red) 10%, var(--surface)); border-color: var(--red); }
+.btn-restart:disabled { opacity: .6; cursor: not-allowed; }
+
 /* ── Cover-letter modal ────────────────────────────────────────────────── */
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 60;
