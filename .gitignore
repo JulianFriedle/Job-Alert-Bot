@@ -8,6 +8,10 @@ data/*.db-wal
 # Personal data — each user provides their own (copy from *.example)
 config/profile.json
 
+# Setup wizard state + debug-mode sandbox (per-user, never shipped)
+config/setup-state.json
+data/setup-debug/
+
 # Generated exports + Excel lock files
 data/*.xlsx
 data/~$*

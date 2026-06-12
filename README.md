@@ -28,12 +28,25 @@ data/relevant_jobs.xlsx   ← Latest export (gitignored)
 
 ## Setup
 
+> **The easy way — guided setup wizard.** After installing dependencies (step 1),
+> just start the GUI with `npm run gui` and open <http://localhost:3000>. On a fresh
+> install a **setup wizard** pops up automatically and walks you through every step
+> in small, non-technical sub-pages: API key → Telegram (with a *“send test message”*
+> button) → your profile → the career pages to watch. Nothing to edit by hand.
+> The manual steps below are the equivalent if you'd rather configure the files yourself.
+>
+> See [Guided setup wizard](#guided-setup-wizard) for details (including a risk-free
+> **debug mode** for testing the wizard without touching your real data).
+
 ### 1. Install dependencies
 
 ```bash
 npm install
 npx playwright install --with-deps chromium
 ```
+
+> If you're using the wizard, you can stop here and run `npm run gui` — the wizard
+> covers steps 2–6. Read on only for the manual route.
 
 ### 2. Create a Telegram Bot
 
@@ -56,13 +69,20 @@ npx playwright install --with-deps chromium
 cp .env.example .env
 ```
 
-Edit `.env` and fill in the three required secrets:
+Edit `.env`. The Anthropic API key is the only hard requirement; Telegram is optional:
 
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional — only needed if you want Telegram push notifications.
+# Leave blank (or set TELEGRAM_NOTIFICATIONS=off) to rely solely on the web GUI.
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 TELEGRAM_CHAT_ID=987654321
 ```
+
+> **Don't want Telegram?** Skip steps 2–3, leave the two Telegram values blank (or set
+> `TELEGRAM_NOTIFICATIONS=off`), and browse matches in the [web GUI](#web-gui) instead.
+> The setup wizard has a one-click toggle for exactly this.
 
 All other variables are optional — see [Configuration](#configuration) below.
 
@@ -115,8 +135,9 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | Variable | Default | What it does |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | **Required.** Anthropic API key |
-| `TELEGRAM_BOT_TOKEN` | — | **Required.** Telegram bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | — | **Required.** Your Telegram chat ID |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot token from @BotFather (optional — see below) |
+| `TELEGRAM_CHAT_ID` | — | Your Telegram chat ID (optional) |
+| `TELEGRAM_NOTIFICATIONS` | `on` | Set to `off` to disable Telegram push notifications entirely |
 | `ANALYZER_MODEL` | `claude-haiku-4-5-20251001` | Model that scores job relevance |
 | `COVER_LETTER_MODEL` | `claude-sonnet-4-6` | Model that writes cover letters |
 | `MIN_RELEVANCE_SCORE` | `4` | Min AI score (1–10) for a job to count as relevant |
@@ -179,8 +200,38 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 | **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Set application status or hide a job with one click. |
 | **Quellen** | Edit `config/jobs.json` visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. |
 | **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. |
+| **Statistik** | Application heatmap, top sources/companies, run history, and a per-run overview table. |
+| **Einstellungen** | Edit every `.env` variable from a form, restart the GUI, and re-open or test the **setup wizard**. |
 
 The GUI reuses the same SQLite database and config files as the CLI — changes are reflected everywhere. The light/dark theme follows your OS setting.
+
+### Guided setup wizard
+
+The first time you open the GUI with required configuration missing, a step-by-step
+**setup wizard** opens automatically. Each step is its own small sub-page, so even a
+non-technical user can get going without editing any files:
+
+1. **Anthropic API key**
+2. **Telegram** *(optional)* — bot token + chat ID, with a *“send test message”* button to verify it works, or a toggle to skip notifications and use only the GUI
+3. **Your profile** — name, summary, desired roles, locations, … (what the AI matches against)
+4. **Career pages** — add the company sites to watch
+5. *(optional)* **Title filters** and **fine-tuning** (score threshold, schedule)
+
+Only the steps you still need are shown. That means **after an update that introduces a
+new required setting, only that one new step appears** — you're never asked to redo
+everything. You can re-open the wizard any time from **Einstellungen → Assistent öffnen**.
+
+Behind the scenes the wizard writes the same files you'd edit by hand
+(`.env`, `config/profile.json`, `config/jobs.json`, `config/filters.json`) and records
+which steps are done in `config/setup-state.json` (gitignored).
+
+#### Debug mode (test the wizard safely)
+
+**Einstellungen → 🧪 Im Debug-Modus testen** runs the entire wizard against a throwaway
+sandbox under `data/setup-debug/`. Forms are pre-filled from your real config so it feels
+realistic, but **every save goes to the sandbox — your real `.env` and `config/` files are
+never modified or deleted**, and the full flow is always shown so you can rehearse it end to
+end. Delete the `data/setup-debug/` folder to discard the sandbox.
 
 Keep the process running in the background with a process manager like `pm2`:
 

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import { scrapeAll, fetchDescriptions } from './scraper.js';
 import { isNewJob, saveJob, markAnalyzed, markNotified, getUnanalyzedJobs, getRelevantUnnotifiedJobs, getRelevantCountBySource, updateLastSeenBatch, getJobsToExpire, markExpired, saveRunSnapshot } from './database.js';
 import { analyzeJob } from './analyzer.js';
-import { notifyBatch, notifyExpired } from './notifier.js';
+import { notifyBatch, notifyExpired, isTelegramEnabled } from './notifier.js';
 import { exportToExcel } from './exporter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -266,32 +266,40 @@ export async function runOnce() {
   ));
   log(`⏱  Analysis (${toAnalyze.length} jobs): ${tock('analysis')}`);
 
-  // 8. Send notifications — use cached analysis, only re-call Claude if truly missing
+  // 8. Send notifications — use cached analysis, only re-call Claude if truly missing.
+  //    Telegram is optional: when disabled, skip sending (and skip marking jobs as
+  //    "notified", since they weren't) — relevant jobs remain visible in the GUI.
   tick('notifications');
   const toNotify = getRelevantUnnotifiedJobs();
-  log(`Sending notifications for ${toNotify.length} job(s)...`);
 
   let notifiedCount = 0;
-  if (toNotify.length > 0) {
-    const pairs = [];
-    for (const job of toNotify) {
-      const analysis = analysisCache.get(job.id) ?? await analyzeJob(job).catch(() => null);
-      if (analysis) pairs.push({ job, analysis });
-    }
+  if (!isTelegramEnabled()) {
+    if (toNotify.length > 0)
+      log(`Telegram nicht aktiv — ${toNotify.length} relevante(r) Job(s) nur in der GUI sichtbar (npm run gui).`);
+  } else {
+    log(`Sending notifications for ${toNotify.length} job(s)...`);
+    if (toNotify.length > 0) {
+      const pairs = [];
+      for (const job of toNotify) {
+        const analysis = analysisCache.get(job.id) ?? await analyzeJob(job).catch(() => null);
+        if (analysis) pairs.push({ job, analysis });
+      }
 
-    notifiedCount = await notifyBatch(pairs);
+      notifiedCount = await notifyBatch(pairs);
 
-    for (const { job } of pairs) {
-      try {
-        markNotified(job.id);
-        if (sourceStats[job.source]) sourceStats[job.source].notified++;
-      } catch (err) { log(`ERROR marking notified "${job.title}": ${err.message}`); }
+      for (const { job } of pairs) {
+        try {
+          markNotified(job.id);
+          if (sourceStats[job.source]) sourceStats[job.source].notified++;
+        } catch (err) { log(`ERROR marking notified "${job.title}": ${err.message}`); }
+      }
     }
   }
   log(`⏱  Notifications (${toNotify.length} jobs): ${tock('notifications')}`);
 
-  // 9. Detect and notify expired jobs (notified but not seen for 3+ days)
-  const expiredJobs = getJobsToExpire(EXPIRY_THRESHOLD_HOURS);
+  // 9. Detect and notify expired jobs (notified but not seen for 3+ days).
+  //    Only relevant when Telegram is active (expiry alerts go out via Telegram).
+  const expiredJobs = isTelegramEnabled() ? getJobsToExpire(EXPIRY_THRESHOLD_HOURS) : [];
   let expiredCount = 0;
   if (expiredJobs.length > 0) {
     log(`${expiredJobs.length} job(s) no longer listed — sending expiry notifications...`);

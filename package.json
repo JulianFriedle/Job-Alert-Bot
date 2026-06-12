@@ -1,7 +1,7 @@
 {
   "name": "job-alert-system",
-  "version": "1.0.0",
-  "description": "Automated job alert system with AI relevance analysis and Telegram notifications",
+  "version": "1.2.0",
+  "description": "Automat1ed job alert system with AI relevance analysis and Telegram notifications",
   "type": "module",
   "main": "index.js",
   "license": "GPL-3.0-or-later",

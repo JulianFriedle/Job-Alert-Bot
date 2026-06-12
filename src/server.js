@@ -13,6 +13,7 @@ import {
   getAppliedByCompany, getStatusBreakdown, getRunHistory, getTotals,
 } from './database.js';
 import { generateCoverLetter } from './cover-letter.js';
+import { handleSetupApi } from './setup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -27,10 +28,12 @@ const PORT = process.env.GUI_PORT || 3000;
 const SETTINGS_SCHEMA = [
   { key: 'ANTHROPIC_API_KEY', group: 'Schlüssel & Telegram', label: 'Anthropic API Key', type: 'secret', required: true,
     help: 'API-Schlüssel von console.anthropic.com' },
-  { key: 'TELEGRAM_BOT_TOKEN', group: 'Schlüssel & Telegram', label: 'Telegram Bot Token', type: 'secret', required: true,
-    help: 'Bot-Token von @BotFather' },
-  { key: 'TELEGRAM_CHAT_ID', group: 'Schlüssel & Telegram', label: 'Telegram Chat ID', type: 'secret', required: true,
-    help: 'Deine Chat-ID für Benachrichtigungen' },
+  { key: 'TELEGRAM_BOT_TOKEN', group: 'Schlüssel & Telegram', label: 'Telegram Bot Token', type: 'secret',
+    help: 'Bot-Token von @BotFather (optional – leer lassen, wenn Telegram nicht genutzt wird)' },
+  { key: 'TELEGRAM_CHAT_ID', group: 'Schlüssel & Telegram', label: 'Telegram Chat ID', type: 'secret',
+    help: 'Deine Chat-ID für Benachrichtigungen (optional)' },
+  { key: 'TELEGRAM_NOTIFICATIONS', group: 'Schlüssel & Telegram', label: 'Telegram aktiv', type: 'text', default: 'on',
+    help: "Auf 'off' setzen, um Telegram-Benachrichtigungen abzuschalten – relevante Jobs bleiben in der GUI sichtbar" },
 
   { key: 'ANALYZER_MODEL', group: 'KI-Modelle', label: 'Analyse-Modell', type: 'text', default: 'claude-haiku-4-5-20251001',
     help: 'Claude-Modell zur Relevanz-Bewertung (günstig/schnell empfohlen)' },
@@ -218,6 +221,12 @@ const server = http.createServer(async (req, res) => {
   try {
     // ---- API ----
     if (pathname.startsWith('/api/')) {
+
+      // ---- Setup wizard (delegated to setup.js) ----
+      if (pathname.startsWith('/api/setup')) {
+        const handled = await handleSetupApi(req, res, url, { sendJson, readBody });
+        if (handled) return;
+      }
 
       // GET /api/jobs — all relevant jobs (the dashboard list)
       if (method === 'GET' && pathname === '/api/jobs') {

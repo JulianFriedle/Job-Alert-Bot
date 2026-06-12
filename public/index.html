@@ -140,6 +140,15 @@
       <div class="settings-groups" id="settings-groups"></div>
       <p class="save-hint" id="settings-msg"></p>
 
+      <div class="card">
+        <div class="card-head"><h2>Einrichtungs-Assistent</h2></div>
+        <p class="muted">Den geführten Ersteinrichtungs-Assistenten erneut öffnen, oder ihn gefahrlos im Debug-Modus testen (schreibt in eine Sandbox, deine echten Daten bleiben unberührt).</p>
+        <div class="panel-actions" style="margin-top:12px">
+          <button class="btn" id="reopen-setup">⚙ Assistent öffnen</button>
+          <button class="btn" id="debug-setup" title="Test-Lauf in Sandbox – ändert nichts an deinen Daten">🧪 Im Debug-Modus testen</button>
+        </div>
+      </div>
+
       <div class="card restart-card">
         <div class="card-head"><h2>Dienst neu starten</h2></div>
         <p class="muted">Startet den GUI-Server neu, damit Änderungen am <code>GUI-Port</code> übernommen werden. Laufende Pipeline-Läufe bitte vorher beenden.</p>
@@ -172,8 +181,35 @@
     </div>
   </div>
 
+  <!-- ───────── SETUP WIZARD ───────── -->
+  <div class="modal-backdrop setup-backdrop" id="setup-modal" hidden>
+    <div class="modal setup-modal" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+      <header class="modal-head setup-head">
+        <div>
+          <span class="setup-debug-badge" id="setup-debug-badge" hidden>🧪 Debug-Modus · Sandbox</span>
+          <h2 id="setup-title">Einrichtung</h2>
+          <p class="muted" id="setup-subtitle"></p>
+        </div>
+        <button class="btn btn-ghost" id="setup-close" title="Schließen">✕</button>
+      </header>
+
+      <div class="setup-progress" id="setup-progress"></div>
+
+      <div class="modal-body setup-body" id="setup-body"></div>
+
+      <footer class="modal-foot setup-foot">
+        <p class="save-hint setup-msg" id="setup-msg"></p>
+        <span class="setup-foot-spacer"></span>
+        <button class="btn" id="setup-skip" hidden>Überspringen</button>
+        <button class="btn" id="setup-back" hidden>← Zurück</button>
+        <button class="btn btn-primary" id="setup-next">Weiter →</button>
+      </footer>
+    </div>
+  </div>
+
   <div class="toast" id="toast" hidden></div>
 
+  <script src="setup.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

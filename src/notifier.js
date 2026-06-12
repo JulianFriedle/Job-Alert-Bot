@@ -22,6 +22,14 @@ function getBot() {
   return _bot;
 }
 
+// Telegram is optional. It is "enabled" only when not explicitly switched off AND
+// both credentials are present. When disabled, the pipeline silently skips sending
+// — relevant jobs are still saved and visible in the web GUI.
+export function isTelegramEnabled() {
+  if (String(process.env.TELEGRAM_NOTIFICATIONS || '').trim().toLowerCase() === 'off') return false;
+  return Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
+}
+
 function formatMessage(job, analysis) {
   const reasons = (analysis.reasons || []).map(r => `• ${escapeMarkdown(r)}`).join('\n') || '• N/A';
   const concerns = (analysis.concerns || []).map(c => `• ${escapeMarkdown(c)}`).join('\n') || '• None';
@@ -69,6 +77,7 @@ export async function notify(job, analysis) {
 }
 
 export async function notifyExpired(job) {
+  if (!isTelegramEnabled()) return false;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!chatId) throw new Error('TELEGRAM_CHAT_ID is not set');
   const bot = getBot();
@@ -87,6 +96,10 @@ export async function notifyExpired(job) {
 }
 
 export async function notifyBatch(jobAnalysisPairs) {
+  if (!isTelegramEnabled()) {
+    if (jobAnalysisPairs.length) log(`Telegram disabled — skipping ${jobAnalysisPairs.length} notification(s).`);
+    return 0;
+  }
   let sent = 0;
   for (const { job, analysis } of jobAnalysisPairs) {
     try {
