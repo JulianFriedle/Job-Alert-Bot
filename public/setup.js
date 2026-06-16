@@ -43,7 +43,7 @@
       const status = await api('/api/setup/status' + qs());
       firstRun = status.firstRun;
       const stepPages = status.steps.filter(s => s.pending);
-      if (!debug && stepPages.length === 0) { note('Einrichtung ist bereits vollständig.'); return; }
+      if (!debug && stepPages.length === 0) { note(t('wiz.alreadyComplete')); return; }
       pages = [];
       if (firstRun) pages.push('welcome');
       pages.push(...stepPages);
@@ -52,7 +52,7 @@
       el.modal.hidden = false;
       render();
     } catch (err) {
-      note('Einrichtung konnte nicht geladen werden: ' + err.message);
+      note(t('wiz.loadFailed') + err.message);
     }
   }
 
@@ -69,7 +69,10 @@
   // ── field controls ──────────────────────────────────────────────────────--
   function fieldControl(f) {
     const id = `su-${f.key.replace(/\W/g, '_')}`;
-    const req = f.required ? '<span class="req">erforderlich</span>' : '';
+    const label = wzField(f.key, 'label') ?? f.label;
+    const help = wzField(f.key, 'help') ?? f.help;
+    const placeholder = wzField(f.key, 'placeholder') ?? f.placeholder;
+    const req = f.required ? `<span class="req">${esc(t('wiz.required'))}</span>` : '';
     const da = `data-key="${esc(f.key)}" data-type="${f.type}"`;
     let control;
 
@@ -78,9 +81,9 @@
       return `<div class="setting su-field su-toggle-field">
         <label class="su-toggle">
           <input type="checkbox" id="${id}" ${da} ${on ? 'checked' : ''}>
-          <span>${esc(f.label)}</span>
+          <span>${esc(label)}</span>
         </label>
-        ${f.help ? `<p class="set-help">${esc(f.help)}</p>` : ''}
+        ${help ? `<p class="set-help">${esc(help)}</p>` : ''}
       </div>`;
     }
 
@@ -88,41 +91,41 @@
       const rows = (f.value || []).map(sourceRow).join('');
       control = `<div class="su-sources" ${da}>
         <div class="su-source-list">${rows}</div>
-        <button type="button" class="btn su-add-source">+ Quelle</button>
+        <button type="button" class="btn su-add-source">${esc(t('wiz.addSource'))}</button>
       </div>`;
     } else if (f.type === 'list') {
       const text = Array.isArray(f.value) ? f.value.join('\n') : (f.value || '');
       control = `<textarea id="${id}" class="set-input su-textarea" ${da}
-        placeholder="${esc(f.placeholder)}" spellcheck="false" rows="4">${esc(text)}</textarea>`;
+        placeholder="${esc(placeholder)}" spellcheck="false" rows="4">${esc(text)}</textarea>`;
     } else if (f.type === 'textarea') {
       control = `<textarea id="${id}" class="set-input su-textarea" ${da}
-        placeholder="${esc(f.placeholder)}" spellcheck="false" rows="4">${esc(f.value || '')}</textarea>`;
+        placeholder="${esc(placeholder)}" spellcheck="false" rows="4">${esc(f.value || '')}</textarea>`;
     } else if (f.type === 'secret') {
       control = `<div class="secret-wrap">
         <input id="${id}" class="set-input" type="password" ${da} value="${esc(f.value || '')}"
-          placeholder="${esc(f.placeholder)}" autocomplete="off" spellcheck="false">
-        <button type="button" class="btn btn-ghost su-reveal" title="Anzeigen/Verbergen">👁</button>
+          placeholder="${esc(placeholder)}" autocomplete="off" spellcheck="false">
+        <button type="button" class="btn btn-ghost su-reveal" title="${esc(t('wiz.reveal'))}">👁</button>
       </div>`;
     } else if (f.type === 'int') {
       control = `<input id="${id}" class="set-input set-num" type="number" ${da}
-        value="${esc(f.value ?? '')}" placeholder="${esc(f.placeholder || f.default)}"${f.min != null ? ` min="${f.min}"` : ''}${f.max != null ? ` max="${f.max}"` : ''}>`;
+        value="${esc(f.value ?? '')}" placeholder="${esc(placeholder || f.default)}"${f.min != null ? ` min="${f.min}"` : ''}${f.max != null ? ` max="${f.max}"` : ''}>`;
     } else {
       control = `<input id="${id}" class="set-input" type="text" ${da}
-        value="${esc(f.value || '')}" placeholder="${esc(f.placeholder)}" spellcheck="false">`;
+        value="${esc(f.value || '')}" placeholder="${esc(placeholder)}" spellcheck="false">`;
     }
 
-    const help = f.help ? `<p class="set-help">${esc(f.help)}</p>` : '';
+    const helpHtml = help ? `<p class="set-help">${esc(help)}</p>` : '';
     return `<div class="setting su-field">
-      <label class="set-label" for="${id}">${esc(f.label)} ${req}</label>
-      <div class="set-control">${control}${help}</div>
+      <label class="set-label" for="${id}">${esc(label)} ${req}</label>
+      <div class="set-control">${control}${helpHtml}</div>
     </div>`;
   }
 
   function sourceRow(s = { name: '', url: '' }) {
     return `<div class="source-row su-source-row">
-      <input class="su-name" placeholder="Name" value="${esc(s.name || '')}">
-      <input class="su-url" placeholder="https://… (Karriere-/Stellenseite)" value="${esc(s.url || '')}">
-      <button type="button" class="btn btn-ghost btn-danger su-del" title="Entfernen">✕</button>
+      <input class="su-name" placeholder="${esc(t('wiz.sourceNamePh'))}" value="${esc(s.name || '')}">
+      <input class="su-url" placeholder="${esc(t('wiz.sourceUrlPh'))}" value="${esc(s.url || '')}">
+      <button type="button" class="btn btn-ghost btn-danger su-del" title="${esc(t('wiz.del'))}">✕</button>
     </div>`;
   }
 
@@ -137,40 +140,47 @@
     el.next.disabled = false;
 
     if (page === 'welcome') {
-      el.title.textContent = 'Willkommen 👋';
-      el.subtitle.textContent = 'Richte deinen Job-Alert in wenigen Schritten ein.';
+      el.title.textContent = t('wiz.welcomeTitle');
+      el.subtitle.textContent = t('wiz.welcomeSubtitle');
       el.body.innerHTML = `<div class="su-intro">
-        <p>Dieser Assistent führt dich durch alle nötigen Einstellungen — einen Schritt nach dem anderen.
-        Du brauchst dafür:</p>
+        <div class="su-field su-lang-field">
+          <label class="su-lang-label" for="su-lang">${esc(t('wiz.langLabel'))}</label>
+          <select id="su-lang" class="set-input">
+            <option value="de"${lang === 'de' ? ' selected' : ''}>Deutsch</option>
+            <option value="en"${lang === 'en' ? ' selected' : ''}>English</option>
+          </select>
+        </div>
+        <p>${t('wiz.welcomeBody')}</p>
         <ul class="su-list">
-          <li>einen <strong>Anthropic API-Schlüssel</strong> (für die KI-Bewertung),</li>
-          <li>einen <strong>Telegram-Bot</strong> (für Benachrichtigungen),</li>
-          <li>ein paar Angaben zu <strong>dir</strong> und den <strong>Firmen</strong>, die dich interessieren.</li>
+          <li>${t('wiz.welcomeLi1')}</li>
+          <li>${t('wiz.welcomeLi2')}</li>
+          <li>${t('wiz.welcomeLi3')}</li>
         </ul>
-        <p class="muted">Alles lässt sich später unter „Einstellungen“ ändern.</p>
+        <p class="muted">${esc(t('wiz.welcomeFootnote'))}</p>
       </div>`;
-      el.next.textContent = "Los geht's →";
+      el.next.textContent = t('wiz.start');
       return;
     }
 
     if (page === 'finish') {
-      el.title.textContent = 'Fertig 🎉';
-      el.subtitle.textContent = 'Die Einrichtung ist abgeschlossen.';
+      el.title.textContent = t('wiz.finishTitle');
+      el.subtitle.textContent = t('wiz.finishSubtitle');
       el.body.innerHTML = `<div class="su-intro">
-        <p>Alles eingerichtet! Du kannst jetzt einen ersten Lauf starten, um sofort nach passenden Stellen zu suchen.</p>
-        <label class="su-check"><input type="checkbox" id="su-run-now" ${debug ? 'disabled' : 'checked'}> Ersten Lauf direkt starten</label>
-        ${debug ? '<p class="muted">Im Debug-Modus wird kein echter Lauf gestartet.</p>' : ''}
+        <p>${esc(t('wiz.finishBody'))}</p>
+        <label class="su-check"><input type="checkbox" id="su-run-now" ${debug ? 'disabled' : 'checked'}> ${esc(t('wiz.runNow'))}</label>
+        ${debug ? `<p class="muted">${esc(t('wiz.debugNoRun'))}</p>` : ''}
       </div>`;
-      el.next.textContent = 'Abschließen';
+      el.next.textContent = t('wiz.finish');
       return;
     }
 
     // a real step
-    el.title.textContent = page.title;
-    el.subtitle.textContent = page.subtitle || '';
-    const intro = page.intro ? `<p class="su-step-intro">${esc(page.intro)}</p>` : '';
+    el.title.textContent = wzStep(page.id, 'title') ?? page.title;
+    el.subtitle.textContent = wzStep(page.id, 'subtitle') ?? page.subtitle ?? '';
+    const introTxt = wzStep(page.id, 'intro') ?? page.intro;
+    const intro = introTxt ? `<p class="su-step-intro">${esc(introTxt)}</p>` : '';
     const test = page.test === 'telegram'
-      ? `<div class="su-test"><button type="button" class="btn" id="su-test-tg">✈ Testnachricht senden</button><span class="su-test-result" id="su-test-result"></span></div>`
+      ? `<div class="su-test"><button type="button" class="btn" id="su-test-tg">${esc(t('wiz.testTelegram'))}</button><span class="su-test-result" id="su-test-result"></span></div>`
       : '';
     el.body.innerHTML = intro + page.fields.map(f => {
       const f2 = { ...f, value: page.values[f.key] };
@@ -181,7 +191,7 @@
     if (page.test === 'telegram') applyTelegramToggle(page.values.TELEGRAM_NOTIFICATIONS !== 'off');
 
     el.skip.hidden = page.required;
-    el.next.textContent = (idx === pages.length - 1) ? 'Speichern & Abschließen' : 'Speichern & Weiter →';
+    el.next.textContent = (idx === pages.length - 1) ? t('wiz.complete') : t('wiz.saveNext');
   }
 
   // Grey out + disable the Telegram credential fields and test button when the
@@ -235,13 +245,13 @@
         close();
         if (!debug && runNow) {
           await fetch('/api/run', { method: 'POST' }).catch(() => {});
-          note('Einrichtung fertig – erster Lauf gestartet.');
+          note(t('wiz.completeRun'));
           setTimeout(() => location.reload(), 600);
         } else {
-          note(debug ? 'Debug-Durchlauf abgeschlossen.' : 'Einrichtung abgeschlossen.');
+          note(debug ? t('wiz.debugDone') : t('wiz.setupDone'));
           if (!debug) setTimeout(() => location.reload(), 400);
         }
-      } catch (err) { showMsg('Fehler: ' + err.message, 'err'); }
+      } catch (err) { showMsg(t('wiz.error') + err.message, 'err'); }
       return;
     }
 
@@ -256,7 +266,7 @@
       if (result.status) syncFromStatus(result.status);
       advance();
     } catch (err) {
-      showMsg('Fehler: ' + err.message, 'err');
+      showMsg(t('wiz.error') + err.message, 'err');
       el.next.disabled = false;
     }
   }
@@ -288,13 +298,13 @@
   async function runTelegramTest() {
     const page = pages[idx];
     const out = $('#su-test-result');
-    out.textContent = '…wird gesendet'; out.className = 'su-test-result';
+    out.textContent = t('wiz.sending'); out.className = 'su-test-result';
     try {
       const res = await api('/api/setup/test-telegram' + qs(), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ values: collectStep(page) }),
       });
-      if (res.ok) { out.textContent = '✓ gesendet – schau in deinen Chat!'; out.className = 'su-test-result ok'; }
+      if (res.ok) { out.textContent = t('wiz.testOk'); out.className = 'su-test-result ok'; }
       else { out.textContent = '✗ ' + res.error; out.className = 'su-test-result err'; }
     } catch (err) { out.textContent = '✗ ' + err.message; out.className = 'su-test-result err'; }
   }
@@ -304,7 +314,7 @@
   el.back.addEventListener('click', () => { if (idx > 0) { idx--; render(); } });
   el.skip.addEventListener('click', skip);
   el.close.addEventListener('click', () => {
-    if (!firstRun || debug || confirm('Einrichtung wirklich schließen? Du kannst sie später unter „Einstellungen“ fortsetzen.')) close();
+    if (!firstRun || debug || confirm(t('wiz.closeConfirm'))) close();
   });
 
   el.body.addEventListener('click', (e) => {
@@ -323,8 +333,20 @@
   });
 
   el.body.addEventListener('change', (e) => {
+    // Language picker on the welcome page → switch the whole UI immediately.
+    if (e.target.id === 'su-lang') { setLang(e.target.value); return; }
     const cb = e.target.closest('input[data-type="toggle"]');
     if (cb && cb.dataset.key === 'TELEGRAM_NOTIFICATIONS') applyTelegramToggle(cb.checked);
+  });
+
+  // Re-render the open wizard when the language changes (e.g. from the welcome
+  // picker or the Settings dropdown) so titles, fields and buttons follow suit.
+  onLangChange(() => {
+    if (el.modal.hidden) return;
+    const page = pages[idx];
+    // Keep any values already typed in the current step across the re-render.
+    if (page && typeof page === 'object') Object.assign(page.values, collectStep(page));
+    render();
   });
 
   // Settings buttons

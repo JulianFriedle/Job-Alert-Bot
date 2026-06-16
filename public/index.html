@@ -6,10 +6,15 @@
   <title>Job Alert · Dashboard</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
   <script>
-    // Apply the saved theme before first paint to avoid a flash of the wrong scheme.
+    // Apply the saved scheme, color theme and language before first paint to
+    // avoid a flash of the wrong appearance.
     (function () {
-      try { document.documentElement.dataset.theme = localStorage.getItem('theme') || 'auto'; }
-      catch (e) { document.documentElement.dataset.theme = 'auto'; }
+      try {
+        const d = document.documentElement;
+        d.dataset.theme = localStorage.getItem('theme') || 'auto';
+        d.dataset.palette = localStorage.getItem('palette') || 'default';
+        d.setAttribute('lang', localStorage.getItem('lang') || 'de');
+      } catch (e) { document.documentElement.dataset.theme = 'auto'; }
     })();
   </script>
   <link rel="stylesheet" href="style.css">
@@ -21,15 +26,15 @@
       <h1>Job&nbsp;Alert</h1>
     </div>
     <nav class="tabs" id="tabs">
-      <button class="tab active" data-tab="jobs">Jobs</button>
-      <button class="tab" data-tab="stats">Statistik</button>
-      <button class="tab" data-tab="sources">Quellen</button>
-      <button class="tab" data-tab="profile">Profil</button>
-      <button class="tab" data-tab="prompts">Prompts</button>
-      <button class="tab" data-tab="run">Lauf</button>
-      <button class="tab" data-tab="settings">Einstellungen</button>
+      <button class="tab active" data-tab="jobs" data-i18n="tab.jobs">Jobs</button>
+      <button class="tab" data-tab="stats" data-i18n="tab.stats">Statistik</button>
+      <button class="tab" data-tab="sources" data-i18n="tab.sources">Quellen</button>
+      <button class="tab" data-tab="profile" data-i18n="tab.profile">Profil</button>
+      <button class="tab" data-tab="prompts" data-i18n="tab.prompts">Prompts</button>
+      <button class="tab" data-tab="run" data-i18n="tab.run">Lauf</button>
+      <button class="tab" data-tab="settings" data-i18n="tab.settings">Einstellungen</button>
     </nav>
-    <button class="btn btn-primary" id="quick-run">▶ Lauf starten</button>
+    <button class="btn btn-primary" id="quick-run" data-i18n="btn.startRun">▶ Lauf starten</button>
   </header>
 
   <main>
@@ -38,15 +43,15 @@
       <div class="stats" id="stats"></div>
 
       <div class="toolbar">
-        <input type="search" id="search" placeholder="Suche nach Titel, Firma, Ort…" autocomplete="off">
-        <select id="filter-source"><option value="">Alle Quellen</option></select>
+        <input type="search" id="search" placeholder="Suche nach Titel, Firma, Ort…" data-i18n-ph="jobs.searchPh" autocomplete="off">
+        <select id="filter-source"><option value="" data-i18n="jobs.allSources">Alle Quellen</option></select>
         <select id="filter-status">
-          <option value="">Alle Status</option>
-          <option value="none">Ohne Bewerbung</option>
-          <option value="applied">Beworben</option>
-          <option value="interview">Interview</option>
-          <option value="offer">Angebot</option>
-          <option value="rejected">Abgelehnt</option>
+          <option value="" data-i18n="jobs.allStatuses">Alle Status</option>
+          <option value="none" data-i18n="status.none">Ohne Bewerbung</option>
+          <option value="applied" data-i18n="status.applied">Beworben</option>
+          <option value="interview" data-i18n="status.interview">Interview</option>
+          <option value="offer" data-i18n="status.offer">Angebot</option>
+          <option value="rejected" data-i18n="status.rejected">Abgelehnt</option>
         </select>
         <select id="filter-score">
           <option value="0">Score ≥ 0</option>
@@ -57,7 +62,7 @@
       </div>
 
       <div class="job-list" id="job-list"></div>
-      <div class="empty" id="jobs-empty" hidden>Keine Jobs gefunden.</div>
+      <div class="empty" id="jobs-empty" data-i18n="jobs.empty" hidden>Keine Jobs gefunden.</div>
     </section>
 
     <!-- ───────── STATS ───────── -->
@@ -66,37 +71,37 @@
 
       <div class="card">
         <div class="card-head">
-          <h2>Bewerbungs-Aktivität</h2>
+          <h2 data-i18n="stats.activity">Bewerbungs-Aktivität</h2>
           <span class="muted" id="activity-total"></span>
         </div>
         <div class="heatmap-wrap"><div class="heatmap" id="heatmap"></div></div>
         <div class="heatmap-legend">
-          <span>weniger</span>
+          <span data-i18n="stats.less">weniger</span>
           <span class="hm-cell l0"></span><span class="hm-cell l1"></span>
           <span class="hm-cell l2"></span><span class="hm-cell l3"></span><span class="hm-cell l4"></span>
-          <span>mehr</span>
+          <span data-i18n="stats.more">mehr</span>
         </div>
       </div>
 
       <div class="grid-2">
         <div class="card">
-          <div class="card-head"><h2>Meiste Bewerbungen (Firmen)</h2></div>
+          <div class="card-head"><h2 data-i18n="stats.topCompanies">Meiste Bewerbungen (Firmen)</h2></div>
           <div id="chart-applied"></div>
         </div>
         <div class="card">
-          <div class="card-head"><h2>Top-Quellen (relevante Jobs)</h2></div>
+          <div class="card-head"><h2 data-i18n="stats.topSources">Top-Quellen (relevante Jobs)</h2></div>
           <div id="chart-sources"></div>
         </div>
       </div>
 
       <div class="card" id="card-runhistory" hidden>
-        <div class="card-head"><h2>Lauf-Verlauf</h2><span class="muted">gefunden vs. relevant pro Lauf</span></div>
+        <div class="card-head"><h2 data-i18n="stats.runHistory">Lauf-Verlauf</h2><span class="muted" data-i18n="stats.runHistorySub">gefunden vs. relevant pro Lauf</span></div>
         <div id="chart-runs"></div>
       </div>
 
       <div class="card">
         <div class="card-head">
-          <h2>Lauf-Übersicht</h2>
+          <h2 data-i18n="stats.runOverview">Lauf-Übersicht</h2>
           <span class="muted" id="overview-sub"></span>
         </div>
         <div class="table-scroll"><table class="data-table" id="overview-table"></table></div>
@@ -107,12 +112,12 @@
     <section class="view" id="view-sources">
       <div class="panel-head">
         <div>
-          <h2>Karriereseiten</h2>
+          <h2 data-i18n="sources.title">Karriereseiten</h2>
           <p class="muted" id="sources-count"></p>
         </div>
         <div class="panel-actions">
-          <button class="btn" id="add-source">+ Quelle</button>
-          <button class="btn btn-primary" id="save-sources">Speichern</button>
+          <button class="btn" id="add-source" data-i18n="sources.addSource">+ Quelle</button>
+          <button class="btn btn-primary" id="save-sources" data-i18n="btn.save">Speichern</button>
         </div>
       </div>
       <div class="source-list" id="source-list"></div>
@@ -123,12 +128,12 @@
     <section class="view" id="view-profile">
       <div class="panel-head">
         <div>
-          <h2>Profil / Lebenslauf</h2>
-          <p class="muted">Diese Angaben sendet die KI bei jeder Bewertung und beim Anschreiben. Je konkreter, desto besser die Treffer. Mehrfachfelder: ein Eintrag pro Zeile.</p>
+          <h2 data-i18n="profile.title">Profil / Lebenslauf</h2>
+          <p class="muted" data-i18n="profile.intro">Diese Angaben sendet die KI bei jeder Bewertung und beim Anschreiben. Je konkreter, desto besser die Treffer. Mehrfachfelder: ein Eintrag pro Zeile.</p>
         </div>
         <div class="panel-actions">
-          <button class="btn" id="profile-reset">Zurücksetzen</button>
-          <button class="btn btn-primary" id="save-profile">Speichern</button>
+          <button class="btn" id="profile-reset" data-i18n="btn.reset">Zurücksetzen</button>
+          <button class="btn btn-primary" id="save-profile" data-i18n="btn.save">Speichern</button>
         </div>
       </div>
       <div class="settings-groups" id="profile-groups"></div>
@@ -139,12 +144,12 @@
     <section class="view" id="view-prompts">
       <div class="panel-head">
         <div>
-          <h2>KI-Prompts</h2>
-          <p class="muted">Anweisungen, die an Claude gesendet werden. Änderungen greifen sofort beim nächsten Lauf / Anschreiben. Leeres Feld = Standard.</p>
+          <h2 data-i18n="prompts.title">KI-Prompts</h2>
+          <p class="muted" data-i18n="prompts.intro">Anweisungen, die an Claude gesendet werden. Änderungen greifen sofort beim nächsten Lauf / Anschreiben. Leeres Feld = Standard.</p>
         </div>
         <div class="panel-actions">
-          <button class="btn" id="prompts-reset">Zurücksetzen</button>
-          <button class="btn btn-primary" id="save-prompts">Speichern</button>
+          <button class="btn" id="prompts-reset" data-i18n="btn.reset">Zurücksetzen</button>
+          <button class="btn btn-primary" id="save-prompts" data-i18n="btn.save">Speichern</button>
         </div>
       </div>
       <div class="settings-groups" id="prompts-groups"></div>
@@ -155,55 +160,71 @@
     <section class="view" id="view-run">
       <div class="panel-head">
         <div>
-          <h2>Pipeline-Lauf</h2>
-          <p class="muted">Startet <code>node index.js --once</code>: scrapen, analysieren, benachrichtigen, exportieren.</p>
+          <h2 data-i18n="run.title">Pipeline-Lauf</h2>
+          <p class="muted" data-i18n-html="run.intro">Startet <code>node index.js --once</code>: scrapen, analysieren, benachrichtigen, exportieren.</p>
         </div>
         <div class="panel-actions">
-          <span class="run-indicator" id="run-indicator">● bereit</span>
-          <button class="btn btn-primary" id="run-btn">▶ Lauf starten</button>
+          <span class="run-indicator" id="run-indicator" data-i18n="run.ready">● bereit</span>
+          <button class="btn btn-primary" id="run-btn" data-i18n="btn.startRun">▶ Lauf starten</button>
         </div>
       </div>
-      <pre class="console" id="console"><span class="console-placeholder">Noch keine Ausgabe. Starte einen Lauf, um Live-Logs zu sehen.</span></pre>
+      <pre class="console" id="console"><span class="console-placeholder" data-i18n="run.consolePlaceholder">Noch keine Ausgabe. Starte einen Lauf, um Live-Logs zu sehen.</span></pre>
     </section>
 
     <!-- ───────── SETTINGS ───────── -->
     <section class="view" id="view-settings">
       <div class="panel-head">
         <div>
-          <h2>Einstellungen</h2>
-          <p class="muted">Alle Variablen aus <code>.env</code>. Änderungen greifen beim nächsten Lauf; <code>GUI-Port</code> erst nach Neustart der GUI.</p>
+          <h2 data-i18n="settings.title">Einstellungen</h2>
+          <p class="muted" data-i18n-html="settings.intro">Alle Variablen aus <code>.env</code>. Änderungen greifen beim nächsten Lauf; <code>GUI-Port</code> erst nach Neustart der GUI.</p>
         </div>
         <div class="panel-actions">
-          <button class="btn" id="settings-reset">Zurücksetzen</button>
-          <button class="btn btn-primary" id="save-settings">Speichern</button>
+          <button class="btn" id="settings-reset" data-i18n="btn.reset">Zurücksetzen</button>
+          <button class="btn btn-primary" id="save-settings" data-i18n="btn.save">Speichern</button>
         </div>
       </div>
       <div class="settings-groups" id="settings-groups"></div>
       <p class="save-hint" id="settings-msg"></p>
 
       <div class="card">
-        <div class="card-head"><h2>Darstellung</h2></div>
-        <p class="muted">Farbschema der Oberfläche. „Automatisch“ folgt der Einstellung deines Systems.</p>
+        <div class="card-head"><h2 data-i18n="appearance.title">Darstellung</h2></div>
+        <p class="muted" data-i18n="appearance.schemeHelp">Farbschema der Oberfläche. „Automatisch“ folgt der Einstellung deines Systems.</p>
         <div class="theme-toggle" id="theme-toggle" role="group" aria-label="Farbschema">
-          <button class="btn theme-opt" data-theme-val="light">☀️ Hell</button>
-          <button class="btn theme-opt" data-theme-val="dark">🌙 Dunkel</button>
-          <button class="btn theme-opt" data-theme-val="auto">🖥️ Automatisch</button>
+          <button class="btn theme-opt" data-theme-val="light" data-i18n="appearance.light">☀️ Hell</button>
+          <button class="btn theme-opt" data-theme-val="dark" data-i18n="appearance.dark">🌙 Dunkel</button>
+          <button class="btn theme-opt" data-theme-val="auto" data-i18n="appearance.auto">🖥️ Automatisch</button>
+        </div>
+
+        <div class="appearance-field">
+          <label for="palette-select" data-i18n="appearance.themeLabel">Farbthema</label>
+          <select id="palette-select" class="set-input">
+            <option value="default" data-i18n="appearance.themeDefault">Standard (Grün)</option>
+            <option value="pink" data-i18n="appearance.themePink">🌸 Rosa</option>
+          </select>
+        </div>
+
+        <div class="appearance-field">
+          <label for="lang-select" data-i18n="appearance.langLabel">Sprache</label>
+          <select id="lang-select" class="set-input">
+            <option value="de">Deutsch</option>
+            <option value="en">English</option>
+          </select>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-head"><h2>Einrichtungs-Assistent</h2></div>
-        <p class="muted">Den geführten Ersteinrichtungs-Assistenten erneut öffnen, oder ihn gefahrlos im Debug-Modus testen (schreibt in eine Sandbox, deine echten Daten bleiben unberührt).</p>
+        <div class="card-head"><h2 data-i18n="setup.cardTitle">Einrichtungs-Assistent</h2></div>
+        <p class="muted" data-i18n="setup.cardHelp">Den geführten Ersteinrichtungs-Assistenten erneut öffnen, oder ihn gefahrlos im Debug-Modus testen (schreibt in eine Sandbox, deine echten Daten bleiben unberührt).</p>
         <div class="panel-actions" style="margin-top:12px">
-          <button class="btn" id="reopen-setup">⚙ Assistent öffnen</button>
-          <button class="btn" id="debug-setup" title="Test-Lauf in Sandbox – ändert nichts an deinen Daten">🧪 Im Debug-Modus testen</button>
+          <button class="btn" id="reopen-setup" data-i18n="setup.openBtn">⚙ Assistent öffnen</button>
+          <button class="btn" id="debug-setup" title="Test-Lauf in Sandbox – ändert nichts an deinen Daten" data-i18n="setup.debugBtn" data-i18n-title="setup.debugBtnTitle">🧪 Im Debug-Modus testen</button>
         </div>
       </div>
 
       <div class="card restart-card">
-        <div class="card-head"><h2>Dienst neu starten</h2></div>
-        <p class="muted">Startet den GUI-Server neu, damit Änderungen am <code>GUI-Port</code> übernommen werden. Laufende Pipeline-Läufe bitte vorher beenden.</p>
-        <button class="btn btn-restart" id="restart-btn">↻ Jetzt neu starten</button>
+        <div class="card-head"><h2 data-i18n="restart.title">Dienst neu starten</h2></div>
+        <p class="muted" data-i18n-html="restart.help">Startet den GUI-Server neu, damit Änderungen am <code>GUI-Port</code> übernommen werden. Laufende Pipeline-Läufe bitte vorher beenden.</p>
+        <button class="btn btn-restart" id="restart-btn" data-i18n="restart.btn">↻ Jetzt neu starten</button>
       </div>
     </section>
   </main>
@@ -213,21 +234,21 @@
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cl-title">
       <header class="modal-head">
         <div>
-          <h2 id="cl-title">Anschreiben</h2>
+          <h2 id="cl-title" data-i18n="cover.title">Anschreiben</h2>
           <p class="muted" id="cl-sub"></p>
         </div>
-        <button class="btn btn-ghost" id="cl-close" title="Schließen">✕</button>
+        <button class="btn btn-ghost" id="cl-close" title="Schließen" data-i18n-title="cover.close">✕</button>
       </header>
       <div class="modal-body" id="cl-body">
         <div class="cl-loading" id="cl-loading">
-          <span class="spinner"></span> Anschreiben wird erstellt…
+          <span class="spinner"></span> <span data-i18n="cover.loading">Anschreiben wird erstellt…</span>
         </div>
         <textarea class="cl-text" id="cl-text" spellcheck="false" hidden></textarea>
         <div class="cl-error" id="cl-error" hidden></div>
       </div>
       <footer class="modal-foot">
-        <button class="btn" id="cl-regen" hidden>↻ Neu generieren</button>
-        <button class="btn btn-primary" id="cl-copy" hidden>📋 Kopieren</button>
+        <button class="btn" id="cl-regen" data-i18n="cover.regen" hidden>↻ Neu generieren</button>
+        <button class="btn btn-primary" id="cl-copy" data-i18n="cover.copy" hidden>📋 Kopieren</button>
       </footer>
     </div>
   </div>
@@ -237,11 +258,11 @@
     <div class="modal setup-modal" role="dialog" aria-modal="true" aria-labelledby="setup-title">
       <header class="modal-head setup-head">
         <div>
-          <span class="setup-debug-badge" id="setup-debug-badge" hidden>🧪 Debug-Modus · Sandbox</span>
+          <span class="setup-debug-badge" id="setup-debug-badge" data-i18n="wiz.debugBadge" hidden>🧪 Debug-Modus · Sandbox</span>
           <h2 id="setup-title">Einrichtung</h2>
           <p class="muted" id="setup-subtitle"></p>
         </div>
-        <button class="btn btn-ghost" id="setup-close" title="Schließen">✕</button>
+        <button class="btn btn-ghost" id="setup-close" title="Schließen" data-i18n-title="wiz.close">✕</button>
       </header>
 
       <div class="setup-progress" id="setup-progress"></div>
@@ -251,15 +272,16 @@
       <footer class="modal-foot setup-foot">
         <p class="save-hint setup-msg" id="setup-msg"></p>
         <span class="setup-foot-spacer"></span>
-        <button class="btn" id="setup-skip" hidden>Überspringen</button>
-        <button class="btn" id="setup-back" hidden>← Zurück</button>
-        <button class="btn btn-primary" id="setup-next">Weiter →</button>
+        <button class="btn" id="setup-skip" data-i18n="wiz.skip" hidden>Überspringen</button>
+        <button class="btn" id="setup-back" data-i18n="wiz.back" hidden>← Zurück</button>
+        <button class="btn btn-primary" id="setup-next" data-i18n="wiz.next">Weiter →</button>
       </footer>
     </div>
   </div>
 
   <div class="toast" id="toast" hidden></div>
 
+  <script src="i18n.js"></script>
   <script src="setup.js"></script>
   <script src="app.js"></script>
 </body>

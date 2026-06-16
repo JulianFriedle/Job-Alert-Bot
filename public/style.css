@@ -61,6 +61,44 @@
   }
 }
 
+/* ── Pink "girly" palette ──────────────────────────────────────────────────
+   A second theme selectable under "Darstellung". It only re-maps the accent /
+   "good score" color tokens, so it layers on top of either light or dark mode.
+   Good scores (--green-bg / .s-high badges, offer pills, accent buttons) turn
+   a soft pink instead of green. */
+:root[data-palette="pink"] {
+  --accent:     #e0529c;
+  --accent-ink: #b03075;
+  --accent-soft:#fbe4f1;
+  --green:      #e0529c;
+  --green-bg:   #fcdcec;
+}
+/* Dark + pink: keep the pinks readable on the dark surfaces. Two attributes →
+   higher specificity than the single-attribute dark/auto rules above, so this
+   wins when both dark mode and the pink palette are active. */
+:root[data-palette="pink"][data-theme="dark"] {
+  --accent:     #f06fb0;
+  --accent-ink: #f9b8d8;
+  --accent-soft:#3a1d2e;
+  --green:      #f06fb0;
+  --green-bg:   #3a1d2e;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="pink"][data-theme="auto"],
+  :root[data-palette="pink"]:not([data-theme]) {
+    --accent:     #f06fb0;
+    --accent-ink: #f9b8d8;
+    --accent-soft:#3a1d2e;
+    --green:      #f06fb0;
+    --green-bg:   #3a1d2e;
+  }
+}
+/* Pinkify the activity heatmap too (its greens are hard-coded, not tokens). */
+:root[data-palette="pink"] .hm-cell.l1 { background: #f9c5dd; }
+:root[data-palette="pink"] .hm-cell.l2 { background: #f191bf; }
+:root[data-palette="pink"] .hm-cell.l3 { background: #e0529c; }
+:root[data-palette="pink"] .hm-cell.l4 { background: #b03075; }
+
 * { box-sizing: border-box; }
 /* The `hidden` attribute must always win over component display rules
    (e.g. .modal-backdrop { display: grid }), otherwise toggling .hidden in JS has no effect. */
@@ -330,6 +368,10 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .theme-opt.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .theme-opt.active:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
 
+.appearance-field { display: flex; align-items: center; gap: 14px; margin-top: 16px; flex-wrap: wrap; }
+.appearance-field > label { font-size: .85rem; font-weight: 600; min-width: 120px; }
+.appearance-field select { max-width: 220px; }
+
 .restart-card { border-color: color-mix(in srgb, var(--red) 25%, var(--border)); }
 .restart-card .muted { margin-bottom: 14px; }
 .btn-restart { border-color: color-mix(in srgb, var(--red) 40%, var(--border)); color: var(--red); }
@@ -424,6 +466,13 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 
 .setup-body { min-height: 220px; }
 .su-intro p { font-size: .9rem; line-height: 1.6; margin: 0 0 12px; }
+.su-lang-field {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--surface-2); border-radius: var(--radius-sm);
+  padding: 12px 14px; margin-bottom: 16px;
+}
+.su-lang-label { font-size: .9rem; font-weight: 600; }
+.su-lang-field select { max-width: 220px; }
 .su-step-intro { font-size: .85rem; color: var(--muted); line-height: 1.6; margin: 0 0 16px; }
 .su-list { margin: 0 0 12px; padding-left: 20px; font-size: .9rem; line-height: 1.7; }
 .su-check { display: flex; align-items: center; gap: 8px; font-size: .9rem; margin-top: 14px; cursor: pointer; }
