@@ -36,6 +36,8 @@ const SETTINGS_SCHEMA = [
     help: 'Deine Chat-ID für Benachrichtigungen (optional)' },
   { key: 'TELEGRAM_NOTIFICATIONS', group: 'Schlüssel & Telegram', label: 'Telegram aktiv', type: 'text', default: 'on',
     help: "Auf 'off' setzen, um Telegram-Benachrichtigungen abzuschalten – relevante Jobs bleiben in der GUI sichtbar" },
+  { key: 'EXPIRY_NOTIFICATIONS', group: 'Schlüssel & Telegram', label: 'Ablauf-Benachrichtigungen', type: 'text', default: 'on',
+    help: "Auf 'off' setzen, um keine Telegram-Nachrichten für ausgelaufene Jobs zu senden – neue Jobs werden weiterhin gemeldet" },
 
   { key: 'ANALYZER_MODEL', group: 'KI-Modelle', label: 'Analyse-Modell', type: 'text', default: 'claude-haiku-4-5-20251001',
     help: 'Claude-Modell zur Relevanz-Bewertung (günstig/schnell empfohlen)' },

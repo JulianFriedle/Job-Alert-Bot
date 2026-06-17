@@ -18,6 +18,9 @@ const FILTERS_CONFIG = path.join(__dirname, '..', 'config', 'filters.json');
 // Tunable knobs (env override; defaults preserve original behavior)
 const CRON_SCHEDULE          = process.env.CRON_SCHEDULE || '0 * * * *';
 const EXPIRY_THRESHOLD_HOURS = Number(process.env.EXPIRY_THRESHOLD_HOURS) || 72;
+// Telegram pings for jobs that are no longer listed. Default on; set to 'off' to
+// silence expiry alerts while still receiving notifications for new jobs.
+const EXPIRY_NOTIFICATIONS   = String(process.env.EXPIRY_NOTIFICATIONS || 'on').trim().toLowerCase() !== 'off';
 const ANALYSIS_CONCURRENCY   = Number(process.env.ANALYSIS_CONCURRENCY) || 2;
 
 // German-tuned defaults; overridden by config/filters.json when present.
@@ -298,8 +301,8 @@ export async function runOnce() {
   log(`⏱  Notifications (${toNotify.length} jobs): ${tock('notifications')}`);
 
   // 9. Detect and notify expired jobs (notified but not seen for 3+ days).
-  //    Only relevant when Telegram is active (expiry alerts go out via Telegram).
-  const expiredJobs = isTelegramEnabled() ? getJobsToExpire(EXPIRY_THRESHOLD_HOURS) : [];
+  //    Only relevant when Telegram is active and expiry alerts aren't disabled.
+  const expiredJobs = (isTelegramEnabled() && EXPIRY_NOTIFICATIONS) ? getJobsToExpire(EXPIRY_THRESHOLD_HOURS) : [];
   let expiredCount = 0;
   if (expiredJobs.length > 0) {
     log(`${expiredJobs.length} job(s) no longer listed — sending expiry notifications...`);

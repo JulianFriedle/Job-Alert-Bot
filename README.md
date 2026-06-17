@@ -138,6 +138,7 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot token from @BotFather (optional — see below) |
 | `TELEGRAM_CHAT_ID` | — | Your Telegram chat ID (optional) |
 | `TELEGRAM_NOTIFICATIONS` | `on` | Set to `off` to disable Telegram push notifications entirely |
+| `EXPIRY_NOTIFICATIONS` | `on` | Set to `off` to silence Telegram alerts for expired jobs (new-job alerts still fire) |
 | `ANALYZER_MODEL` | `claude-haiku-4-5-20251001` | Model that scores job relevance |
 | `COVER_LETTER_MODEL` | `claude-sonnet-4-6` | Model that writes cover letters |
 | `MIN_RELEVANCE_SCORE` | `4` | Min AI score (1–10) for a job to count as relevant |
