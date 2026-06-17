@@ -16,7 +16,7 @@ index.js
 src/apply.js              ← CLI for tracking applications (npm run apply)
 src/cover-letter.js       ← CLI for generating a cover letter via Claude (npm run cover-letter)
 src/server.js             ← Web GUI server (npm run gui) — zero extra deps, built-in http
-public/                   ← Dashboard frontend (index.html, app.js, style.css)
+public/                   ← Dashboard frontend (index.html, app.js, i18n.js, setup.js, style.css)
 scripts/refetch-descriptions.js  ← Re-fetch & re-analyze jobs saved with empty descriptions
 config/jobs.json          ← Job board URLs and scraper config per source
 config/filters.json       ← Title blocklist + priority keywords (pre-Claude filters)
@@ -205,21 +205,33 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 
 | Tab | What it does |
 |---|---|
-| **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Set application status or hide a job with one click. |
+| **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Sort by relevance or by **date found** (oldest / newest first). Set application status or hide a job with one click. |
 | **Quellen** | Edit `config/jobs.json` visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. |
 | **Profil** | Edit your CV & preferences (`config/profile.json`) in a structured form — this is what the AI matches jobs against and uses for cover letters. |
 | **Prompts** | Edit the actual prompts sent to Claude for relevance scoring and cover letters. Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
 | **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. |
 | **Statistik** | Application heatmap, top sources/companies, run history, and a per-run overview table. |
-| **Einstellungen** | Edit every `.env` variable from a form, restart the GUI, and re-open or test the **setup wizard**. |
+| **Einstellungen** | Edit every `.env` variable from a form; switch **theme** and **language** (see below); pull the latest version from GitHub (**update button**); restart the GUI; and re-open or test the **setup wizard**. |
 
-The GUI reuses the same SQLite database and config files as the CLI — changes are reflected everywhere. The light/dark theme follows your OS setting.
+The GUI reuses the same SQLite database and config files as the CLI — changes are reflected everywhere.
+
+### Appearance & language
+
+Under **Einstellungen → Darstellung** you can choose:
+
+- **Color scheme** — Light, Dark, or Automatic (follows your OS setting).
+- **Color theme** — the default green, or a soft pink palette where "good score" accents turn pink.
+- **Language** — Deutsch or English. The whole dashboard, the settings labels, and the setup wizard switch instantly.
+
+All three choices are saved in your browser (`localStorage`) and applied before first paint, so there's no flash of the wrong appearance and no reload.
 
 ### Guided setup wizard
 
 The first time you open the GUI with required configuration missing, a step-by-step
 **setup wizard** opens automatically. Each step is its own small sub-page, so even a
-non-technical user can get going without editing any files:
+non-technical user can get going without editing any files. The welcome screen lets you
+pick the **interface language** (Deutsch / English) first; everything that follows — and
+the rest of the GUI — switches accordingly.
 
 1. **Anthropic API key**
 2. **Telegram** *(optional)* — bot token + chat ID, with a *“send test message”* button to verify it works, or a toggle to skip notifications and use only the GUI
@@ -242,6 +254,14 @@ sandbox under `data/setup-debug/`. Forms are pre-filled from your real config so
 realistic, but **every save goes to the sandbox — your real `.env` and `config/` files are
 never modified or deleted**, and the full flow is always shown so you can rehearse it end to
 end. Delete the `data/setup-debug/` folder to discard the sandbox.
+
+### Updating from GitHub
+
+If you installed via `git clone`, **Einstellungen → Updates → Nach Updates suchen** pulls the
+latest version (`git pull --ff-only`) and shows the git output. If new code was pulled, a
+**Restart & apply** button appears to load it. When dependencies changed (`package.json`), it
+asks you to run `npm install` in the terminal first instead of restarting. The pull is
+fast-forward-only, so local commits that diverge from GitHub are refused rather than merged.
 
 Keep the process running in the background with a process manager like `pm2`:
 

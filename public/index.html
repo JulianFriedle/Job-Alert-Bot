@@ -58,6 +58,11 @@
           <option value="6">Score ≥ 6</option>
           <option value="8">Score ≥ 8</option>
         </select>
+        <select id="sort">
+          <option value="default" data-i18n="jobs.sortRelevance">Relevanz</option>
+          <option value="found-asc" data-i18n="jobs.sortOldest">Älteste zuerst</option>
+          <option value="found-desc" data-i18n="jobs.sortNewest">Neueste zuerst</option>
+        </select>
         <span class="count" id="result-count"></span>
       </div>
 
@@ -219,6 +224,17 @@
           <button class="btn" id="reopen-setup" data-i18n="setup.openBtn">⚙ Assistent öffnen</button>
           <button class="btn" id="debug-setup" title="Test-Lauf in Sandbox – ändert nichts an deinen Daten" data-i18n="setup.debugBtn" data-i18n-title="setup.debugBtnTitle">🧪 Im Debug-Modus testen</button>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2 data-i18n="update.title">Updates</h2></div>
+        <p class="muted" data-i18n-html="update.help">Holt die neueste Version aus dem GitHub-Repository (<code>git pull</code>). Code-Änderungen greifen nach einem Neustart.</p>
+        <div class="panel-actions" style="margin-top:12px">
+          <button class="btn" id="update-btn" data-i18n="update.btn">↧ Nach Updates suchen</button>
+          <button class="btn btn-primary" id="update-apply-btn" data-i18n="update.applyBtn" hidden>↻ Neu starten &amp; anwenden</button>
+        </div>
+        <p class="save-hint" id="update-msg"></p>
+        <pre class="console update-output" id="update-output" hidden></pre>
       </div>
 
       <div class="card restart-card">

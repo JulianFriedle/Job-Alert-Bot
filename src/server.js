@@ -197,6 +197,25 @@ function readBody(req) {
   });
 }
 
+// Run a git command in the project root and capture its output. Resolves with
+// { code, out } where `out` is combined stdout+stderr (never rejects on a
+// non-zero exit — callers inspect `code`).
+function git(args) {
+  return new Promise((resolve) => {
+    let out = '';
+    let child;
+    try {
+      child = spawn('git', args, { cwd: ROOT });
+    } catch (err) {
+      return resolve({ code: -1, out: `git konnte nicht gestartet werden: ${err.message}` });
+    }
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    child.on('error', (err) => resolve({ code: -1, out: `git konnte nicht gestartet werden: ${err.message}` }));
+    child.on('close', (code) => resolve({ code: code ?? -1, out: out.trim() }));
+  });
+}
+
 async function serveStatic(req, res, urlPath) {
   // Map "/" → index.html; prevent path traversal
   const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
@@ -454,6 +473,35 @@ const server = http.createServer(async (req, res) => {
         run.clients.add(res);
         req.on('close', () => run.clients.delete(res));
         return;
+      }
+
+      // POST /api/update — pull the latest version from GitHub (git pull --ff-only)
+      if (method === 'POST' && pathname === '/api/update') {
+        if (run.active) return sendJson(res, 409, { error: 'Ein Lauf ist aktiv – bitte zuerst beenden.' });
+
+        const inside = await git(['rev-parse', '--is-inside-work-tree']);
+        if (inside.code !== 0 || inside.out.trim() !== 'true') {
+          return sendJson(res, 200, { ok: false, output: 'Kein Git-Repository – Update nur möglich, wenn das Projekt per "git clone" installiert wurde.' });
+        }
+
+        const before = (await git(['rev-parse', 'HEAD'])).out.trim();
+        log('Update angefordert – git pull …');
+        const pull = await git(['pull', '--ff-only']);
+        const after = (await git(['rev-parse', 'HEAD'])).out.trim();
+        const updated = before !== '' && after !== '' && before !== after;
+
+        let depsChanged = false;
+        if (updated) {
+          const diff = await git(['diff', '--name-only', before, after]);
+          depsChanged = /(^|\n)(package\.json|package-lock\.json)(\n|$)/.test(diff.out);
+        }
+
+        if (pull.code !== 0) {
+          log('Update fehlgeschlagen.');
+          return sendJson(res, 200, { ok: false, output: pull.out });
+        }
+        log(updated ? 'Update angewendet.' : 'Bereits aktuell.');
+        return sendJson(res, 200, { ok: true, updated, depsChanged, needsRestart: updated, output: pull.out });
       }
 
       // POST /api/restart — restart the GUI server itself

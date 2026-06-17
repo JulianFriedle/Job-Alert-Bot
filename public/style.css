@@ -372,6 +372,8 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .appearance-field > label { font-size: .85rem; font-weight: 600; min-width: 120px; }
 .appearance-field select { max-width: 220px; }
 
+.update-output { height: auto; max-height: 220px; margin-top: 12px; font-size: .74rem; }
+
 .restart-card { border-color: color-mix(in srgb, var(--red) 25%, var(--border)); }
 .restart-card .muted { margin-bottom: 14px; }
 .btn-restart { border-color: color-mix(in srgb, var(--red) 40%, var(--border)); color: var(--red); }

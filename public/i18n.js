@@ -15,6 +15,7 @@ const I18N = {
     'jobs.searchPh': 'Suche nach Titel, Firma, Ort…', 'jobs.allSources': 'Alle Quellen',
     'jobs.allStatuses': 'Alle Status', 'jobs.empty': 'Keine Jobs gefunden.',
     'jobs.of': 'von', 'jobs.statusPlaceholder': 'Status…',
+    'jobs.sortRelevance': 'Relevanz', 'jobs.sortOldest': 'Älteste zuerst', 'jobs.sortNewest': 'Neueste zuerst',
     'status.none': 'Ohne Bewerbung', 'status.applied': 'Beworben', 'status.interview': 'Interview',
     'status.offer': 'Angebot', 'status.rejected': 'Abgelehnt',
     'job.coverTitle': 'Anschreiben erstellen', 'job.openTitle': 'Öffnen',
@@ -88,6 +89,14 @@ const I18N = {
     'restart.help': 'Startet den GUI-Server neu, damit Änderungen am <code>GUI-Port</code> übernommen werden. Laufende Pipeline-Läufe bitte vorher beenden.',
     'restart.btn': '↻ Jetzt neu starten',
 
+    'update.title': 'Updates',
+    'update.help': 'Holt die neueste Version aus dem GitHub-Repository (<code>git pull</code>). Code-Änderungen greifen nach einem Neustart.',
+    'update.btn': '↧ Nach Updates suchen', 'update.checking': 'Aktualisiere …',
+    'update.upToDate': '✓ Bereits auf dem neuesten Stand.',
+    'update.updated': '✓ Aktualisiert. Neu starten, um die Änderungen anzuwenden.',
+    'update.depsChanged': '⚠ Abhängigkeiten haben sich geändert – bitte im Terminal „npm install“ ausführen und dann neu starten.',
+    'update.failed': 'Update fehlgeschlagen: ', 'update.applyBtn': '↻ Neu starten & anwenden',
+
     // Settings field chrome (frontend bits around backend labels)
     'settings.required': 'erforderlich', 'settings.secretSet': '•••••••• gesetzt',
     'settings.secretUnset': 'nicht gesetzt', 'settings.defaultPrefix': 'Standard: ',
@@ -129,6 +138,7 @@ const I18N = {
     'jobs.searchPh': 'Search by title, company, location…', 'jobs.allSources': 'All sources',
     'jobs.allStatuses': 'All statuses', 'jobs.empty': 'No jobs found.',
     'jobs.of': 'of', 'jobs.statusPlaceholder': 'Status…',
+    'jobs.sortRelevance': 'Relevance', 'jobs.sortOldest': 'Oldest first', 'jobs.sortNewest': 'Newest first',
     'status.none': 'Not applied', 'status.applied': 'Applied', 'status.interview': 'Interview',
     'status.offer': 'Offer', 'status.rejected': 'Rejected',
     'job.coverTitle': 'Create cover letter', 'job.openTitle': 'Open',
@@ -201,6 +211,14 @@ const I18N = {
     'restart.title': 'Restart service',
     'restart.help': 'Restarts the GUI server so changes to the <code>GUI port</code> take effect. Please stop any running pipeline runs first.',
     'restart.btn': '↻ Restart now',
+
+    'update.title': 'Updates',
+    'update.help': 'Pulls the latest version from the GitHub repository (<code>git pull</code>). Code changes take effect after a restart.',
+    'update.btn': '↧ Check for updates', 'update.checking': 'Updating …',
+    'update.upToDate': '✓ Already up to date.',
+    'update.updated': '✓ Updated. Restart to apply the changes.',
+    'update.depsChanged': '⚠ Dependencies changed – please run “npm install” in the terminal, then restart.',
+    'update.failed': 'Update failed: ', 'update.applyBtn': '↻ Restart & apply',
 
     // Settings field chrome
     'settings.required': 'required', 'settings.secretSet': '•••••••• set',

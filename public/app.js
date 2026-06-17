@@ -77,7 +77,7 @@ function filteredJobs() {
   const src = $('#filter-source').value;
   const st = $('#filter-status').value;
   const minScore = Number($('#filter-score').value);
-  return allJobs.filter(j => {
+  const jobs = allJobs.filter(j => {
     if (src && j.source !== src) return false;
     if ((j.score ?? 0) < minScore) return false;
     if (st === 'none' && j.status) return false;
@@ -88,6 +88,12 @@ function filteredJobs() {
     }
     return true;
   });
+  // `scraped_at` is the ISO timestamp when a job was first found; ISO strings
+  // sort correctly as plain strings. "default" keeps the server's order.
+  const sort = $('#sort')?.value;
+  if (sort === 'found-asc') jobs.sort((a, b) => (a.scraped_at || '').localeCompare(b.scraped_at || ''));
+  else if (sort === 'found-desc') jobs.sort((a, b) => (b.scraped_at || '').localeCompare(a.scraped_at || ''));
+  return jobs;
 }
 
 function scoreClass(s) {
@@ -225,7 +231,7 @@ $('#cl-copy').addEventListener('click', async () => {
 ['input', 'change'].forEach(ev => {
   $('#search').addEventListener(ev, renderJobs);
 });
-['#filter-source', '#filter-status', '#filter-score'].forEach(s =>
+['#filter-source', '#filter-status', '#filter-score', '#sort'].forEach(s =>
   $(s).addEventListener('change', renderJobs));
 
 // ── STATS ─────────────────────────────────────────────────────────────────--
@@ -557,16 +563,52 @@ $('#save-settings').addEventListener('click', async () => {
 
 $('#settings-reset').addEventListener('click', loadSettings);
 
-$('#restart-btn').addEventListener('click', async () => {
-  if (!confirm(t('restart.confirm'))) return;
-  const btn = $('#restart-btn');
+async function restartService(btn) {
   try {
     await api('/api/restart', { method: 'POST' });
-    btn.disabled = true; btn.textContent = t('restart.running');
+    if (btn) { btn.disabled = true; btn.textContent = t('restart.running'); }
     toast(t('toast.restart'));
     setTimeout(() => location.reload(), 4500);
   } catch (err) { toast(t('toast.error') + err.message); }
+}
+
+$('#restart-btn').addEventListener('click', () => {
+  if (!confirm(t('restart.confirm'))) return;
+  restartService($('#restart-btn'));
 });
+
+// ── UPDATE (git pull from GitHub) ─────────────────────────────────────────────
+$('#update-btn').addEventListener('click', async () => {
+  const btn = $('#update-btn');
+  const msg = $('#update-msg');
+  const out = $('#update-output');
+  const applyBtn = $('#update-apply-btn');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = t('update.checking');
+  applyBtn.hidden = true;
+  msg.textContent = ''; msg.className = 'save-hint';
+  out.hidden = true; out.textContent = '';
+  try {
+    const r = await api('/api/update', { method: 'POST' });
+    if (r.output) { out.textContent = r.output; out.hidden = false; }
+    if (!r.ok) {
+      msg.textContent = t('update.failed'); msg.className = 'save-hint err';
+    } else if (!r.updated) {
+      msg.textContent = t('update.upToDate'); msg.className = 'save-hint ok';
+    } else if (r.depsChanged) {
+      msg.textContent = t('update.depsChanged'); msg.className = 'save-hint err';
+    } else {
+      msg.textContent = t('update.updated'); msg.className = 'save-hint ok';
+      applyBtn.hidden = false;
+    }
+  } catch (err) {
+    msg.textContent = t('update.failed') + err.message; msg.className = 'save-hint err';
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
+});
+
+$('#update-apply-btn').addEventListener('click', () => restartService($('#update-apply-btn')));
 
 function showSettingsMsg(msg, kind) {
   const el = $('#settings-msg');
