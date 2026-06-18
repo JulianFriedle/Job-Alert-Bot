@@ -181,16 +181,38 @@ async function openCoverLetter(job) {
   if (!job) return;
   coverJob = job;
   $('#cl-sub').textContent = `${job.title} · ${job.company || job.source}`;
+  // Initial state: let the user add optional notes before generating.
+  $('#cl-notes').value = '';
+  $('#cl-loading').hidden = true;
+  $('#cl-text').hidden = true;
+  $('#cl-error').hidden = true;
+  $('#cl-copy').hidden = true;
+  $('#cl-regen').hidden = true;
+  $('#cl-generate').hidden = false;
+  updateAppliedBtn();
   $('#cl-modal').hidden = false;
-  await generateCover();
+  $('#cl-notes').focus();
+}
+
+// Reflect the job's current status on the header "Applied" button.
+function updateAppliedBtn() {
+  const btn = $('#cl-applied');
+  const done = coverJob && coverJob.status === 'applied';
+  btn.classList.toggle('is-applied', done);
+  btn.textContent = done ? t('cover.appliedDone') : t('cover.applied');
 }
 
 async function generateCover() {
   const loading = $('#cl-loading'), text = $('#cl-text'), error = $('#cl-error');
+  const notes = $('#cl-notes').value.trim();
   loading.hidden = false; text.hidden = true; error.hidden = true;
-  $('#cl-copy').hidden = true; $('#cl-regen').hidden = true;
+  $('#cl-copy').hidden = true; $('#cl-regen').hidden = true; $('#cl-generate').hidden = true;
   try {
-    const { text: letter } = await api(`/api/jobs/${encodeURIComponent(coverJob.id)}/cover-letter`, { method: 'POST' });
+    const { text: letter } = await api(`/api/jobs/${encodeURIComponent(coverJob.id)}/cover-letter`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes }),
+    });
     text.value = letter;
     loading.hidden = true; text.hidden = false;
     $('#cl-copy').hidden = false; $('#cl-regen').hidden = false;
@@ -212,7 +234,23 @@ function closeCover() { $('#cl-modal').hidden = true; coverJob = null; }
 $('#cl-close').addEventListener('click', closeCover);
 $('#cl-modal').addEventListener('click', (e) => { if (e.target.id === 'cl-modal') closeCover(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#cl-modal').hidden) closeCover(); });
+$('#cl-generate').addEventListener('click', generateCover);
 $('#cl-regen').addEventListener('click', generateCover);
+$('#cl-applied').addEventListener('click', async () => {
+  if (!coverJob || coverJob.status === 'applied') return;
+  try {
+    const updated = await api(`/api/jobs/${encodeURIComponent(coverJob.id)}/status`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'applied' }),
+    });
+    Object.assign(coverJob, { status: updated.status, applied: updated.applied, applied_at: updated.applied_at });
+    const job = allJobs.find(j => j.id === coverJob.id);
+    if (job) Object.assign(job, { status: updated.status, applied: updated.applied, applied_at: updated.applied_at });
+    updateAppliedBtn();
+    renderStats(); renderJobs();
+    toast(`Status: ${statusLabel('applied')}`);
+  } catch (err) { toast(t('toast.error') + err.message); }
+});
 $('#cl-text').addEventListener('input', (e) => autosize(e.target));
 
 $('#cl-copy').addEventListener('click', async () => {

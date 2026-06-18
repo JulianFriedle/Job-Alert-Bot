@@ -276,6 +276,11 @@
       "name": "APworks",
       "url": "https://apworks.jobs.personio.de",
       "type": "careers-page"
+    },
+    {
+      "name": "Alten Consulting",
+      "url": "https://www.alten-consulting.de/karriere/stellenangebote",
+      "type": "careers-page"
     }
   ]
 }

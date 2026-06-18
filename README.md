@@ -206,7 +206,7 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 
 | Tab | What it does |
 |---|---|
-| **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Sort by relevance or by **date found** (oldest / newest first). Set application status or hide a job with one click. |
+| **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Sort by relevance or by **date found** (oldest / newest first). Set application status or hide a job with one click. The **✎** button opens the cover-letter window (see [Generating a Cover Letter](#generating-a-cover-letter)). |
 | **Quellen** | Edit `config/jobs.json` visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. |
 | **Profil** | Edit your CV & preferences (`config/profile.json`) in a structured form — this is what the AI matches jobs against and uses for cover letters. |
 | **Prompts** | Edit the actual prompts sent to Claude for relevance scoring and cover letters. Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
@@ -301,13 +301,23 @@ Applied jobs appear at the **top of the Excel file highlighted in blue**, with t
 
 ## Generating a Cover Letter
 
-Each Telegram notification includes a job ID. Use it to generate a tailored German cover letter for that position:
+Claude reads the full job description and your profile from `config/profile.json` and writes a complete, formal German Anschreiben (DIN 5008 style).
+
+### From the web GUI (recommended)
+
+Click the **✎** button on any job card to open the cover-letter window. Before generating you can type **extra notes** into the optional text box — job-specific bonus info that should make it into the letter (e.g. a particular motivation, a relevant project, or your salary expectation). Then hit **Anschreiben erstellen**. Tweak the notes and **↻ Neu generieren** as often as you like, then **📋 Kopieren** the result.
+
+Because writing a cover letter usually means you're applying, the window has a **✓ Als beworben markieren** button in the top-right that sets the job's status to *applied* without leaving the modal (it turns green once done).
+
+### From the CLI
+
+Each Telegram notification includes a job ID. Use it to generate a letter for that position:
 
 ```bash
 npm run cover-letter -- abc123def456
 ```
 
-Claude reads the full job description and your profile from `config/profile.json` and writes a complete, formal Anschreiben (DIN 5008 style) to the console. To save it directly to a file:
+The letter is written to the console. To save it directly to a file:
 
 ```bash
 npm run cover-letter -- abc123def456 > anschreiben.txt

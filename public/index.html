@@ -253,16 +253,24 @@
           <h2 id="cl-title" data-i18n="cover.title">Anschreiben</h2>
           <p class="muted" id="cl-sub"></p>
         </div>
-        <button class="btn btn-ghost" id="cl-close" title="Schließen" data-i18n-title="cover.close">✕</button>
+        <div class="cl-head-actions">
+          <button class="btn btn-primary" id="cl-applied" data-i18n="cover.applied">✓ Als beworben markieren</button>
+          <button class="btn btn-ghost" id="cl-close" title="Schließen" data-i18n-title="cover.close">✕</button>
+        </div>
       </header>
       <div class="modal-body" id="cl-body">
-        <div class="cl-loading" id="cl-loading">
+        <label class="cl-notes-label" for="cl-notes" data-i18n="cover.notesLabel">Zusätzliche Hinweise für dieses Anschreiben (optional)</label>
+        <textarea class="cl-notes" id="cl-notes" rows="3" spellcheck="false"
+                  data-i18n-ph="cover.notesPlaceholder"
+                  placeholder="z. B. besondere Motivation, relevante Projekte, Gehaltsvorstellung …"></textarea>
+        <div class="cl-loading" id="cl-loading" hidden>
           <span class="spinner"></span> <span data-i18n="cover.loading">Anschreiben wird erstellt…</span>
         </div>
         <textarea class="cl-text" id="cl-text" spellcheck="false" hidden></textarea>
         <div class="cl-error" id="cl-error" hidden></div>
       </div>
       <footer class="modal-foot">
+        <button class="btn btn-primary" id="cl-generate" data-i18n="cover.generate">✎ Anschreiben erstellen</button>
         <button class="btn" id="cl-regen" data-i18n="cover.regen" hidden>↻ Neu generieren</button>
         <button class="btn btn-primary" id="cl-copy" data-i18n="cover.copy" hidden>📋 Kopieren</button>
       </footer>

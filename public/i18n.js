@@ -30,6 +30,10 @@ const I18N = {
 
     'cover.title': 'Anschreiben', 'cover.loading': 'Anschreiben wird erstellt…',
     'cover.regen': '↻ Neu generieren', 'cover.copy': '📋 Kopieren', 'cover.close': 'Schließen',
+    'cover.generate': '✎ Anschreiben erstellen',
+    'cover.notesLabel': 'Zusätzliche Hinweise für dieses Anschreiben (optional)',
+    'cover.notesPlaceholder': 'z. B. besondere Motivation, relevante Projekte, Gehaltsvorstellung …',
+    'cover.applied': '✓ Als beworben markieren', 'cover.appliedDone': '✓ Beworben',
 
     'stats.activity': 'Bewerbungs-Aktivität', 'stats.less': 'weniger', 'stats.more': 'mehr',
     'stats.topCompanies': 'Meiste Bewerbungen (Firmen)', 'stats.topSources': 'Top-Quellen (relevante Jobs)',
@@ -153,6 +157,10 @@ const I18N = {
 
     'cover.title': 'Cover letter', 'cover.loading': 'Generating cover letter…',
     'cover.regen': '↻ Regenerate', 'cover.copy': '📋 Copy', 'cover.close': 'Close',
+    'cover.generate': '✎ Generate cover letter',
+    'cover.notesLabel': 'Extra notes for this cover letter (optional)',
+    'cover.notesPlaceholder': 'e.g. specific motivation, relevant projects, salary expectation …',
+    'cover.applied': '✓ Mark as applied', 'cover.appliedDone': '✓ Applied',
 
     'stats.activity': 'Application activity', 'stats.less': 'less', 'stats.more': 'more',
     'stats.topCompanies': 'Most applications (companies)', 'stats.topSources': 'Top sources (relevant jobs)',

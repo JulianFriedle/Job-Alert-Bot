@@ -289,8 +289,11 @@ const server = http.createServer(async (req, res) => {
       if (method === 'POST' && m) {
         const job = getJobById(decodeURIComponent(m[1]));
         if (!job) return sendJson(res, 404, { error: 'not found' });
+        let notes = '';
+        try { notes = (JSON.parse(await readBody(req) || '{}').notes || '').toString().trim(); }
+        catch { /* no/invalid body — generate without extra notes */ }
         try {
-          const text = await generateCoverLetter(job);
+          const text = await generateCoverLetter(job, notes);
           return sendJson(res, 200, { text });
         } catch (err) {
           log(`Cover-letter error for "${job.title}": ${err.message}`);

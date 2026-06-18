@@ -402,6 +402,8 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   padding: 16px 18px; border-bottom: 1px solid var(--border);
 }
 .modal-head h2 { font-size: 1rem; }
+.cl-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+#cl-applied.is-applied { background: var(--green, #16a34a); border-color: transparent; cursor: default; opacity: .85; }
 .modal-body { padding: 16px 18px; overflow-y: auto; }
 .modal-foot {
   display: flex; justify-content: flex-end; gap: 8px;
@@ -425,6 +427,15 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 }
 .cl-text:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .cl-error { color: var(--red); font-size: .85rem; padding: 16px 4px; }
+.cl-notes-label { display: block; color: var(--muted); font-size: .82rem; margin-bottom: 6px; }
+.cl-notes {
+  width: 100%; resize: vertical;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2); color: var(--text);
+  padding: 10px 14px; font-family: var(--font); font-size: .88rem; line-height: 1.5;
+  outline: none; margin-bottom: 4px;
+}
+.cl-notes:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 /* ── Misc ──────────────────────────────────────────────────────────────── */
 .empty { text-align: center; color: var(--muted); padding: 48px; }
