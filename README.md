@@ -4,6 +4,26 @@ Automatically scrapes job boards, uses Claude AI to check relevance against your
 
 **Multi-tenant ready.** The same codebase runs as a single-user tool *and* as a multi-client SaaS — the difference is configuration only, never a fork. Private use is simply one default client ("Privat"); an operator can create many **clients (Klienten)**, each with its own CV, sources, filters, prompts and Telegram chat id, sharing one Anthropic key and one Telegram bot. See [DEPLOY.md](DEPLOY.md) for the SaaS deployment (Docker + NGINX/Authelia).
 
+## Screenshots
+
+The web GUI (`npm run gui`) — browse matches, track applications, edit sources/profile/prompts, and trigger runs from the browser. *(Screenshots use throwaway sample data, not a real profile.)*
+
+| Jobs — scored matches with live filters | Statistics — activity heatmap & charts |
+|---|---|
+| [![Jobs tab](docs/screenshots/jobs.png)](docs/screenshots/jobs.png) | [![Statistics tab](docs/screenshots/stats.png)](docs/screenshots/stats.png) |
+
+| Run — live pipeline log & run history | Clients — multi-tenant management |
+|---|---|
+| [![Run tab](docs/screenshots/run.png)](docs/screenshots/run.png) | [![Clients tab](docs/screenshots/clients.png)](docs/screenshots/clients.png) |
+
+| Profile — CV & preferences the AI matches against | Sources — career pages to watch |
+|---|---|
+| [![Profile tab](docs/screenshots/profile.png)](docs/screenshots/profile.png) | [![Sources tab](docs/screenshots/sources.png)](docs/screenshots/sources.png) |
+
+| Prompts — editable AI instructions per client | Settings — every option from a form |
+|---|---|
+| [![Prompts tab](docs/screenshots/prompts.png)](docs/screenshots/prompts.png) | [![Settings tab](docs/screenshots/settings.png)](docs/screenshots/settings.png) |
+
 ## Architecture
 
 ```

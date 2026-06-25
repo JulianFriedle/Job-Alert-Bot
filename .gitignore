@@ -18,6 +18,11 @@ data/setup-debug/
 # Operator (SaaS) sandbox — isolated test instance DB (npm run gui:operator)
 data/operator-sandbox/
 
+# Local-only README screenshot helpers + their throwaway demo data (not shipped)
+scripts/seed-demo.mjs
+scripts/shoot-demo.mjs
+data/demo/
+
 # Database backups (daily/manual/upload/pre-import snapshots)
 data/backups/
 

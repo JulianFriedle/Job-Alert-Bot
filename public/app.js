@@ -902,24 +902,26 @@ $('#run-history-limit')?.addEventListener('change', loadRecentRuns);
 let profileLoaded = false;
 let profileData = {};   // full loaded object — preserves keys not shown in the form
 
+// Labels, group headings and hints are i18n keys (see public/i18n.js), resolved
+// via t() at render time so the form follows the selected language.
+const CV = 'profile.group.cv', PREF = 'profile.group.preferences';
 const PROFILE_FIELDS = [
-  { p: 'cv.name',                  t: 'text',     l: 'Name', group: 'Lebenslauf (CV)' },
-  { p: 'cv.currentRole',           t: 'text',     l: 'Aktuelle Rolle / Status', group: 'Lebenslauf (CV)' },
-  { p: 'cv.yearsOfExperience',     t: 'int',      l: 'Berufserfahrung (Jahre)', group: 'Lebenslauf (CV)' },
-  { p: 'cv.summary',               t: 'textarea', l: 'Kurzprofil', group: 'Lebenslauf (CV)',
-    h: '2–3 Sätze: Fachgebiet, Stärken, was du suchst. Geht direkt an die KI.' },
-  { p: 'cv.skills.domain',         t: 'list',     l: 'Fachliche Kompetenzen', group: 'Lebenslauf (CV)', h: 'Eine pro Zeile' },
-  { p: 'cv.skills.tools',          t: 'list',     l: 'Tools / Software', group: 'Lebenslauf (CV)' },
-  { p: 'cv.skills.programming',    t: 'list',     l: 'Programmierung', group: 'Lebenslauf (CV)' },
-  { p: 'cv.languages',             t: 'list',     l: 'Sprachen', group: 'Lebenslauf (CV)' },
-  { p: 'cv.education',             t: 'list',     l: 'Ausbildung', group: 'Lebenslauf (CV)', h: 'Ein Abschluss pro Zeile' },
-  { p: 'cv.experience',            t: 'list',     l: 'Berufserfahrung (Stationen)', group: 'Lebenslauf (CV)', h: 'Eine Station pro Zeile' },
-  { p: 'preferences.desiredRoles', t: 'list',     l: 'Wunsch-Rollen', group: 'Präferenzen', h: 'Job-Titel, die du suchst' },
-  { p: 'preferences.locations',    t: 'list',     l: 'Orte', group: 'Präferenzen', h: 'Städte, "Remote", "Hybrid" …' },
-  { p: 'preferences.industries',   t: 'list',     l: 'Branchen', group: 'Präferenzen' },
-  { p: 'preferences.salaryMin',    t: 'int',      l: 'Mindestgehalt (€/Jahr)', group: 'Präferenzen' },
-  { p: 'preferences.contractTypes',t: 'list',     l: 'Vertragsarten', group: 'Präferenzen' },
-  { p: 'preferences.dealbreakers', t: 'list',     l: 'No-Gos', group: 'Präferenzen', h: 'Was du auf keinen Fall willst' },
+  { p: 'cv.name',                  t: 'text',     l: 'profile.field.name', group: CV },
+  { p: 'cv.currentRole',           t: 'text',     l: 'profile.field.currentRole', group: CV },
+  { p: 'cv.yearsOfExperience',     t: 'int',      l: 'profile.field.yearsOfExperience', group: CV },
+  { p: 'cv.summary',               t: 'textarea', l: 'profile.field.summary', group: CV, h: 'profile.field.summary.h' },
+  { p: 'cv.skills.domain',         t: 'list',     l: 'profile.field.skills.domain', group: CV, h: 'profile.field.skills.domain.h' },
+  { p: 'cv.skills.tools',          t: 'list',     l: 'profile.field.skills.tools', group: CV },
+  { p: 'cv.skills.programming',    t: 'list',     l: 'profile.field.skills.programming', group: CV },
+  { p: 'cv.languages',             t: 'list',     l: 'profile.field.languages', group: CV },
+  { p: 'cv.education',             t: 'list',     l: 'profile.field.education', group: CV, h: 'profile.field.education.h' },
+  { p: 'cv.experience',            t: 'list',     l: 'profile.field.experience', group: CV, h: 'profile.field.experience.h' },
+  { p: 'preferences.desiredRoles', t: 'list',     l: 'profile.field.desiredRoles', group: PREF, h: 'profile.field.desiredRoles.h' },
+  { p: 'preferences.locations',    t: 'list',     l: 'profile.field.locations', group: PREF, h: 'profile.field.locations.h' },
+  { p: 'preferences.industries',   t: 'list',     l: 'profile.field.industries', group: PREF },
+  { p: 'preferences.salaryMin',    t: 'int',      l: 'profile.field.salaryMin', group: PREF },
+  { p: 'preferences.contractTypes',t: 'list',     l: 'profile.field.contractTypes', group: PREF },
+  { p: 'preferences.dealbreakers', t: 'list',     l: 'profile.field.dealbreakers', group: PREF, h: 'profile.field.dealbreakers.h' },
 ];
 
 const getPath = (o, dotted) => dotted.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
@@ -957,9 +959,9 @@ function profileField(f) {
   } else {
     control = `<input id="${id}" class="set-input" type="text" ${da} value="${esc(v ?? '')}" spellcheck="false">`;
   }
-  const help = f.h ? ` <span class="set-default">${esc(f.h)}</span>` : '';
+  const help = f.h ? ` <span class="set-default">${esc(t(f.h))}</span>` : '';
   return `<div class="setting">
-    <label class="set-label" for="${id}">${esc(f.l)}</label>
+    <label class="set-label" for="${id}">${esc(t(f.l))}</label>
     <div class="set-control">${control}<p class="set-help">${help}</p></div>
   </div>`;
 }
@@ -968,7 +970,7 @@ function renderProfile() {
   const groups = [...new Set(PROFILE_FIELDS.map(f => f.group))];
   $('#profile-groups').innerHTML = groups.map(g => `
     <div class="card">
-      <div class="card-head"><h2>${esc(g)}</h2></div>
+      <div class="card-head"><h2>${esc(t(g))}</h2></div>
       <div class="setting-list">${PROFILE_FIELDS.filter(f => f.group === g).map(profileField).join('')}</div>
     </div>`).join('');
   $('#profile-msg').textContent = '';
@@ -1109,6 +1111,7 @@ onLangChange(() => {
   populateSourceFilter(); renderStats(); renderJobs();
   if (settingsLoaded) renderSettings();
   if (statsLoaded) loadStats();
+  if (profileLoaded) renderProfile();
 });
 
 // ── CLIENTS (tenant management) ──────────────────────────────────────────────
