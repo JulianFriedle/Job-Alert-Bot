@@ -916,7 +916,15 @@ server.listen(PORT, () => log(`GUI ready → http://localhost:${PORT}`));
 
 // Daily DB backup: check on startup, then every 6h so a long-running server still
 // creates one after crossing midnight. Idempotent — skips if today's already exists.
-maybeRunDailyBackup().catch(err => log(`Daily backup check failed: ${err.message}`));
-setInterval(() => {
+// Skip while a run is active: the spawned `--once` child is writing, and a snapshot
+// taken mid-run can capture a stale state. The next 6h tick (or the scheduler, which
+// backs up before its own run) catches up once the run finishes.
+function safeDailyBackup() {
+  if (run.active) {
+    log('Daily backup deferred — a run is active.');
+    return;
+  }
   maybeRunDailyBackup().catch(err => log(`Daily backup check failed: ${err.message}`));
-}, 6 * 60 * 60 * 1000).unref();
+}
+safeDailyBackup();
+setInterval(safeDailyBackup, 6 * 60 * 60 * 1000).unref();

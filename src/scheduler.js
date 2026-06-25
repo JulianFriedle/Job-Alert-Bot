@@ -9,6 +9,7 @@ import {
   isNewJob, saveJob, markAnalyzed, markNotified, getUnanalyzedJobs,
   getRelevantUnnotifiedJobs, getRelevantCountBySource, updateLastSeenBatch,
   getJobsToExpire, markExpired, saveRunSnapshot, getEnabledClients, getClient,
+  checkpointWal,
 } from './database.js';
 import { analyzeJob } from './analyzer.js';
 import { notifyBatch, notifyExpired, isTelegramEnabled } from './notifier.js';
@@ -357,6 +358,10 @@ export async function runAll({ onlyClientId } = {}) {
   } finally {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     log(`Run finished in ${elapsed}s — log: ${logFile}`);
+    // Fold this run's writes out of the WAL so it can't grow without bound and the
+    // next backup snapshots a fully checkpointed file. Runs in the scheduler process
+    // and in the spawned `index.js --once` child alike, so both keep the WAL small.
+    checkpointWal();
     console.log = _origLog;
     await new Promise(resolve => logStream.end(resolve));
   }
@@ -365,15 +370,23 @@ export async function runAll({ onlyClientId } = {}) {
 // Back-compat alias: a single-arg "run everything once".
 export const runOnce = runAll;
 
+// Take the daily backup BEFORE the run and wait for it to finish: the snapshot must
+// be made against a quiescent DB, never while runAll is writing. (A backup fired
+// concurrently with the run captured a stale, mid-run snapshot that then repeated
+// unchanged day after day.) The backup is idempotent + cross-process locked, so this
+// is a no-op once today's backup already exists.
+async function backupThenRun(label) {
+  await maybeRunDailyBackup().catch(err => log(`Daily backup check failed: ${err.message}`));
+  await runAll().catch(err => log(`Unhandled error in ${label} run: ${err.message}`));
+}
+
 export function startScheduler() {
   log(`Scheduler starting — schedule: ${CRON_SCHEDULE}`);
-  // Daily DB backup: the scheduler is long-lived too, so it also ensures today's
-  // backup exists (idempotent + cross-process lock → never a duplicate of the GUI's).
-  maybeRunDailyBackup().catch(err => log(`Daily backup check failed: ${err.message}`));
-  runAll().catch(err => log(`Unhandled error in initial run: ${err.message}`));
+  // The scheduler is long-lived, so it also ensures today's backup exists (idempotent
+  // + cross-process lock → never a duplicate of the GUI's), then runs.
+  backupThenRun('initial');
   cron.schedule(CRON_SCHEDULE, () => {
     log('Cron triggered');
-    maybeRunDailyBackup().catch(err => log(`Daily backup check failed: ${err.message}`));
-    runAll().catch(err => log(`Unhandled error in scheduled run: ${err.message}`));
+    backupThenRun('scheduled');
   });
 }

@@ -621,10 +621,27 @@ export function rmDbFiles(p) {
   }
 }
 
+// Fold the write-ahead log back into the main DB file and shrink it to zero. Call
+// after each run (and before every backup) so the live -wal can't grow without
+// bound and a snapshot always reflects a fully checkpointed file. TRUNCATE only
+// fully resets the -wal when no other connection is mid-read; otherwise it still
+// checkpoints what it can. Never throws — a busy checkpoint is harmless and simply
+// retried on the next call.
+export function checkpointWal() {
+  try {
+    db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch (err) {
+    log(`WAL checkpoint skipped: ${err.message}`);
+  }
+}
+
 // WAL-safe, point-in-time consistent snapshot of the live DB into a single file.
 // SQLite's online backup copies pages while other queries keep running, so callers
 // may run this during an active pipeline run without blocking or corrupting it.
 export async function backupTo(dest) {
+  // Fold the WAL into the main file first so the snapshot reflects every committed
+  // write — a large un-checkpointed WAL must never make the copy miss recent rows.
+  checkpointWal();
   await db.backup(dest);
 }
 
