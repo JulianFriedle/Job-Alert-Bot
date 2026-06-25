@@ -9,6 +9,10 @@
   --accent:    #2d6a4f;
   --accent-ink:#1b4332;
   --accent-soft:#e6f1ec;
+  /* Text/icon colour that sits on top of an --accent fill. Dark themes override
+     this to near-black, because their accent (and its lighter hover shade) is too
+     bright for white text to stay readable. */
+  --on-accent: #ffffff;
   --green:     #2d6a4f;
   --green-bg:  #d8f3dc;
   --yellow-bg: #fff7d6;
@@ -33,6 +37,7 @@
   --accent:    #4ade80;
   --accent-ink:#86efac;
   --accent-soft:#16261d;
+  --on-accent: #0f1115;
   --green-bg:  #14331f;
   --yellow-bg: #332d12;
   --blue-bg:   #16263f;
@@ -53,6 +58,7 @@
     --accent:    #4ade80;
     --accent-ink:#86efac;
     --accent-soft:#16261d;
+    --on-accent: #0f1115;
     --green-bg:  #14331f;
     --yellow-bg: #332d12;
     --blue-bg:   #16263f;
@@ -93,12 +99,6 @@
     --green-bg:   #3a1d2e;
   }
 }
-/* Pinkify the activity heatmap too (its greens are hard-coded, not tokens). */
-:root[data-palette="pink"] .hm-cell.l1 { background: #f9c5dd; }
-:root[data-palette="pink"] .hm-cell.l2 { background: #f191bf; }
-:root[data-palette="pink"] .hm-cell.l3 { background: #e0529c; }
-:root[data-palette="pink"] .hm-cell.l4 { background: #b03075; }
-
 * { box-sizing: border-box; }
 /* The `hidden` attribute must always win over component display rules
    (e.g. .modal-backdrop { display: grid }), otherwise toggling .hidden in JS has no effect. */
@@ -142,7 +142,43 @@ code { font-family: var(--mono); font-size: .85em; background: var(--surface-2);
 .tab:hover { background: var(--surface-2); color: var(--text); }
 .tab.active { background: var(--accent-soft); color: var(--accent-ink); }
 
-.topbar .btn-primary { margin-left: auto; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.client-switch { display: flex; align-items: center; gap: 7px; font-size: .82rem; color: var(--muted); }
+.client-switch .set-input { max-width: 200px; padding: 6px 9px; }
+.client-switch-label { font-weight: 600; }
+
+/* ── Clients (tenant cards) ───────────────────────────────────────────────── */
+.client-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.client-card { display: flex; flex-direction: column; gap: 8px; }
+.client-card label { font-size: .8rem; color: var(--muted); margin-top: 4px; }
+.client-card-head { display: flex; align-items: center; gap: 10px; }
+.client-card-head .cc-name { font-weight: 600; flex: 1; }
+.cc-toggles { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; }
+.cc-toggles label { display: flex; align-items: center; gap: 6px; margin-top: 0; color: var(--text); }
+.cc-edit-label { margin-top: 10px; }
+.cc-edit { display: flex; flex-wrap: wrap; gap: 8px; }
+.cc-edit .btn { flex: 1; min-width: 90px; }
+.badge { font-size: .72rem; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+.badge-active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+
+/* ── Login overlay ────────────────────────────────────────────────────────── */
+.login-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(6px);
+}
+.login-card {
+  display: flex; flex-direction: column; gap: 8px;
+  width: min(360px, 92vw); padding: 28px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 12px 40px rgba(0,0,0,.18);
+}
+.login-card h2 { margin: 4px 0 0; }
+.login-card label { font-size: .8rem; color: var(--muted); margin-top: 6px; }
+.login-logo { font-size: 2rem; }
+.login-card .btn-primary { margin-top: 14px; }
+.login-error { color: var(--red); font-size: .82rem; min-height: 1em; }
 
 /* ── Buttons ───────────────────────────────────────────────────────────── */
 .btn {
@@ -154,7 +190,7 @@ code { font-family: var(--mono); font-size: .85em; background: var(--surface-2);
 }
 .btn:hover { background: var(--surface-2); border-color: color-mix(in srgb, var(--border) 60%, var(--muted)); }
 .btn:active { transform: translateY(1px); }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn-primary:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
 .btn-primary:disabled { opacity: .55; cursor: not-allowed; }
 .btn-ghost { border-color: transparent; background: transparent; color: var(--muted); padding: 6px 9px; }
@@ -278,25 +314,50 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 760px) { .grid-2 { grid-template-columns: 1fr; } }
 
-/* Heatmap */
+/* ── Application status breakdown (funnel of where applications currently are) */
+.status-breakdown { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+.sb-chip {
+  display: flex; align-items: baseline; gap: 8px; min-width: 92px;
+  padding: 9px 14px; border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+}
+.sb-chip .sb-n { font-size: 1.2rem; font-weight: 700; color: var(--text); }
+.sb-chip .sb-l { font-size: .8rem; color: var(--muted); }
+.sb-chip.st-applied   { border-left-color: #3b82f6; }
+.sb-chip.st-interview { border-left-color: #a855f7; }
+.sb-chip.st-offer     { border-left-color: var(--accent); }
+.sb-chip.st-rejected  { border-left-color: var(--red); }
+
+/* ── Contribution heatmap (GitHub-style). Cell shades derive from --accent via
+      color-mix, so the heatmap follows the active theme (light/dark/pink). */
 .heatmap-wrap { overflow-x: auto; padding-bottom: 4px; }
-.heatmap { min-width: 720px; }
-.hm-months { display: flex; padding-left: 2px; margin-bottom: 3px; }
-.hm-month { flex: 1; font-size: .62rem; color: var(--muted); text-align: left; }
+.heatmap { display: flex; gap: 7px; min-width: 720px; }
+.hm-weekdays { display: flex; flex-direction: column; gap: 3px; padding-top: 21px; }
+.hm-weekday {
+  flex: none; height: 13px; line-height: 13px; font-size: .62rem;
+  color: var(--muted); text-align: right; padding-right: 4px;
+}
+.hm-body { flex: 1; }
+.hm-months { display: flex; margin-bottom: 5px; }
+.hm-month { flex: 1; font-size: .64rem; color: var(--muted); text-align: left; }
 .hm-grid { display: flex; gap: 3px; }
 .hm-col { display: flex; flex-direction: column; gap: 3px; }
 .hm-cell {
-  width: 11px; height: 11px; border-radius: 2.5px; background: var(--surface-2);
-  display: inline-block; border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  flex: none; width: 13px; height: 13px; border-radius: 3px; background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  transition: transform .08s ease;
 }
-.hm-cell.empty { background: transparent; border-color: transparent; }
+.hm-cell:hover { transform: scale(1.3); outline: 1.5px solid var(--accent); outline-offset: 0; }
+.hm-cell.hm-empty { background: transparent; border-color: transparent; pointer-events: none; }
 .hm-cell.l0 { background: var(--surface-2); }
-.hm-cell.l1 { background: #9be9a8; }
-.hm-cell.l2 { background: #40c463; }
-.hm-cell.l3 { background: #30a14e; }
-.hm-cell.l4 { background: #216e39; }
-.heatmap-legend { display: flex; align-items: center; gap: 4px; justify-content: flex-end; margin-top: 10px; font-size: .72rem; color: var(--muted); }
-.heatmap-legend .hm-cell { width: 11px; height: 11px; }
+.hm-cell.l1 { background: color-mix(in srgb, var(--accent) 28%, var(--surface)); border-color: transparent; }
+.hm-cell.l2 { background: color-mix(in srgb, var(--accent) 52%, var(--surface)); border-color: transparent; }
+.hm-cell.l3 { background: color-mix(in srgb, var(--accent) 76%, var(--surface)); border-color: transparent; }
+.hm-cell.l4 { background: var(--accent); border-color: transparent; }
+.heatmap-legend { display: flex; align-items: center; gap: 5px; justify-content: flex-end; margin-top: 12px; font-size: .72rem; color: var(--muted); }
+.heatmap-legend .hm-cell { width: 13px; height: 13px; }
+.heatmap-legend .hm-cell:hover { transform: none; outline: none; }
 
 /* SVG bar labels */
 .bar-val { font-size: 4px; fill: var(--muted); font-family: var(--font); }
@@ -330,6 +391,43 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .data-table .t-foot td { border-top: 2px solid var(--border); border-bottom: none; font-weight: 700; color: var(--text); }
 .data-table .t-foot td:first-child { color: var(--muted); }
 
+/* ── Run history (Lauf tab) ─────────────────────────────────────────────── */
+.run-history-count { display: flex; align-items: center; gap: 8px; font-size: .82rem; }
+.run-history-count .set-input { width: auto; padding: 5px 8px; }
+.run-entry { border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; background: var(--surface-2); }
+.run-entry[open] { background: var(--surface); }
+.run-entry > summary {
+  list-style: none; cursor: pointer; padding: 11px 14px;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+}
+.run-entry > summary::-webkit-details-marker { display: none; }
+.run-entry > summary::before {
+  content: '▸'; color: var(--muted); font-size: .8rem;
+  transition: transform .12s ease; display: inline-block;
+}
+.run-entry[open] > summary::before { transform: rotate(90deg); }
+.run-when { font-weight: 600; font-size: .86rem; margin-right: auto; }
+.run-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.run-chip {
+  font-size: .76rem; color: var(--muted); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px;
+}
+.run-entry[open] .run-chip { background: var(--surface-2); }
+.run-chip b { color: var(--text); font-weight: 700; }
+.run-entry .table-scroll { padding: 0 14px 12px; }
+
+/* ── Backups (settings) ─────────────────────────────────────────────────── */
+.bk-table td { vertical-align: middle; }
+.bk-actions { text-align: right; white-space: nowrap; }
+.bk-actions .btn { padding: 4px 10px; font-size: .8rem; margin-left: 6px; }
+.bk-badge {
+  display: inline-block; font-size: .72rem; font-weight: 600; padding: 2px 9px;
+  border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
+}
+.bk-badge.bk-manual    { color: var(--accent-ink); background: var(--accent-soft); border-color: transparent; }
+.bk-badge.bk-preimport { color: #b45309; background: var(--yellow-bg); border-color: transparent; }
+.bk-badge.bk-upload    { color: #1d4ed8; background: var(--blue-bg); border-color: transparent; }
+
 /* ── Settings ──────────────────────────────────────────────────────────── */
 .settings-groups { display: flex; flex-direction: column; }
 .setting-list { display: flex; flex-direction: column; gap: 18px; }
@@ -358,6 +456,22 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .secret-wrap .set-input { font-family: var(--mono); font-size: .8rem; }
 .set-reveal { padding: 7px 10px; }
 .set-reveal.on { color: var(--accent); }
+
+/* Boolean setting → toggle switch (the checkbox itself is visually hidden) */
+.set-switch { display: inline-flex; align-items: center; cursor: pointer; }
+.set-switch .set-bool { position: absolute; width: 1px; height: 1px; opacity: 0; margin: 0; }
+.set-switch-track {
+  position: relative; width: 42px; height: 24px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  transition: background .15s ease, border-color .15s ease;
+}
+.set-switch-track::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--muted); transition: transform .15s ease, background .15s ease;
+}
+.set-switch .set-bool:checked + .set-switch-track { background: var(--accent); border-color: transparent; }
+.set-switch .set-bool:checked + .set-switch-track::after { transform: translateX(18px); background: #fff; }
+.set-switch .set-bool:focus-visible + .set-switch-track { box-shadow: 0 0 0 3px var(--accent-soft); }
 @media (max-width: 640px) {
   .setting { grid-template-columns: 1fr; }
   .set-label { padding-top: 0; }
@@ -365,7 +479,7 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 }
 
 .theme-toggle { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-.theme-opt.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.theme-opt.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .theme-opt.active:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
 
 .appearance-field { display: flex; align-items: center; gap: 14px; margin-top: 16px; flex-wrap: wrap; }

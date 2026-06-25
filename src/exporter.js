@@ -1,10 +1,10 @@
 import ExcelJS from 'exceljs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getRelevantJobs } from './database.js';
+import { getRelevantJobs, DEFAULT_CLIENT_ID } from './database.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const OUT_PATH = path.join(__dirname, '..', 'data', 'relevant_jobs.xlsx');
+const DATA_DIR = path.join(__dirname, '..', 'data');
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [exporter] ${msg}`);
@@ -15,8 +15,17 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString('de-DE');
 }
 
-export async function exportToExcel() {
-  const jobs = getRelevantJobs();
+// Per-client export path. The default client keeps the original filename for
+// backward compatibility; other clients get a suffixed file.
+export function exportPath(clientId = DEFAULT_CLIENT_ID) {
+  return clientId === DEFAULT_CLIENT_ID
+    ? path.join(DATA_DIR, 'relevant_jobs.xlsx')
+    : path.join(DATA_DIR, `relevant_jobs_${clientId}.xlsx`);
+}
+
+export async function exportToExcel(clientId = DEFAULT_CLIENT_ID) {
+  const OUT_PATH = exportPath(clientId);
+  const jobs = getRelevantJobs(clientId);
   if (jobs.length === 0) {
     log('No relevant jobs to export.');
     return;

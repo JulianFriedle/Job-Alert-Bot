@@ -32,9 +32,17 @@
       <button class="tab" data-tab="profile" data-i18n="tab.profile">Profil</button>
       <button class="tab" data-tab="prompts" data-i18n="tab.prompts">Prompts</button>
       <button class="tab" data-tab="run" data-i18n="tab.run">Lauf</button>
+      <button class="tab" data-tab="clients" data-i18n="tab.clients">Klienten</button>
       <button class="tab" data-tab="settings" data-i18n="tab.settings">Einstellungen</button>
     </nav>
-    <button class="btn btn-primary" id="quick-run" data-i18n="btn.startRun">▶ Lauf starten</button>
+    <div class="topbar-right">
+      <label class="client-switch" title="Aktiver Klient">
+        <span class="client-switch-label" data-i18n="client.active">Klient</span>
+        <select id="client-switcher" class="set-input"></select>
+      </label>
+      <button class="btn btn-primary" id="quick-run" data-i18n="btn.startRun">▶ Lauf starten</button>
+      <button class="btn btn-ghost" id="logout-btn" data-i18n="auth.logout" hidden>Abmelden</button>
+    </div>
   </header>
 
   <main>
@@ -79,6 +87,7 @@
           <h2 data-i18n="stats.activity">Bewerbungs-Aktivität</h2>
           <span class="muted" id="activity-total"></span>
         </div>
+        <div class="status-breakdown" id="status-breakdown"></div>
         <div class="heatmap-wrap"><div class="heatmap" id="heatmap"></div></div>
         <div class="heatmap-legend">
           <span data-i18n="stats.less">weniger</span>
@@ -174,6 +183,37 @@
         </div>
       </div>
       <pre class="console" id="console"><span class="console-placeholder" data-i18n="run.consolePlaceholder">Noch keine Ausgabe. Starte einen Lauf, um Live-Logs zu sehen.</span></pre>
+
+      <div class="card" id="card-runlog">
+        <div class="card-head">
+          <h2 data-i18n="run.history">Letzte Läufe</h2>
+          <label class="run-history-count">
+            <span class="muted" data-i18n="run.show">Anzahl</span>
+            <select id="run-history-limit" class="set-input">
+              <option value="5">5</option>
+              <option value="10" selected>10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+            </select>
+          </label>
+        </div>
+        <div id="run-history-list"></div>
+      </div>
+    </section>
+
+    <!-- ───────── CLIENTS (tenants) ───────── -->
+    <section class="view" id="view-clients">
+      <div class="panel-head">
+        <div>
+          <h2 data-i18n="clients.title">Klienten</h2>
+          <p class="muted" data-i18n="clients.intro">Lege Klienten an und pflege ihre Telegram-Chat-ID. Lebenslauf, Quellen, Filter und Prompts werden je Klient über die anderen Tabs gepflegt — wähle dazu oben rechts den aktiven Klienten.</p>
+        </div>
+        <div class="panel-actions">
+          <button class="btn btn-primary" id="add-client" data-i18n="clients.add">+ Klient</button>
+        </div>
+      </div>
+      <div class="client-list" id="client-list"></div>
+      <p class="save-hint" id="clients-msg"></p>
     </section>
 
     <!-- ───────── SETTINGS ───────── -->
@@ -235,6 +275,20 @@
         </div>
         <p class="save-hint" id="update-msg"></p>
         <pre class="console update-output" id="update-output" hidden></pre>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2 data-i18n="backup.title">Datensicherung</h2>
+          <div class="panel-actions">
+            <button class="btn" id="backup-upload-btn" data-i18n="backup.uploadBtn">⬆ Backup hochladen</button>
+            <button class="btn btn-primary" id="backup-create-btn" data-i18n="backup.createBtn">＋ Sicherung erstellen</button>
+            <input type="file" id="backup-upload-input" accept=".db,application/octet-stream" hidden>
+          </div>
+        </div>
+        <p class="muted" data-i18n="backup.help">Vollständige Sicherungen der Datenbank (alle Klienten, Jobs, Verlauf). Vor jedem Import wird automatisch eine Sicherung erstellt – so kann nichts verloren gehen. Tägliche Sicherungen laufen automatisch (in den Einstellungen oben konfigurierbar).</p>
+        <p class="save-hint" id="backup-msg"></p>
+        <div id="backup-list"></div>
       </div>
 
       <div class="card restart-card">
@@ -301,6 +355,21 @@
         <button class="btn btn-primary" id="setup-next" data-i18n="wiz.next">Weiter →</button>
       </footer>
     </div>
+  </div>
+
+  <!-- ───────── LOGIN OVERLAY (only when AUTH_ENABLED) ───────── -->
+  <div class="login-overlay" id="login-overlay" hidden>
+    <form class="login-card" id="login-form">
+      <span class="logo login-logo">🎯</span>
+      <h2 data-i18n="auth.title">Anmeldung</h2>
+      <p class="muted" data-i18n="auth.subtitle">Bitte mit den Betreiber-Zugangsdaten anmelden.</p>
+      <label data-i18n="auth.user">Benutzer</label>
+      <input type="text" id="login-user" class="set-input" autocomplete="username" autofocus>
+      <label data-i18n="auth.password">Passwort</label>
+      <input type="password" id="login-pass" class="set-input" autocomplete="current-password">
+      <button type="submit" class="btn btn-primary" id="login-submit" data-i18n="auth.login">Anmelden</button>
+      <p class="login-error" id="login-error" hidden></p>
+    </form>
   </div>
 
   <div class="toast" id="toast" hidden></div>

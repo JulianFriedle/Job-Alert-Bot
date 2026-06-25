@@ -1,13 +1,9 @@
 import 'dotenv/config';
 import Anthropic from '@anthropic-ai/sdk';
-import { readFile } from 'fs/promises';
-import path from 'path';
 import { fileURLToPath } from 'url';
-import { getJobById } from './database.js';
-import { loadPrompts } from './prompts.js';
+import { getJobById, DEFAULT_CLIENT_ID } from './database.js';
+import { getClientConfig } from './client-config.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROFILE_PATH = path.join(__dirname, '..', 'config', 'profile.json');
 // Read at call time so changes from the GUI settings tab apply without a restart.
 const model = () => process.env.COVER_LETTER_MODEL || 'claude-sonnet-4-6';
 
@@ -32,9 +28,9 @@ ${instructions}`;
 
 // Generate a tailored German cover letter for a job row. Returns the letter text.
 // `notes` is optional free-text guidance from the user for this specific letter.
+// Profile/prompts are resolved from the job's client (or DEFAULT_CLIENT_ID).
 export async function generateCoverLetter(job, notes = '') {
-  const profile = JSON.parse(await readFile(PROFILE_PATH, 'utf-8'));
-  const prompts = loadPrompts();   // read fresh so GUI edits apply without restart
+  const { profile, prompts } = getClientConfig(job.client_id || DEFAULT_CLIENT_ID);
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   const response = await client.messages.create({
@@ -56,7 +52,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(1);
   }
 
-  const job = getJobById(jobId);
+  const job = getJobById(DEFAULT_CLIENT_ID, jobId);
   if (!job) {
     console.error(`Fehler: kein Job mit ID "${jobId}" gefunden.`);
     process.exit(1);

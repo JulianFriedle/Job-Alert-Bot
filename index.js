@@ -1,11 +1,14 @@
 import 'dotenv/config';
-import { runOnce, startScheduler } from './src/scheduler.js';
+import { runAll, startScheduler } from './src/scheduler.js';
 
 const isOnce = process.argv.includes('--once');
+// Optional: restrict a one-off run to a single client (`--client <id>`).
+const clientFlagIdx = process.argv.indexOf('--client');
+const onlyClientId = clientFlagIdx !== -1 ? process.argv[clientFlagIdx + 1] : undefined;
 
 if (isOnce) {
   console.log(`[${new Date().toISOString()}] [main] Running once and exiting...`);
-  runOnce()
+  runAll({ onlyClientId })
     .then(() => {
       console.log(`[${new Date().toISOString()}] [main] Done.`);
       process.exit(0);

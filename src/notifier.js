@@ -22,12 +22,15 @@ function getBot() {
   return _bot;
 }
 
-// Telegram is optional. It is "enabled" only when not explicitly switched off AND
-// both credentials are present. When disabled, the pipeline silently skips sending
-// — relevant jobs are still saved and visible in the web GUI.
-export function isTelegramEnabled() {
-  if (String(process.env.TELEGRAM_NOTIFICATIONS || '').trim().toLowerCase() === 'off') return false;
-  return Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
+// Telegram is optional and resolved per client. It is "enabled" only when the
+// operator's shared bot token is configured AND this client hasn't switched
+// notifications off AND has a chat id. When disabled the pipeline silently skips
+// sending — relevant jobs are still saved and visible in the web GUI.
+export function isTelegramEnabled(client) {
+  if (!process.env.TELEGRAM_BOT_TOKEN) return false;
+  if (!client) return false;
+  if (String(client.telegram_notifications || '').trim().toLowerCase() === 'off') return false;
+  return Boolean(client.telegram_chat_id);
 }
 
 function formatMessage(job, analysis) {
@@ -61,9 +64,9 @@ function escapeMarkdown(text) {
   return String(text).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
 }
 
-export async function notify(job, analysis) {
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!chatId) throw new Error('TELEGRAM_CHAT_ID is not set');
+export async function notify(job, analysis, client) {
+  const chatId = client?.telegram_chat_id;
+  if (!chatId) throw new Error('telegram_chat_id is not set for this client');
 
   const bot = getBot();
   const message = formatMessage(job, analysis);
@@ -73,13 +76,21 @@ export async function notify(job, analysis) {
     disable_web_page_preview: false,
   });
 
-  log(`Notified: ${job.title} @ ${job.company || 'unknown'} (score ${analysis.score})`);
+  log(`Notified ${client.name}: ${job.title} @ ${job.company || 'unknown'} (score ${analysis.score})`);
 }
 
-export async function notifyExpired(job) {
-  if (!isTelegramEnabled()) return false;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!chatId) throw new Error('TELEGRAM_CHAT_ID is not set');
+// Send a one-off test message to a chat id using the shared bot token. Used by
+// the client management UI to verify a client's Telegram chat id.
+export async function sendTelegramTest(chatId) {
+  if (!process.env.TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN ist nicht gesetzt (globale Einstellung).');
+  if (!chatId) throw new Error('Keine Telegram Chat-ID angegeben.');
+  const bot = getBot();
+  await bot.sendMessage(chatId, '✅ Job\\-Alert Test: Benachrichtigungen funktionieren\\.', { parse_mode: 'MarkdownV2' });
+}
+
+export async function notifyExpired(job, client) {
+  if (!isTelegramEnabled(client)) return false;
+  const chatId = client.telegram_chat_id;
   const bot = getBot();
   const message = [
     `❌ *Stelle nicht mehr ausgeschrieben*`,
@@ -95,24 +106,25 @@ export async function notifyExpired(job) {
   log(`Expired notification: ${job.title} @ ${job.source}`);
 }
 
-export async function notifyBatch(jobAnalysisPairs) {
-  if (!isTelegramEnabled()) {
+// Returns the jobs that were actually sent, so the caller only marks those as
+// notified — a failed send stays unnotified and is retried on the next run.
+export async function notifyBatch(jobAnalysisPairs, client) {
+  if (!isTelegramEnabled(client)) {
     if (jobAnalysisPairs.length) log(`Telegram disabled — skipping ${jobAnalysisPairs.length} notification(s).`);
-    return 0;
+    return [];
   }
-  let sent = 0;
-  for (const { job, analysis } of jobAnalysisPairs) {
+  const sentJobs = [];
+  for (let i = 0; i < jobAnalysisPairs.length; i++) {
+    const { job, analysis } = jobAnalysisPairs[i];
     try {
-      await notify(job, analysis);
-      sent++;
-      if (sent < jobAnalysisPairs.length) {
-        await sleep(NOTIFICATION_DELAY_MS);
-      }
+      await notify(job, analysis, client);
+      sentJobs.push(job);
     } catch (err) {
       log(`Failed to notify for "${job.title}": ${err.message}`);
     }
+    if (i < jobAnalysisPairs.length - 1) await sleep(NOTIFICATION_DELAY_MS);
   }
-  return sent;
+  return sentJobs;
 }
 
 // Allow direct execution for testing
@@ -130,9 +142,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv.includes(
     summary: 'Excellent match for your skills and location preferences.',
   };
 
+  // For the CLI smoke test, target the chat id from the env (operator's own chat).
+  const testClient = { name: 'CLI-Test', telegram_chat_id: process.env.TELEGRAM_CHAT_ID };
   console.log('Sending test notification...');
   try {
-    await notify(testJob, testAnalysis);
+    await notify(testJob, testAnalysis, testClient);
     console.log('Test notification sent successfully!');
   } catch (err) {
     console.error('Failed to send test notification:', err.message);

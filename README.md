@@ -2,27 +2,32 @@
 
 Automatically scrapes job boards, uses Claude AI to check relevance against your profile, sends matching jobs to Telegram, and tracks your applications.
 
+**Multi-tenant ready.** The same codebase runs as a single-user tool *and* as a multi-client SaaS — the difference is configuration only, never a fork. Private use is simply one default client ("Privat"); an operator can create many **clients (Klienten)**, each with its own CV, sources, filters, prompts and Telegram chat id, sharing one Anthropic key and one Telegram bot. See [DEPLOY.md](DEPLOY.md) for the SaaS deployment (Docker + NGINX/Authelia).
+
 ## Architecture
 
 ```
-index.js
-└── src/scheduler.js      ← hourly cron or --once flag
+index.js                  ← --once [--client <id>] or hourly scheduler
+└── src/scheduler.js      ← runAll(): loops enabled clients, runs the pipeline per client
     ├── src/scraper.js    ← Playwright scraper (DOM + API interception, 3 pagination strategies)
-    ├── src/database.js   ← SQLite — deduplication, analysis results, application tracking
+    ├── src/database.js   ← SQLite — clients table + per-client jobs (client_id), dedup, tracking
+    ├── src/client-config.js ← resolves a client's profile/sources/filters/prompts (DB, legacy fallback)
     ├── src/analyzer.js   ← Claude AI relevance scoring
-    ├── src/notifier.js   ← Telegram notifications
-    └── src/exporter.js   ← Excel export (data/relevant_jobs.xlsx)
+    ├── src/notifier.js   ← Telegram notifications (one bot token, per-client chat id)
+    └── src/exporter.js   ← Excel export (data/relevant_jobs[_<client>].xlsx)
 
 src/apply.js              ← CLI for tracking applications (npm run apply)
 src/cover-letter.js       ← CLI for generating a cover letter via Claude (npm run cover-letter)
-src/server.js             ← Web GUI server (npm run gui) — zero extra deps, built-in http
+src/server.js             ← Web GUI server (npm run gui) — built-in http, operator login + client CRUD
+src/backup.js             ← Database backups (daily/manual/upload snapshots, retention)
 public/                   ← Dashboard frontend (index.html, app.js, i18n.js, setup.js, style.css)
+scripts/migrate-to-multitenant.js ← One-time migration to the clients model (npm run migrate)
+scripts/hash-password.js  ← Generate OPERATOR_PASSWORD_HASH for SaaS login (npm run hash-password)
 scripts/refetch-descriptions.js  ← Re-fetch & re-analyze jobs saved with empty descriptions
-config/jobs.json          ← Job board URLs and scraper config per source
-config/filters.json       ← Title blocklist + priority keywords (pre-Claude filters)
-config/profile.json       ← Your CV and preferences for Claude (gitignored; copy from profile.example.json)
+config/*.json             ← Default-client fallback (profile/jobs/filters/prompts); per-client config lives in the DB
 logs/                     ← Timestamped log file from each run (gitignored)
-data/jobs.db              ← SQLite database (gitignored)
+data/jobs.db              ← SQLite database — clients, jobs, runs (gitignored)
+data/backups/             ← Database backup snapshots (gitignored)
 data/relevant_jobs.xlsx   ← Latest export (gitignored)
 ```
 
@@ -147,6 +152,20 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `ANALYSIS_CONCURRENCY` | `2` | Parallel Claude analysis requests |
 | `SCRAPE_CONCURRENCY` | `4` | Parallel browser workers when scraping |
 | `GUI_PORT` | `3000` | Port for the web GUI |
+| `JOBS_DB_PATH` | `data/jobs.db` | SQLite DB path (set to a mounted volume in Docker) |
+| `AUTH_ENABLED` | `false` | **SaaS:** `true` requires operator login for the GUI. Private/localhost: `false` |
+| `OPERATOR_USER` | `admin` | Login username when `AUTH_ENABLED=true` |
+| `OPERATOR_PASSWORD_HASH` | — | scrypt hash of the operator password — generate with `npm run hash-password -- "<pw>"` |
+| `SESSION_SECRET` | random | Signs login sessions; set a stable value or logins drop on every restart |
+| `SESSION_COOKIE_SECURE` | auto | Force the `Secure` flag on the login cookie (`true`/`false`). Auto: on over HTTPS / a real hostname, off for localhost |
+| `BACKUP_ENABLED` | `true` | Set to `false` to disable the automatic daily database backup |
+| `BACKUP_RETENTION_DAYS` | `30` | How many daily backups to keep before the oldest are pruned |
+
+> **Per-client vs global.** `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, models and the auth/server
+> vars above are **global** (operator-wide). A client's **CV, sources, filters, prompts, Telegram
+> chat id, min-score and on/off toggles** are stored per client in the database and edited in the
+> GUI — not in `.env`. `TELEGRAM_CHAT_ID` in `.env` is only used by `npm run test-notify` and the
+> initial migration of the default client.
 
 ### Pre-filters (`config/filters.json`)
 
@@ -179,7 +198,12 @@ To adapt it to another country/language, edit `config/filters.json`, the prompts
 ## Running
 
 ```bash
-# Run the full pipeline once and exit
+# One-time: migrate an existing single-user DB to the multi-tenant clients model
+# (imports your current profile/sources/filters/prompts + Telegram chat id into the
+#  default "Privat" client). Safe and idempotent; fresh installs don't need it.
+npm run migrate
+
+# Run the full pipeline once and exit (all enabled clients; --client <id> for one)
 npm run run-once
 
 # Start with hourly cron (runs immediately, then every hour at :00)
@@ -196,6 +220,25 @@ npm run test-notify
 npm run refetch-descriptions
 ```
 
+### Multi-tenant / SaaS
+
+For a single user nothing changes — leave `AUTH_ENABLED` unset and use the app as before
+(you are the one default client). To offer it to an operator who manages several clients:
+
+1. Set `AUTH_ENABLED=true` and create login credentials with `npm run hash-password -- "<pw>"`
+   (→ `OPERATOR_PASSWORD_HASH`), plus a stable `SESSION_SECRET`.
+2. Run with Docker: `docker compose up -d --build` (a **gui** + a **scheduler** container sharing
+   the `./data` SQLite volume), and put **NGINX + Authelia** in front of the GUI for SSO.
+3. In the GUI's **Klienten** tab, create clients and set each one's Telegram chat id; switch the
+   active client (top-right) to edit its profile/sources/filters/prompts.
+
+> **Try the operator experience first.** `npm run gui:operator` starts a second, fully isolated
+> GUI on port 3001 with login enabled and a throwaway copy of your database, so you can rehearse
+> multi-client management without touching your real setup. See the header of
+> [`scripts/operator-sandbox.js`](scripts/operator-sandbox.js) for options (`--fresh`, `--reset`).
+
+Full step-by-step guide: **[DEPLOY.md](DEPLOY.md)**.
+
 ## Web GUI
 
 A modern, minimal dashboard for browsing matches, tracking applications, editing sources, and triggering runs — all in the browser. Built on Node's built-in `http` module, so it needs **no extra dependencies and no build step**.
@@ -207,14 +250,17 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 | Tab | What it does |
 |---|---|
 | **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Sort by relevance or by **date found** (oldest / newest first). Set application status or hide a job with one click. The **✎** button opens the cover-letter window (see [Generating a Cover Letter](#generating-a-cover-letter)). |
-| **Quellen** | Edit `config/jobs.json` visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. |
-| **Profil** | Edit your CV & preferences (`config/profile.json`) in a structured form — this is what the AI matches jobs against and uses for cover letters. |
-| **Prompts** | Edit the actual prompts sent to Claude for relevance scoring and cover letters. Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
+| **Quellen** | Edit the active client's job sources visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. |
+| **Profil** | Edit the active client's CV & preferences in a structured form — this is what the AI matches jobs against and uses for cover letters. |
+| **Prompts** | Edit the prompts sent to Claude for the active client (relevance scoring + cover letters). Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
 | **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. |
+| **Klienten** | Create/edit/delete clients (tenants): name, Telegram chat id, active toggle, Telegram & expiry toggles, optional min-score. A **Telegram-Test** button verifies the chat id. Clients receive Telegram alerts only — they have no GUI access. |
 | **Statistik** | Application heatmap, top sources/companies, run history, and a per-run overview table. |
-| **Einstellungen** | Edit every `.env` variable from a form; switch **theme** and **language** (see below); pull the latest version from GitHub (**update button**); restart the GUI; and re-open or test the **setup wizard**. |
+| **Einstellungen** | Edit every `.env` variable from a form (incl. the SaaS auth vars); switch **theme** and **language** (see below); manage **database backups** (create / upload / download / restore — see [Backups](#backups)); pull the latest version from GitHub (**update button**); restart the GUI; and re-open or test the **setup wizard**. |
 
-The GUI reuses the same SQLite database and config files as the CLI — changes are reflected everywhere.
+All tabs operate on the **active client**, chosen via the selector in the top-right of the header.
+The GUI reuses the same SQLite database as the CLI — changes are reflected everywhere. When
+`AUTH_ENABLED=true`, the GUI shows a login screen first (operator credentials).
 
 ### Appearance & language
 
@@ -271,6 +317,25 @@ npm install -g pm2
 pm2 start index.js --name job-alert
 pm2 save         # persist across reboots
 ```
+
+## Backups
+
+The GUI keeps full, self-contained snapshots of the SQLite database (all clients, jobs, and
+run history) under `data/backups/` (gitignored). Manage them in **Einstellungen →
+Datensicherung**:
+
+- **Automatic daily** — one snapshot per day, created on the first run / GUI start of the day.
+  Controlled by `BACKUP_ENABLED` (default on) and pruned to the newest `BACKUP_RETENTION_DAYS`
+  (default 30) dailies.
+- **Pre-import safety** — before every restore or database import, the current state is
+  snapshotted first, so the operation is always reversible.
+- **Manual** — create a snapshot on demand, **download** any snapshot to keep it off-site, or
+  **upload** a `.db` file to bring one in.
+- **Restore** — replace the live database with a chosen snapshot. It's validated as an intact
+  SQLite DB first, and the current state is auto-backed-up beforehand.
+
+Snapshots are stored read-only and named by type — `jobs-daily-…`, `jobs-manual-…`,
+`jobs-preimport-…`, `jobs-upload-…` — and retention only ever prunes old *daily* snapshots.
 
 ## Tracking Applications
 
@@ -355,13 +420,20 @@ Row colors: 🟦 blue = applied, 🟩 green = score ≥ 8, 🟨 yellow = score �
 
 ## Database
 
-Jobs are stored in `data/jobs.db` (SQLite). Inspect with any SQLite client:
+Jobs are stored in `data/jobs.db` (SQLite). The `clients` table holds one row per tenant
+(profile/sources/filters/prompts as JSON + Telegram chat id); `jobs` and `runs` carry a
+`client_id`, and `jobs` is keyed by the composite `(client_id, id)` so the same posting can be
+tracked independently per client. Inspect with any SQLite client:
 
 ```bash
-sqlite3 data/jobs.db "SELECT title, company, score, status, scraped_at FROM jobs WHERE relevant=1 ORDER BY score DESC LIMIT 20;"
+sqlite3 data/jobs.db "SELECT title, company, score, status, scraped_at FROM jobs WHERE client_id='default' AND relevant=1 ORDER BY score DESC LIMIT 20;"
 ```
 
-Key columns: `id`, `title`, `company`, `url`, `location`, `source`, `relevant`, `score`, `summary`, `notified`, `expired`, `applied`, `applied_at`, `status`, `scraped_at`, `last_seen_at`.
+Key `jobs` columns: `client_id`, `id`, `title`, `company`, `url`, `location`, `source`, `relevant`, `score`, `summary`, `notified`, `expired`, `applied`, `applied_at`, `status`, `scraped_at`, `last_seen_at`.
+
+> The schema migrates automatically on first open of the new code (adds `client_id`, rebuilds the
+> `jobs` primary key, creates the default client). `npm run migrate` additionally imports your
+> existing `config/*.json` into that default client.
 
 ## License
 

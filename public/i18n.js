@@ -10,7 +10,23 @@ const I18N = {
   de: {
     'tab.jobs': 'Jobs', 'tab.stats': 'Statistik', 'tab.sources': 'Quellen',
     'tab.profile': 'Profil', 'tab.prompts': 'Prompts', 'tab.run': 'Lauf', 'tab.settings': 'Einstellungen',
+    'tab.clients': 'Klienten',
     'btn.startRun': '▶ Lauf starten', 'btn.save': 'Speichern', 'btn.reset': 'Zurücksetzen',
+
+    // ── Auth / clients (multi-tenant) ──
+    'auth.title': 'Anmeldung', 'auth.subtitle': 'Bitte mit den Betreiber-Zugangsdaten anmelden.',
+    'auth.user': 'Benutzer', 'auth.password': 'Passwort', 'auth.login': 'Anmelden', 'auth.logout': 'Abmelden',
+    'client.active': 'Klient', 'client.activeBadge': 'aktiv',
+    'clients.title': 'Klienten', 'clients.add': '+ Klient', 'clients.inactive': 'inaktiv',
+    'clients.intro': 'Lege Klienten an und pflege ihre Telegram-Chat-ID. Lebenslauf, Quellen, Filter und Prompts werden je Klient über die anderen Tabs gepflegt — wähle dazu oben rechts den aktiven Klienten.',
+    'clients.select': 'auswählen', 'clients.chatId': 'Telegram Chat-ID',
+    'clients.enabled': 'im Lauf aktiv', 'clients.telegram': 'Telegram', 'clients.expiry': 'Ablauf-Hinweise',
+    'clients.minScore': 'Min. Relevanz-Score (leer = global)', 'clients.tgTest': 'Telegram-Test',
+    'clients.editContent': 'Inhalte dieses Klienten bearbeiten',
+    'clients.delete': 'Löschen', 'clients.saved': 'Klient gespeichert', 'clients.created': 'Klient angelegt',
+    'clients.deleted': 'Klient gelöscht', 'clients.tgOk': 'Test-Nachricht gesendet ✓',
+    'clients.namePrompt': 'Name des neuen Klienten:',
+    'clients.delConfirm': 'Klient „{name}" mit allen Jobs wirklich löschen?',
 
     'jobs.searchPh': 'Suche nach Titel, Firma, Ort…', 'jobs.allSources': 'Alle Quellen',
     'jobs.allStatuses': 'Alle Status', 'jobs.empty': 'Keine Jobs gefunden.',
@@ -48,6 +64,7 @@ const I18N = {
     'stats.headers': ['Unternehmen', 'Gefunden', 'Laut Web', 'Neu(DB)', 'Geblockt', 'Analysiert', 'Neu Rel.', 'Ges. Rel.', 'Notified'],
     'stats.headersFallback': ['Unternehmen', 'Gefunden', 'Analysiert', 'Ges. Rel.', 'Notified', 'Beworben'],
     'months': ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'],
+    'weekdays': ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'],
 
     'sources.title': 'Karriereseiten', 'sources.addSource': '+ Quelle', 'sources.namePh': 'Name',
     'sources.urlPh': 'https://…', 'sources.delTitle': 'Entfernen',
@@ -78,6 +95,10 @@ const I18N = {
     'run.title': 'Pipeline-Lauf',
     'run.intro': 'Startet <code>node index.js --once</code>: scrapen, analysieren, benachrichtigen, exportieren.',
     'run.consolePlaceholder': 'Noch keine Ausgabe. Starte einen Lauf, um Live-Logs zu sehen.',
+    'run.history': 'Letzte Läufe', 'run.show': 'Anzahl',
+    'run.noRuns': 'Noch keine Läufe aufgezeichnet.',
+    'run.noSources': 'Keine Quellen-Daten für diesen Lauf.',
+    'run.histHeaders': ['Quelle', 'Gefunden', 'Analysiert', 'Neu rel.', 'Ges. rel.', 'Benachrichtigt'],
     'settings.title': 'Einstellungen',
     'settings.intro': 'Alle Variablen aus <code>.env</code>. Änderungen greifen beim nächsten Lauf; <code>GUI-Port</code> erst nach Neustart der GUI.',
     'appearance.title': 'Darstellung',
@@ -92,6 +113,21 @@ const I18N = {
     'restart.title': 'Dienst neu starten',
     'restart.help': 'Startet den GUI-Server neu, damit Änderungen am <code>GUI-Port</code> übernommen werden. Laufende Pipeline-Läufe bitte vorher beenden.',
     'restart.btn': '↻ Jetzt neu starten',
+
+    'backup.title': 'Datensicherung',
+    'backup.help': 'Vollständige Sicherungen der Datenbank (alle Klienten, Jobs, Verlauf). Vor jedem Import wird automatisch eine Sicherung erstellt – so kann nichts verloren gehen. Tägliche Sicherungen laufen automatisch (in den Einstellungen oben konfigurierbar).',
+    'backup.createBtn': '＋ Sicherung erstellen', 'backup.uploadBtn': '⬆ Backup hochladen',
+    'backup.none': 'Noch keine Sicherungen vorhanden.',
+    'backup.colDate': 'Datum', 'backup.colType': 'Typ', 'backup.colSize': 'Größe',
+    'backup.download': 'Herunterladen', 'backup.restore': 'Wiederherstellen',
+    'backup.type.daily': 'Täglich', 'backup.type.manual': 'Manuell',
+    'backup.type.preimport': 'Vor Import', 'backup.type.upload': 'Hochgeladen', 'backup.type.unknown': 'Unbekannt',
+    'backup.creating': 'Sicherung wird erstellt …', 'backup.created': '✓ Sicherung erstellt.',
+    'backup.uploading': 'Backup wird hochgeladen …', 'backup.uploaded': '✓ Backup hochgeladen.',
+    'backup.restoring': 'Wiederherstellung läuft …',
+    'backup.restored': '✓ Wiederhergestellt. Vorheriger Stand gesichert als {safety}.',
+    'backup.restoreConfirm': 'Aktuelle Daten werden durch dieses Backup ersetzt.\n\nKeine Sorge: Vorher wird automatisch eine Sicherung des jetzigen Standes erstellt. Fortfahren?',
+    'backup.error': 'Fehler: ',
 
     'update.title': 'Updates',
     'update.help': 'Holt die neueste Version aus dem GitHub-Repository (<code>git pull</code>). Code-Änderungen greifen nach einem Neustart.',
@@ -137,7 +173,23 @@ const I18N = {
   en: {
     'tab.jobs': 'Jobs', 'tab.stats': 'Statistics', 'tab.sources': 'Sources',
     'tab.profile': 'Profile', 'tab.prompts': 'Prompts', 'tab.run': 'Run', 'tab.settings': 'Settings',
+    'tab.clients': 'Clients',
     'btn.startRun': '▶ Start run', 'btn.save': 'Save', 'btn.reset': 'Reset',
+
+    // ── Auth / clients (multi-tenant) ──
+    'auth.title': 'Sign in', 'auth.subtitle': 'Please sign in with the operator credentials.',
+    'auth.user': 'User', 'auth.password': 'Password', 'auth.login': 'Sign in', 'auth.logout': 'Sign out',
+    'client.active': 'Client', 'client.activeBadge': 'active',
+    'clients.title': 'Clients', 'clients.add': '+ Client', 'clients.inactive': 'inactive',
+    'clients.intro': 'Create clients and maintain their Telegram chat ID. CV, sources, filters and prompts are managed per client via the other tabs — pick the active client in the top right.',
+    'clients.select': 'select', 'clients.chatId': 'Telegram chat ID',
+    'clients.enabled': 'active in run', 'clients.telegram': 'Telegram', 'clients.expiry': 'Expiry alerts',
+    'clients.minScore': 'Min. relevance score (empty = global)', 'clients.tgTest': 'Telegram test',
+    'clients.editContent': "Edit this client's content",
+    'clients.delete': 'Delete', 'clients.saved': 'Client saved', 'clients.created': 'Client created',
+    'clients.deleted': 'Client deleted', 'clients.tgOk': 'Test message sent ✓',
+    'clients.namePrompt': 'Name of the new client:',
+    'clients.delConfirm': 'Really delete client “{name}" with all its jobs?',
 
     'jobs.searchPh': 'Search by title, company, location…', 'jobs.allSources': 'All sources',
     'jobs.allStatuses': 'All statuses', 'jobs.empty': 'No jobs found.',
@@ -175,6 +227,7 @@ const I18N = {
     'stats.headers': ['Company', 'Found', 'Per site', 'New (DB)', 'Blocked', 'Analyzed', 'New rel.', 'Total rel.', 'Notified'],
     'stats.headersFallback': ['Company', 'Found', 'Analyzed', 'Total rel.', 'Notified', 'Applied'],
     'months': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+    'weekdays': ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
 
     'sources.title': 'Career pages', 'sources.addSource': '+ Source', 'sources.namePh': 'Name',
     'sources.urlPh': 'https://…', 'sources.delTitle': 'Remove',
@@ -205,6 +258,10 @@ const I18N = {
     'run.title': 'Pipeline run',
     'run.intro': 'Runs <code>node index.js --once</code>: scrape, analyze, notify, export.',
     'run.consolePlaceholder': 'No output yet. Start a run to see live logs.',
+    'run.history': 'Recent runs', 'run.show': 'Show',
+    'run.noRuns': 'No runs recorded yet.',
+    'run.noSources': 'No per-source data for this run.',
+    'run.histHeaders': ['Source', 'Found', 'Analyzed', 'New rel.', 'Total rel.', 'Notified'],
     'settings.title': 'Settings',
     'settings.intro': 'All variables from <code>.env</code>. Changes apply on the next run; <code>GUI port</code> only after restarting the GUI.',
     'appearance.title': 'Appearance',
@@ -219,6 +276,21 @@ const I18N = {
     'restart.title': 'Restart service',
     'restart.help': 'Restarts the GUI server so changes to the <code>GUI port</code> take effect. Please stop any running pipeline runs first.',
     'restart.btn': '↻ Restart now',
+
+    'backup.title': 'Data backup',
+    'backup.help': 'Full backups of the database (all clients, jobs, history). Before every import a backup is taken automatically — so nothing can be lost. Daily backups run automatically (configurable in the settings above).',
+    'backup.createBtn': '＋ Create backup', 'backup.uploadBtn': '⬆ Upload backup',
+    'backup.none': 'No backups yet.',
+    'backup.colDate': 'Date', 'backup.colType': 'Type', 'backup.colSize': 'Size',
+    'backup.download': 'Download', 'backup.restore': 'Restore',
+    'backup.type.daily': 'Daily', 'backup.type.manual': 'Manual',
+    'backup.type.preimport': 'Pre-import', 'backup.type.upload': 'Uploaded', 'backup.type.unknown': 'Unknown',
+    'backup.creating': 'Creating backup …', 'backup.created': '✓ Backup created.',
+    'backup.uploading': 'Uploading backup …', 'backup.uploaded': '✓ Backup uploaded.',
+    'backup.restoring': 'Restoring …',
+    'backup.restored': '✓ Restored. Previous state saved as {safety}.',
+    'backup.restoreConfirm': 'This backup will replace your current data.\n\nDon\'t worry: a backup of the current state is taken automatically first. Continue?',
+    'backup.error': 'Error: ',
 
     'update.title': 'Updates',
     'update.help': 'Pulls the latest version from the GitHub repository (<code>git pull</code>). Code changes take effect after a restart.',
@@ -270,6 +342,8 @@ const SETTINGS_GROUPS_EN = {
   'Analyse & Filter': 'Analysis & filters',
   'Performance': 'Performance',
   'Server': 'Server',
+  'Datensicherung': 'Data backup',
+  'Klienten (Mehrbenutzer)': 'Clients (multi-user)',
 };
 const SETTINGS_LABELS_EN = {
   ANTHROPIC_API_KEY: 'Anthropic API Key',
@@ -285,6 +359,9 @@ const SETTINGS_LABELS_EN = {
   SCRAPE_CONCURRENCY: 'Scraper concurrency',
   CRON_SCHEDULE: 'Schedule (cron)',
   GUI_PORT: 'GUI port',
+  BACKUP_ENABLED: 'Daily backup',
+  BACKUP_RETENTION_DAYS: 'Retention (days)',
+  CLIENTS_ENABLED: 'Show client management',
 };
 const SETTINGS_HELP_EN = {
   ANTHROPIC_API_KEY: 'API key from console.anthropic.com',
@@ -300,6 +377,9 @@ const SETTINGS_HELP_EN = {
   SCRAPE_CONCURRENCY: 'Parallel browser workers while scraping',
   CRON_SCHEDULE: 'node-cron expression. Default: hourly on the hour',
   GUI_PORT: 'Web UI port (requires a GUI restart)',
+  BACKUP_ENABLED: 'Automatically create one database backup per day (even without an active run). Manual backup, import, download and upload stay available regardless.',
+  BACKUP_RETENTION_DAYS: 'How many daily backups to keep; older ones are deleted automatically. Manual, uploaded and pre-import backups are always kept.',
+  CLIENTS_ENABLED: 'Show the multi-user management (Clients tab and the client selector in the top bar). Leave off for private use. Reload the page for the change to take effect.',
 };
 
 // English overrides for the setup wizard schema (src/setup.js), by step id / field key.
@@ -359,12 +439,13 @@ const tSetHelp = (key, fallback) => (lang === 'en' ? (SETTINGS_HELP_EN[key] ?? f
 const wzStep = (id, field) => (lang === 'en' ? WIZARD_STEPS_EN[id]?.[field] : undefined);
 const wzField = (key, field) => (lang === 'en' ? WIZARD_FIELDS_EN[key]?.[field] : undefined);
 
-// Translate all static markup carrying data-i18n* attributes.
-function applyStaticI18n() {
-  qsa('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
-  qsa('[data-i18n-html]').forEach(el => { el.innerHTML = t(el.dataset.i18nHtml); });
-  qsa('[data-i18n-ph]').forEach(el => { el.setAttribute('placeholder', t(el.dataset.i18nPh)); });
-  qsa('[data-i18n-title]').forEach(el => { el.setAttribute('title', t(el.dataset.i18nTitle)); });
+// Translate all static markup carrying data-i18n* attributes. Pass a root element
+// to translate a freshly built fragment (e.g. a dynamically created card).
+function applyStaticI18n(root = document) {
+  qsa('[data-i18n]', root).forEach(el => { el.textContent = t(el.dataset.i18n); });
+  qsa('[data-i18n-html]', root).forEach(el => { el.innerHTML = t(el.dataset.i18nHtml); });
+  qsa('[data-i18n-ph]', root).forEach(el => { el.setAttribute('placeholder', t(el.dataset.i18nPh)); });
+  qsa('[data-i18n-title]', root).forEach(el => { el.setAttribute('title', t(el.dataset.i18nTitle)); });
 }
 
 // Components register here to re-render their dynamic content on a language change.

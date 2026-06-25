@@ -1,8 +1,9 @@
 import 'dotenv/config';
 import http from 'http';
 import { readFile, writeFile, stat } from 'fs/promises';
-import { createReadStream } from 'fs';
+import { createReadStream, createWriteStream } from 'fs';
 import { spawn } from 'child_process';
+import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -10,19 +11,126 @@ import {
   getRelevantJobs, getJobById, setApplicationStatus,
   clearApplicationStatus, markIrrelevant,
   getLatestRunOverview, getAllTimeBySource, getApplicationActivity,
-  getAppliedByCompany, getStatusBreakdown, getRunHistory, getTotals,
+  getAppliedByCompany, getStatusBreakdown, getRunHistory, getRecentRuns, getTotals,
+  getClients, getClient, createClient, updateClient, deleteClient,
+  DEFAULT_CLIENT_ID,
 } from './database.js';
+import {
+  createBackup, listBackups, resolveBackupPath, ingestUpload,
+  maybeRunDailyBackup, isDailyEnabled, retentionDays, BACKUP_DIR,
+} from './backup.js';
+import { restoreFromBackup } from './database.js';
 import { generateCoverLetter } from './cover-letter.js';
+import { sendTelegramTest } from './notifier.js';
 import { handleSetupApi } from './setup.js';
-import { DEFAULT_PROMPTS, PROMPT_FIELDS, PROMPTS_PATH, loadPrompts } from './prompts.js';
+import { DEFAULT_PROMPTS, PROMPT_FIELDS, minimizePromptOverrides } from './prompts.js';
+import { getProfile, getSources, getFilters, getPrompts } from './client-config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const JOBS_CONFIG = path.join(ROOT, 'config', 'jobs.json');
-const PROFILE_CONFIG = path.join(ROOT, 'config', 'profile.json');
 const ENV_FILE = path.join(ROOT, '.env');
 const PORT = process.env.GUI_PORT || 3000;
+
+// ── Operator authentication ─────────────────────────────────────────────────
+// Disabled by default (private/localhost). On the SaaS deployment set
+// AUTH_ENABLED=true; the operator logs in with OPERATOR_USER + password. A signed,
+// stateless cookie carries the session. This sits *behind* NGINX/Authelia as a
+// second layer — the app never trusts the network alone.
+const AUTH_ENABLED = ['true', '1', 'on', 'yes'].includes(
+  String(process.env.AUTH_ENABLED || '').trim().toLowerCase()
+);
+const OPERATOR_USER = process.env.OPERATOR_USER || 'admin';
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12h
+
+// Multi-tenant clients UI. Off by default → a private/single-user install sees no
+// client management at all (the app still operates on the default client behind
+// the scenes). Read at request time so the Einstellungen toggle takes effect on
+// the next page load, without restarting the service.
+function clientsEnabled() {
+  return ['true', '1', 'on', 'yes'].includes(
+    String(process.env.CLIENTS_ENABLED || '').trim().toLowerCase()
+  );
+}
+// Stable across restarts when SESSION_SECRET is set; otherwise random (sessions
+// drop on restart, which is acceptable for a single operator).
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+
+function b64url(buf) { return Buffer.from(buf).toString('base64url'); }
+
+function signSession(payload) {
+  const body = b64url(JSON.stringify(payload));
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(body).digest('base64url');
+  return `${body}.${sig}`;
+}
+
+function verifySession(token) {
+  if (!token || !token.includes('.')) return null;
+  const [body, sig] = token.split('.');
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(body).digest('base64url');
+  if (sig.length !== expected.length) return null;
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf-8'));
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch { return null; }
+}
+
+// Verify a password against OPERATOR_PASSWORD_HASH (scrypt$salt$hash) or, as a
+// convenience for self-host, plaintext OPERATOR_PASSWORD.
+function verifyPassword(password) {
+  const hash = process.env.OPERATOR_PASSWORD_HASH;
+  if (hash && hash.startsWith('scrypt$')) {
+    const [, saltHex, keyHex] = hash.split('$');
+    try {
+      const derived = crypto.scryptSync(password, Buffer.from(saltHex, 'hex'), 32);
+      const expected = Buffer.from(keyHex, 'hex');
+      return derived.length === expected.length && crypto.timingSafeEqual(derived, expected);
+    } catch { return false; }
+  }
+  const plain = process.env.OPERATOR_PASSWORD;
+  if (plain) return password === plain;
+  return false;
+}
+
+function parseCookies(req) {
+  const out = {};
+  const raw = req.headers.cookie;
+  if (!raw) return out;
+  for (const part of raw.split(';')) {
+    const i = part.indexOf('=');
+    if (i === -1) continue;
+    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+
+function isAuthenticated(req) {
+  if (!AUTH_ENABLED) return true;
+  return Boolean(verifySession(parseCookies(req).session));
+}
+
+// Whether the session cookie should carry the `Secure` flag (browser only sends
+// it over HTTPS). Explicit override via SESSION_COOKIE_SECURE; otherwise auto:
+// on when reached over HTTPS (X-Forwarded-Proto from the TLS proxy) or via a real
+// hostname, off for localhost so the local sandbox keeps working over plain HTTP.
+function cookieIsSecure(req) {
+  const override = String(process.env.SESSION_COOKIE_SECURE || '').trim().toLowerCase();
+  if (['true', '1', 'on', 'yes'].includes(override)) return true;
+  if (['false', '0', 'off', 'no'].includes(override)) return false;
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  if (proto) return proto === 'https';
+  return !/^(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(String(req.headers.host || ''));
+}
+
+// Build a session Set-Cookie header with consistent, hardened flags.
+function sessionCookie(value, maxAgeSec, req) {
+  const flags = ['HttpOnly'];
+  if (cookieIsSecure(req)) flags.push('Secure');
+  flags.push('SameSite=Lax', 'Path=/', `Max-Age=${maxAgeSec}`);
+  return `session=${value}; ${flags.join('; ')}`;
+}
 
 // ── Settings schema ─────────────────────────────────────────────────────────
 // Single source of truth for every variable shown in the GUI "Einstellungen" tab.
@@ -58,6 +166,23 @@ const SETTINGS_SCHEMA = [
     help: 'node-cron Ausdruck. Standard: stündlich zur vollen Stunde' },
   { key: 'GUI_PORT', group: 'Server', label: 'GUI-Port', type: 'int', default: '3000', min: 1, max: 65535,
     help: 'Port der Weboberfläche (Neustart der GUI nötig)' },
+
+  { key: 'BACKUP_ENABLED', group: 'Datensicherung', label: 'Tägliches Backup', type: 'bool', default: 'true',
+    help: 'Erstellt einmal pro Tag automatisch eine Sicherung der Datenbank (auch ohne aktiven Lauf). Manuelle Sicherung, Import, Download und Upload bleiben unabhängig davon verfügbar.' },
+  { key: 'BACKUP_RETENTION_DAYS', group: 'Datensicherung', label: 'Aufbewahrung (Tage)', type: 'int', default: '30', min: 1, max: 3650,
+    help: 'So viele tägliche Sicherungen werden behalten, ältere werden automatisch gelöscht. Manuelle, hochgeladene und Vor-Import-Sicherungen bleiben immer erhalten.' },
+
+  { key: 'CLIENTS_ENABLED', group: 'Klienten (Mehrbenutzer)', label: 'Klienten-Verwaltung anzeigen', type: 'bool', default: 'false',
+    help: 'Blendet die Mehrbenutzer-Verwaltung ein (Klienten-Tab und Klienten-Auswahl oben rechts). Für die private Nutzung aus lassen. Seite neu laden, damit die Änderung greift.' },
+
+  { key: 'AUTH_ENABLED', group: 'Sicherheit (SaaS)', label: 'Login aktiv', type: 'text', default: 'false',
+    help: "Auf 'true' setzen, um das Betreiber-Login zu aktivieren (SaaS). Privat/localhost: 'false'. Neustart nötig." },
+  { key: 'OPERATOR_USER', group: 'Sicherheit (SaaS)', label: 'Betreiber-Benutzer', type: 'text', default: 'admin',
+    help: 'Benutzername für das GUI-Login (nur bei aktiviertem Login)' },
+  { key: 'OPERATOR_PASSWORD_HASH', group: 'Sicherheit (SaaS)', label: 'Passwort-Hash', type: 'secret',
+    help: 'scrypt-Hash des Betreiber-Passworts. Erzeugen mit: npm run hash-password -- "<passwort>"' },
+  { key: 'SESSION_SECRET', group: 'Sicherheit (SaaS)', label: 'Session-Secret', type: 'secret',
+    help: 'Zufälliger String zum Signieren der Login-Sitzungen (sonst bei jedem Neustart neu → Logout). Neustart nötig.' },
 ];
 const SCHEMA_BY_KEY = Object.fromEntries(SETTINGS_SCHEMA.map(s => [s.key, s]));
 
@@ -68,7 +193,9 @@ function parseEnvFile(raw) {
     const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
     if (!m) continue;
     let val = m[2].trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
+    if (val.length >= 2 && val.startsWith('"') && val.endsWith('"'))
+      val = val.slice(1, -1).replace(/\\"/g, '"');   // undo envQuote's \" escaping
+    else if (val.length >= 2 && val.startsWith("'") && val.endsWith("'"))
       val = val.slice(1, -1);
     out[m[1]] = val;
   }
@@ -146,14 +273,17 @@ function broadcast(event, data) {
   for (const res of run.clients) res.write(payload);
 }
 
-function startRun() {
+function startRun(clientId) {
   if (run.active) return false;
   run.active = true;
   run.startedAt = new Date().toISOString();
   run.logs = [];
   broadcast('status', { active: true, startedAt: run.startedAt });
 
-  const child = spawn('node', ['index.js', '--once'], {
+  // Scope the run to one client when given, otherwise run all enabled clients.
+  const args = ['index.js', '--once'];
+  if (clientId) args.push('--client', clientId);
+  const child = spawn('node', args, {
     cwd: ROOT,
     env: process.env,
   });
@@ -197,6 +327,39 @@ function readBody(req) {
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
+}
+
+// Stream a raw request body straight to a file (for binary backup uploads — the DB
+// can be tens of MB, far past readBody's string/5 MB limit). Aborts and cleans up
+// if the upload exceeds maxBytes.
+function streamToFile(req, destPath, maxBytes = 200_000_000) {
+  return new Promise((resolve, reject) => {
+    const out = createWriteStream(destPath);
+    let size = 0;
+    let aborted = false;
+    const fail = (err) => {
+      if (aborted) return;
+      aborted = true;
+      out.destroy();
+      import('fs').then(({ rmSync }) => { try { rmSync(destPath, { force: true }); } catch { /* ignore */ } });
+      reject(err);
+    };
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > maxBytes) { fail(new Error('Upload zu groß.')); req.destroy(); }
+    });
+    req.on('error', fail);
+    out.on('error', fail);
+    out.on('finish', () => { if (!aborted) resolve(size); });
+    req.pipe(out);
+  });
+}
+
+// Resolve the active client from a request's ?clientId= (defaulting to the
+// single-user default client). Returns null when the id is unknown.
+function resolveClientId(url) {
+  const id = url.searchParams.get('clientId') || DEFAULT_CLIENT_ID;
+  return getClient(id) ? id : null;
 }
 
 // Run a git command in the project root and capture its output. Resolves with
@@ -245,21 +408,119 @@ const server = http.createServer(async (req, res) => {
     // ---- API ----
     if (pathname.startsWith('/api/')) {
 
+      // ---- Auth (always reachable) ----
+      // GET /api/auth/status — lets the SPA decide whether to show the login screen
+      if (method === 'GET' && pathname === '/api/auth/status') {
+        return sendJson(res, 200, {
+          authEnabled: AUTH_ENABLED,
+          authenticated: isAuthenticated(req),
+          clientsEnabled: clientsEnabled(),
+        });
+      }
+      // POST /api/login { user, password }
+      if (method === 'POST' && pathname === '/api/login') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const okUser = String(body.user || '') === OPERATOR_USER;
+        if (okUser && verifyPassword(String(body.password || ''))) {
+          const token = signSession({ u: OPERATOR_USER, exp: Date.now() + SESSION_TTL_MS });
+          res.writeHead(200, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Set-Cookie': sessionCookie(token, SESSION_TTL_MS / 1000, req),
+          });
+          return res.end(JSON.stringify({ ok: true }));
+        }
+        return sendJson(res, 401, { error: 'Benutzername oder Passwort falsch' });
+      }
+      // POST /api/logout
+      if (method === 'POST' && pathname === '/api/logout') {
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Set-Cookie': sessionCookie('', 0, req),
+        });
+        return res.end(JSON.stringify({ ok: true }));
+      }
+
+      // ---- Auth gate: everything below requires a session when AUTH_ENABLED ----
+      if (!isAuthenticated(req)) {
+        return sendJson(res, 401, { error: 'Nicht angemeldet' });
+      }
+
+      // ---- Clients (tenant management) ----
+      // GET /api/clients — list (secrets included; operator owns them)
+      if (method === 'GET' && pathname === '/api/clients') {
+        return sendJson(res, 200, { clients: getClients(), defaultClientId: DEFAULT_CLIENT_ID });
+      }
+      // POST /api/clients — create
+      if (method === 'POST' && pathname === '/api/clients') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        if (!body.name || !String(body.name).trim())
+          return sendJson(res, 400, { error: 'Name ist erforderlich' });
+        const created = createClient({
+          name: String(body.name).trim(),
+          enabled: body.enabled,
+          telegram_chat_id: body.telegram_chat_id || null,
+          telegram_notifications: body.telegram_notifications || 'on',
+          expiry_notifications: body.expiry_notifications || 'on',
+          min_relevance_score: body.min_relevance_score ?? null,
+        });
+        return sendJson(res, 201, { client: created });
+      }
+      // PUT /api/clients/:id — update meta (name, telegram, toggles)
+      let cm = pathname.match(/^\/api\/clients\/([^/]+)$/);
+      if (method === 'PUT' && cm) {
+        const id = decodeURIComponent(cm[1]);
+        if (!getClient(id)) return sendJson(res, 404, { error: 'Klient nicht gefunden' });
+        const body = JSON.parse(await readBody(req) || '{}');
+        const patch = {};
+        for (const f of ['name', 'enabled', 'telegram_chat_id', 'telegram_notifications', 'expiry_notifications', 'min_relevance_score']) {
+          if (Object.prototype.hasOwnProperty.call(body, f)) patch[f] = body[f];
+        }
+        return sendJson(res, 200, { client: updateClient(id, patch) });
+      }
+      // POST /api/clients/:id/telegram-test — send a test message to a chat id
+      let ctm = pathname.match(/^\/api\/clients\/([^/]+)\/telegram-test$/);
+      if (method === 'POST' && ctm) {
+        const id = decodeURIComponent(ctm[1]);
+        const client = getClient(id);
+        if (!client) return sendJson(res, 404, { error: 'Klient nicht gefunden' });
+        let chatId = client.telegram_chat_id;
+        try { chatId = (JSON.parse(await readBody(req) || '{}').telegram_chat_id || chatId); } catch { /* use stored */ }
+        try {
+          await sendTelegramTest(chatId);
+          return sendJson(res, 200, { ok: true });
+        } catch (err) {
+          return sendJson(res, 502, { error: err.message });
+        }
+      }
+
+      // DELETE /api/clients/:id
+      if (method === 'DELETE' && cm) {
+        const id = decodeURIComponent(cm[1]);
+        if (id === DEFAULT_CLIENT_ID) return sendJson(res, 400, { error: 'Der Standard-Klient kann nicht gelöscht werden.' });
+        if (!getClient(id)) return sendJson(res, 404, { error: 'Klient nicht gefunden' });
+        deleteClient(id);
+        return sendJson(res, 200, { ok: true });
+      }
+
       // ---- Setup wizard (delegated to setup.js) ----
       if (pathname.startsWith('/api/setup')) {
         const handled = await handleSetupApi(req, res, url, { sendJson, readBody });
         if (handled) return;
       }
 
+      // From here on, data endpoints operate on the active client (?clientId=…).
+      const clientId = resolveClientId(url);
+      if (!clientId) return sendJson(res, 404, { error: 'Unbekannter Klient' });
+
       // GET /api/jobs — all relevant jobs (the dashboard list)
       if (method === 'GET' && pathname === '/api/jobs') {
-        return sendJson(res, 200, getRelevantJobs());
+        return sendJson(res, 200, getRelevantJobs(clientId));
       }
 
       // GET /api/jobs/:id — single job with full description
       let m = pathname.match(/^\/api\/jobs\/([^/]+)$/);
       if (method === 'GET' && m) {
-        const job = getJobById(decodeURIComponent(m[1]));
+        const job = getJobById(clientId, decodeURIComponent(m[1]));
         return job ? sendJson(res, 200, job) : sendJson(res, 404, { error: 'not found' });
       }
 
@@ -267,27 +528,27 @@ const server = http.createServer(async (req, res) => {
       m = pathname.match(/^\/api\/jobs\/([^/]+)\/status$/);
       if (method === 'POST' && m) {
         const id = decodeURIComponent(m[1]);
-        if (!getJobById(id)) return sendJson(res, 404, { error: 'not found' });
+        if (!getJobById(clientId, id)) return sendJson(res, 404, { error: 'not found' });
         const { status } = JSON.parse(await readBody(req) || '{}');
-        if (!status) clearApplicationStatus(id);
-        else if (VALID_STATUSES.includes(status)) setApplicationStatus(id, status);
+        if (!status) clearApplicationStatus(clientId, id);
+        else if (VALID_STATUSES.includes(status)) setApplicationStatus(clientId, id, status);
         else return sendJson(res, 400, { error: `invalid status; allowed: ${VALID_STATUSES.join(', ')}` });
-        return sendJson(res, 200, getJobById(id));
+        return sendJson(res, 200, getJobById(clientId, id));
       }
 
       // POST /api/jobs/:id/ignore — mark not relevant
       m = pathname.match(/^\/api\/jobs\/([^/]+)\/ignore$/);
       if (method === 'POST' && m) {
         const id = decodeURIComponent(m[1]);
-        if (!getJobById(id)) return sendJson(res, 404, { error: 'not found' });
-        markIrrelevant(id);
+        if (!getJobById(clientId, id)) return sendJson(res, 404, { error: 'not found' });
+        markIrrelevant(clientId, id);
         return sendJson(res, 200, { ok: true });
       }
 
       // POST /api/jobs/:id/cover-letter — generate a tailored cover letter via Claude
       m = pathname.match(/^\/api\/jobs\/([^/]+)\/cover-letter$/);
       if (method === 'POST' && m) {
-        const job = getJobById(decodeURIComponent(m[1]));
+        const job = getJobById(clientId, decodeURIComponent(m[1]));
         if (!job) return sendJson(res, 404, { error: 'not found' });
         let notes = '';
         try { notes = (JSON.parse(await readBody(req) || '{}').notes || '').toString().trim(); }
@@ -304,24 +565,29 @@ const server = http.createServer(async (req, res) => {
       // GET /api/stats — everything the stats page needs in one payload
       if (method === 'GET' && pathname === '/api/stats') {
         return sendJson(res, 200, {
-          totals:       getTotals(),
-          overview:     getLatestRunOverview(),   // null if no run recorded yet
-          allTime:      getAllTimeBySource(),
-          activity:     getApplicationActivity(),
-          appliedByCompany: getAppliedByCompany(),
-          statusBreak:  getStatusBreakdown(),
-          runHistory:   getRunHistory(30),
+          totals:       getTotals(clientId),
+          overview:     getLatestRunOverview(clientId),   // null if no run recorded yet
+          allTime:      getAllTimeBySource(clientId),
+          activity:     getApplicationActivity(clientId),
+          appliedByCompany: getAppliedByCompany(clientId),
+          statusBreak:  getStatusBreakdown(clientId),
+          runHistory:   getRunHistory(clientId, 30),
         });
       }
 
-      // GET /api/sources — raw jobs.json
-      if (method === 'GET' && pathname === '/api/sources') {
-        const raw = await readFile(JOBS_CONFIG, 'utf-8');
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        return res.end(raw);
+      // GET /api/runs?limit=N — last N runs with per-source breakdown (Run tab)
+      if (method === 'GET' && pathname === '/api/runs') {
+        const raw = parseInt(url.searchParams.get('limit'), 10);
+        const limit = Number.isFinite(raw) ? Math.min(Math.max(raw, 1), 100) : 10;
+        return sendJson(res, 200, { runs: getRecentRuns(clientId, limit) });
       }
 
-      // PUT /api/sources — overwrite jobs.json (validated)
+      // GET /api/sources — this client's job sources
+      if (method === 'GET' && pathname === '/api/sources') {
+        return sendJson(res, 200, { sources: getSources(clientId) });
+      }
+
+      // PUT /api/sources — overwrite this client's sources (validated)
       if (method === 'PUT' && pathname === '/api/sources') {
         const body = await readBody(req);
         let parsed;
@@ -333,18 +599,16 @@ const server = http.createServer(async (req, res) => {
           if (!s || typeof s.name !== 'string' || typeof s.url !== 'string')
             return sendJson(res, 400, { error: 'Jede Quelle braucht name und url' });
         }
-        await writeFile(JOBS_CONFIG, JSON.stringify(parsed, null, 2) + '\n', 'utf-8');
+        updateClient(clientId, { sources_json: JSON.stringify({ sources: parsed.sources }) });
         return sendJson(res, 200, { ok: true, count: parsed.sources.length });
       }
 
-      // GET /api/profile — the CV/preferences JSON (empty object if not created yet)
+      // GET /api/profile — this client's CV/preferences JSON
       if (method === 'GET' && pathname === '/api/profile') {
-        let profile = {};
-        try { profile = JSON.parse(await readFile(PROFILE_CONFIG, 'utf-8')); } catch { /* none yet */ }
-        return sendJson(res, 200, { profile });
+        return sendJson(res, 200, { profile: getProfile(clientId) });
       }
 
-      // PUT /api/profile — overwrite profile.json with the full object
+      // PUT /api/profile — overwrite this client's profile object
       if (method === 'PUT' && pathname === '/api/profile') {
         let body;
         try { body = JSON.parse(await readBody(req) || '{}'); }
@@ -352,23 +616,41 @@ const server = http.createServer(async (req, res) => {
         const profile = body && body.profile;
         if (!profile || typeof profile !== 'object' || Array.isArray(profile))
           return sendJson(res, 400, { error: 'Erwarte { profile: { … } }' });
-        await writeFile(PROFILE_CONFIG, JSON.stringify(profile, null, 2) + '\n', 'utf-8');
+        updateClient(clientId, { profile_json: JSON.stringify(profile) });
         return sendJson(res, 200, { ok: true });
       }
 
-      // GET /api/prompts — editable prompt fields + current/default values
+      // GET /api/filters — this client's title blocklist + priority keywords
+      if (method === 'GET' && pathname === '/api/filters') {
+        return sendJson(res, 200, { filters: getFilters(clientId) });
+      }
+
+      // PUT /api/filters — overwrite this client's filters
+      if (method === 'PUT' && pathname === '/api/filters') {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        const f = body && body.filters;
+        if (!f || typeof f !== 'object')
+          return sendJson(res, 400, { error: 'Erwarte { filters: { titleBlocklist, priorityKeywords } }' });
+        const clean = {
+          titleBlocklist:  Array.isArray(f.titleBlocklist)  ? f.titleBlocklist.map(String)  : [],
+          priorityKeywords: Array.isArray(f.priorityKeywords) ? f.priorityKeywords.map(String) : [],
+        };
+        updateClient(clientId, { filters_json: JSON.stringify(clean) });
+        return sendJson(res, 200, { ok: true });
+      }
+
+      // GET /api/prompts — editable prompt fields + this client's current/default values
       if (method === 'GET' && pathname === '/api/prompts') {
-        const current = loadPrompts();
         return sendJson(res, 200, {
           fields: PROMPT_FIELDS,
-          prompts: current,
+          prompts: getPrompts(clientId),
           defaults: DEFAULT_PROMPTS,
         });
       }
 
-      // PUT /api/prompts — persist overrides to config/prompts.json.
-      // Empty or default-equal values are dropped so the file stays minimal and
-      // future default changes still flow through for untouched fields.
+      // PUT /api/prompts — persist this client's prompt overrides (minimal diff vs defaults)
       if (method === 'PUT' && pathname === '/api/prompts') {
         let body;
         try { body = JSON.parse(await readBody(req) || '{}'); }
@@ -376,12 +658,8 @@ const server = http.createServer(async (req, res) => {
         const incoming = body && body.prompts;
         if (!incoming || typeof incoming !== 'object')
           return sendJson(res, 400, { error: 'Erwarte { prompts: { KEY: text } }' });
-        const overrides = {};
-        for (const key of Object.keys(DEFAULT_PROMPTS)) {
-          const v = incoming[key];
-          if (typeof v === 'string' && v.trim() !== '' && v !== DEFAULT_PROMPTS[key]) overrides[key] = v;
-        }
-        await writeFile(PROMPTS_PATH, JSON.stringify(overrides, null, 2) + '\n', 'utf-8');
+        const overrides = minimizePromptOverrides(incoming);
+        updateClient(clientId, { prompts_json: Object.keys(overrides).length ? JSON.stringify(overrides) : null });
         return sendJson(res, 200, { ok: true });
       }
 
@@ -421,6 +699,9 @@ const server = http.createServer(async (req, res) => {
           const s = SCHEMA_BY_KEY[key];
           if (!s) continue;   // ignore unknown keys from the client
           const val = rawVal == null ? '' : String(rawVal).trim();
+          // Interior newlines would break out of their .env line on the next
+          // read (parseEnvFile is line-based), injecting/overwriting other keys.
+          if (/[\r\n]/.test(val)) { errors.push(`${s.label}: darf keine Zeilenumbrüche enthalten`); continue; }
 
           if (s.type === 'secret') {
             if (val !== '') final[key] = val;   // empty = leave unchanged
@@ -453,9 +734,11 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true });
       }
 
-      // POST /api/run — start a pipeline run
+      // POST /api/run — start a pipeline run for the active client, or all clients
+      // when ?all=1 is set.
       if (method === 'POST' && pathname === '/api/run') {
-        const started = startRun();
+        const runAllClients = ['1', 'true', 'yes'].includes((url.searchParams.get('all') || '').toLowerCase());
+        const started = startRun(runAllClients ? undefined : clientId);
         return started
           ? sendJson(res, 202, { started: true })
           : sendJson(res, 409, { started: false, error: 'Lauf läuft bereits' });
@@ -509,6 +792,71 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, updated, depsChanged, needsRestart: updated, output: pull.out });
       }
 
+      // ---- Backups (operator-wide: cover the whole DB, all clients) ----
+
+      // GET /api/backups — list existing backups + current settings
+      if (method === 'GET' && pathname === '/api/backups') {
+        return sendJson(res, 200, {
+          backups: listBackups(),
+          enabled: isDailyEnabled(),
+          retentionDays: retentionDays(),
+        });
+      }
+
+      // POST /api/backups — create a manual snapshot now
+      if (method === 'POST' && pathname === '/api/backups') {
+        try {
+          const backup = await createBackup('manual');
+          return sendJson(res, 200, { ok: true, backup });
+        } catch (err) {
+          log(`Backup failed: ${err.message}`);
+          return sendJson(res, 500, { error: `Sicherung fehlgeschlagen: ${err.message}` });
+        }
+      }
+
+      // GET /api/backups/download?file=… — download a backup file
+      if (method === 'GET' && pathname === '/api/backups/download') {
+        let full;
+        try { full = resolveBackupPath(url.searchParams.get('file')); }
+        catch (err) { return sendJson(res, 404, { error: err.message }); }
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': `attachment; filename="${path.basename(full)}"`,
+        });
+        return createReadStream(full).pipe(res);
+      }
+
+      // POST /api/backups/upload — accept an externally stored backup file (raw body)
+      if (method === 'POST' && pathname === '/api/backups/upload') {
+        const tmp = path.join(BACKUP_DIR, `.upload-${Date.now()}.tmp`);
+        try {
+          await streamToFile(req, tmp);
+          const backup = ingestUpload(tmp);   // validates; throws (and cleans up) if invalid
+          return sendJson(res, 200, { ok: true, backup });
+        } catch (err) {
+          log(`Upload rejected: ${err.message}`);
+          return sendJson(res, 400, { error: `Upload abgelehnt: ${err.message}` });
+        }
+      }
+
+      // POST /api/backups/restore { file } — restore a backup. Always takes a fresh
+      // pre-import safety backup FIRST, so the current state is never lost.
+      if (method === 'POST' && pathname === '/api/backups/restore') {
+        if (run.active) return sendJson(res, 409, { error: 'Ein Lauf ist aktiv – bitte zuerst beenden.' });
+        let full;
+        try { full = resolveBackupPath(JSON.parse(await readBody(req) || '{}').file); }
+        catch (err) { return sendJson(res, 400, { error: err.message }); }
+        try {
+          const safetyBackup = await createBackup('preimport');   // safety net before any change
+          restoreFromBackup(full);                                // atomic; rolls back on error
+          log(`Restored from ${path.basename(full)} (safety: ${safetyBackup.file}).`);
+          return sendJson(res, 200, { ok: true, safetyBackup });
+        } catch (err) {
+          log(`Restore failed: ${err.message}`);
+          return sendJson(res, 500, { error: `Wiederherstellung fehlgeschlagen: ${err.message}` });
+        }
+      }
+
       // POST /api/restart — restart the GUI server itself
       if (method === 'POST' && pathname === '/api/restart') {
         if (run.active) return sendJson(res, 409, { error: 'Ein Lauf ist aktiv – bitte zuerst beenden.' });
@@ -557,3 +905,10 @@ server.on('error', (err) => {
   }
 });
 server.listen(PORT, () => log(`GUI ready → http://localhost:${PORT}`));
+
+// Daily DB backup: check on startup, then every 6h so a long-running server still
+// creates one after crossing midnight. Idempotent — skips if today's already exists.
+maybeRunDailyBackup().catch(err => log(`Daily backup check failed: ${err.message}`));
+setInterval(() => {
+  maybeRunDailyBackup().catch(err => log(`Daily backup check failed: ${err.message}`));
+}, 6 * 60 * 60 * 1000).unref();
