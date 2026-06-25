@@ -1,7 +1,14 @@
 // ── tiny helpers ───────────────────────────────────────────────────────────
 const $  = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+// The active tenant. Data requests are auto-scoped with ?clientId=…; a handful of
+// global/operator endpoints (below) are exempt.
+let currentClientId = null;
+const CLIENT_AGNOSTIC = ['/api/clients', '/api/login', '/api/logout', '/api/auth', '/api/settings', '/api/setup', '/api/update', '/api/restart', '/api/backups'];
 const api = async (url, opts) => {
+  if (currentClientId && url.startsWith('/api/') && !CLIENT_AGNOSTIC.some(p => url.startsWith(p))) {
+    url += (url.includes('?') ? '&' : '?') + 'clientId=' + encodeURIComponent(currentClientId);
+  }
   const res = await fetch(url, opts);
   const ct = res.headers.get('content-type') || '';
   const body = ct.includes('json') ? await res.json() : await res.text();
@@ -33,8 +40,11 @@ $('#tabs').addEventListener('click', (e) => {
   if (name === 'sources' && !sourcesLoaded) loadSources();
   if (name === 'stats') loadStats();
   if (name === 'settings' && !settingsLoaded) loadSettings();
+  if (name === 'settings') loadBackups();
   if (name === 'profile' && !profileLoaded) loadProfile();
   if (name === 'prompts' && !promptsLoaded) loadPrompts();
+  if (name === 'clients') renderClients();
+  if (name === 'run') loadRecentRuns();
 });
 
 // ── JOBS ────────────────────────────────────────────────────────────────────
@@ -279,6 +289,7 @@ async function loadStats() {
   try {
     const s = await api('/api/stats');
     renderStatCards(s.totals);
+    renderStatusBreakdown(s.statusBreak);
     renderHeatmap(s.activity);
     renderAppliedChart(s.appliedByCompany);
     renderSourcesChart(s.allTime);
@@ -297,6 +308,21 @@ function renderStatCards(totals = {}) {
   ];
   $('#stats-cards').innerHTML = cards.map(([l, v]) =>
     `<div class="stat"><div class="v">${v}</div><div class="l">${esc(l)}</div></div>`).join('');
+}
+
+// Funnel of where applications currently stand (applied → interview → offer /
+// rejected). Uses the `statusBreak` payload, which sums to the "Beworben" total.
+function renderStatusBreakdown(breakdown = {}) {
+  const order = ['applied', 'interview', 'offer', 'rejected'];
+  const total = order.reduce((sum, k) => sum + (breakdown[k] || 0), 0);
+  const el = $('#status-breakdown');
+  if (!el) return;
+  if (!total) { el.innerHTML = ''; return; }
+  el.innerHTML = order.map(k => `
+    <div class="sb-chip st-${k}">
+      <span class="sb-n">${breakdown[k] || 0}</span>
+      <span class="sb-l">${esc(statusLabel(k))}</span>
+    </div>`).join('');
 }
 
 // GitHub-style contribution heatmap of application activity (last ~53 weeks).
@@ -329,7 +355,7 @@ function renderHeatmap(activity = {}) {
     for (let d = 0; d < 7; d++) {
       const date = new Date(start);
       date.setDate(start.getDate() + w * 7 + d);
-      if (date > today) { col += `<span class="hm-cell empty"></span>`; continue; }
+      if (date > today) { col += `<span class="hm-cell hm-empty"></span>`; continue; }
       const key = ymd(date);
       const c = activity[key] || 0;
       total += c;
@@ -342,8 +368,15 @@ function renderHeatmap(activity = {}) {
     monthLabels += `<span class="hm-month">${lbl}</span>`;
     cols.push(`<div class="hm-col">${col}</div>`);
   }
+  // Weekday labels (rows are Sun-first); show Mon/Wed/Fri to stay uncluttered.
+  const WD = t('weekdays');
+  const weekdays = Array.from({ length: 7 }, (_, d) =>
+    `<span class="hm-weekday">${d % 2 === 1 ? WD[d] : ''}</span>`).join('');
   $('#heatmap').innerHTML =
-    `<div class="hm-months">${monthLabels}</div><div class="hm-grid">${cols.join('')}</div>`;
+    `<div class="hm-weekdays">${weekdays}</div>` +
+    `<div class="hm-body">` +
+      `<div class="hm-months">${monthLabels}</div><div class="hm-grid">${cols.join('')}</div>` +
+    `</div>`;
   $('#activity-total').textContent = applicationsN(total) + t('stats.inLastYear');
 }
 
@@ -558,11 +591,17 @@ function settingField(s) {
   } else if (s.type === 'int') {
     control = `<input id="${id}" class="set-input set-num" type="number" ${da}
       value="${esc(s.value)}" placeholder="${esc(s.default)}"${s.min != null ? ` min="${s.min}"` : ''}${s.max != null ? ` max="${s.max}"` : ''}>`;
+  } else if (s.type === 'bool') {
+    const on = String(s.value).toLowerCase() === 'true';
+    control = `<label class="set-switch">
+      <input id="${id}" class="set-input set-bool" type="checkbox" ${da}${on ? ' checked' : ''}>
+      <span class="set-switch-track"></span>
+    </label>`;
   } else {
     control = `<input id="${id}" class="set-input" type="text" ${da}
       value="${esc(s.value)}" placeholder="${esc(s.default)}" spellcheck="false">`;
   }
-  const def = (s.type !== 'secret' && s.default) ? ` <span class="set-default">${esc(t('settings.defaultPrefix'))}<code>${esc(s.default)}</code></span>` : '';
+  const def = (s.type !== 'secret' && s.type !== 'bool' && s.default) ? ` <span class="set-default">${esc(t('settings.defaultPrefix'))}<code>${esc(s.default)}</code></span>` : '';
   return `<div class="setting">
     <label class="set-label" for="${id}">${esc(tSetLabel(s.key, s.label))} ${req}</label>
     <div class="set-control">${control}</div>
@@ -584,6 +623,8 @@ $('#save-settings').addEventListener('click', async () => {
   for (const inp of $$('#settings-groups .set-input')) {
     if (inp.dataset.type === 'secret') {
       if (inp.value !== '') payload[inp.dataset.key] = inp.value;   // only send if changed
+    } else if (inp.dataset.type === 'bool') {
+      payload[inp.dataset.key] = inp.checked ? 'true' : 'false';
     } else {
       payload[inp.dataset.key] = inp.value.trim();
     }
@@ -595,6 +636,9 @@ $('#save-settings').addEventListener('click', async () => {
     });
     showSettingsMsg(t('settings.savedMsg'), 'ok');
     toast(t('toast.settingsSaved'));
+    // Reflect the clients toggle immediately — no page reload needed.
+    const clientsCb = $('#set-CLIENTS_ENABLED');
+    if (clientsCb) applyClientsVisibility(clientsCb.checked);
     loadSettings();   // refresh: clears secret fields, updates "gesetzt"-Status
   } catch (err) { showSettingsMsg(t('toast.error') + err.message, 'err'); }
 });
@@ -613,6 +657,98 @@ async function restartService(btn) {
 $('#restart-btn').addEventListener('click', () => {
   if (!confirm(t('restart.confirm'))) return;
   restartService($('#restart-btn'));
+});
+
+// ── BACKUP / RESTORE ──────────────────────────────────────────────────────────
+function backupMsg(text, kind = '') {
+  const el = $('#backup-msg');
+  el.textContent = text; el.className = 'save-hint' + (kind ? ' ' + kind : '');
+}
+
+function fmtSize(bytes) {
+  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+  if (bytes >= 1e3) return Math.round(bytes / 1e3) + ' KB';
+  return bytes + ' B';
+}
+
+async function loadBackups() {
+  try {
+    const data = await api('/api/backups');
+    renderBackups(data);
+  } catch (err) { backupMsg(t('toast.error') + err.message, 'err'); }
+}
+
+function renderBackups({ backups = [] } = {}) {
+  const list = $('#backup-list');
+  if (!backups.length) {
+    list.innerHTML = `<p class="muted" style="padding:8px 2px">${esc(t('backup.none'))}</p>`;
+    return;
+  }
+  const rows = backups.map(b => `<tr>
+    <td class="t-name">${esc(new Date(b.createdAt).toLocaleString(locale()))}</td>
+    <td><span class="bk-badge bk-${esc(b.type)}">${esc(t('backup.type.' + b.type))}</span></td>
+    <td>${esc(fmtSize(b.size))}</td>
+    <td class="bk-actions">
+      <button class="btn btn-ghost bk-download" data-file="${esc(b.file)}" title="${esc(t('backup.download'))}">⬇</button>
+      <button class="btn bk-restore" data-file="${esc(b.file)}" data-i18n="backup.restore">${esc(t('backup.restore'))}</button>
+    </td>
+  </tr>`).join('');
+  list.innerHTML = `<div class="table-scroll"><table class="data-table bk-table">
+    <thead><tr>
+      <th data-i18n="backup.colDate">Datum</th><th data-i18n="backup.colType">Typ</th>
+      <th data-i18n="backup.colSize">Größe</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+$('#backup-create-btn').addEventListener('click', async () => {
+  const btn = $('#backup-create-btn');
+  btn.disabled = true;
+  backupMsg(t('backup.creating'));
+  try {
+    await api('/api/backups', { method: 'POST' });
+    backupMsg(t('backup.created'), 'ok');
+    toast(t('backup.created'));
+    loadBackups();
+  } catch (err) { backupMsg(t('backup.error') + err.message, 'err'); }
+  finally { btn.disabled = false; }
+});
+
+$('#backup-upload-btn').addEventListener('click', () => $('#backup-upload-input').click());
+$('#backup-upload-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';                 // allow re-selecting the same file later
+  if (!file) return;
+  backupMsg(t('backup.uploading'));
+  try {
+    // Raw binary body — the server streams it straight to a temp file and validates it.
+    await api('/api/backups/upload', { method: 'POST', body: file });
+    backupMsg(t('backup.uploaded'), 'ok');
+    toast(t('backup.uploaded'));
+    loadBackups();
+  } catch (err) { backupMsg(t('backup.error') + err.message, 'err'); }
+});
+
+$('#backup-list').addEventListener('click', async (e) => {
+  const dl = e.target.closest('.bk-download');
+  if (dl) { window.location.href = '/api/backups/download?file=' + encodeURIComponent(dl.dataset.file); return; }
+
+  const rs = e.target.closest('.bk-restore');
+  if (!rs) return;
+  if (!confirm(t('backup.restoreConfirm'))) return;
+  rs.disabled = true;
+  backupMsg(t('backup.restoring'));
+  try {
+    const r = await api('/api/backups/restore', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: rs.dataset.file }),
+    });
+    backupMsg(t('backup.restored').replace('{safety}', r.safetyBackup?.file || ''), 'ok');
+    toast(t('backup.restored').replace('{safety}', r.safetyBackup?.file || ''));
+    loadBackups();
+    loadJobs();
+    statsLoaded = false;                 // force a fresh stats reload on next visit
+  } catch (err) { backupMsg(t('backup.error') + err.message, 'err'); rs.disabled = false; }
 });
 
 // ── UPDATE (git pull from GitHub) ─────────────────────────────────────────────
@@ -710,11 +846,57 @@ async function startRun() {
 let refreshTimer;
 function refreshAfterRun() {
   clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(() => { loadJobs(); toast(t('run.doneToast')); }, 800);
+  refreshTimer = setTimeout(() => { loadJobs(); loadRecentRuns(); toast(t('run.doneToast')); }, 800);
 }
 
 $('#run-btn').addEventListener('click', startRun);
 $('#quick-run').addEventListener('click', startRun);
+
+// ── RUN HISTORY (last N runs, with per-source breakdown) ──────────────────────
+async function loadRecentRuns() {
+  const limit = $('#run-history-limit')?.value || 10;
+  try {
+    const { runs } = await api(`/api/runs?limit=${limit}`);
+    renderRecentRuns(runs || []);
+  } catch (err) { toast(t('toast.error') + err.message); }
+}
+
+function renderRecentRuns(runs) {
+  const list = $('#run-history-list');
+  if (!runs.length) {
+    list.innerHTML = `<p class="empty" data-i18n="run.noRuns">${esc(t('run.noRuns'))}</p>`;
+    return;
+  }
+  const head = t('run.histHeaders');
+  list.innerHTML = runs.map((run, i) => {
+    const tot = run.totals;
+    const when = new Date(run.ranAt).toLocaleString(locale());
+    const chips = [
+      [t('stats.legendFound'), tot.found],
+      [t('stats.legendRelevant'), tot.relevant],
+      [t('stats.cardNotified'), tot.notified],
+    ].map(([l, v]) => `<span class="run-chip"><b>${v}</b> ${esc(l)}</span>`).join('');
+    const body = run.rows.length ? `
+      <div class="table-scroll"><table class="data-table run-mini">
+        <thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+        <tbody>${run.rows.map(r => `<tr>
+          <td class="t-name">${esc(r.source)}</td>
+          <td>${r.found}</td><td>${r.analyzed}</td>
+          <td class="${r.newRelevant ? 'hl' : ''}">${r.newRelevant}</td>
+          <td class="strong">${r.totalRelevant}</td><td>${r.notified}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>` : `<p class="muted" style="padding:8px 2px">${esc(t('run.noSources'))}</p>`;
+    return `<details class="run-entry"${i === 0 ? ' open' : ''}>
+      <summary>
+        <span class="run-when">${esc(when)}</span>
+        <span class="run-chips">${chips}</span>
+      </summary>
+      ${body}
+    </details>`;
+  }).join('');
+}
+
+$('#run-history-limit')?.addEventListener('change', loadRecentRuns);
 
 // ── PROFILE (CV) ─────────────────────────────────────────────────────────────
 let profileLoaded = false;
@@ -929,10 +1111,223 @@ onLangChange(() => {
   if (statsLoaded) loadStats();
 });
 
-// ── init ────────────────────────────────────────────────────────────────────
-applyTheme(currentTheme());        // reflect saved scheme on the toggle buttons
-applyPalette(currentPalette());    // reflect saved palette in the dropdown
-const langSel = $('#lang-select'); if (langSel) langSel.value = lang;
-applyStaticI18n();                 // translate static markup to the saved language
-loadJobs();
-connectStream();
+// ── CLIENTS (tenant management) ──────────────────────────────────────────────
+let clientsList = [];
+let defaultClientId = 'default';
+
+async function loadClients() {
+  const { clients, defaultClientId: dcid } = await api('/api/clients');
+  clientsList = clients || [];
+  defaultClientId = dcid || 'default';
+  // Validate the persisted selection; fall back to default/first.
+  if (!clientsList.some(c => c.id === currentClientId)) {
+    currentClientId = (clientsList.find(c => c.id === defaultClientId) || clientsList[0])?.id || null;
+  }
+  populateClientSwitcher();
+}
+
+function populateClientSwitcher() {
+  const sel = $('#client-switcher');
+  if (!sel) return;
+  sel.innerHTML = clientsList.map(c =>
+    `<option value="${esc(c.id)}">${esc(c.name)}${c.enabled ? '' : ' · ' + esc(t('clients.inactive'))}</option>`
+  ).join('');
+  if (currentClientId) sel.value = currentClientId;
+}
+
+$('#client-switcher')?.addEventListener('change', (e) => switchClient(e.target.value));
+
+function switchClient(id) {
+  if (id === currentClientId) return;
+  currentClientId = id;
+  try { localStorage.setItem('clientId', id); } catch { /* ignore */ }
+  // Invalidate per-client caches so the next tab visit refetches for this client.
+  sourcesLoaded = profileLoaded = promptsLoaded = false;
+  // Refresh whatever is on screen for the new client.
+  loadJobs();
+  const active = $('.tab.active')?.dataset.tab;
+  if (active === 'stats') loadStats();
+  else if (active === 'sources') loadSources();
+  else if (active === 'profile') loadProfile();
+  else if (active === 'prompts') loadPrompts();
+  else if (active === 'clients') renderClients();
+}
+
+function renderClients() {
+  const list = $('#client-list');
+  if (!list) return;
+  list.innerHTML = '';
+  clientsList.forEach(c => list.appendChild(clientCard(c)));
+}
+
+function clientCard(c) {
+  const div = document.createElement('div');
+  div.className = 'card client-card';
+  const isDefault = c.id === defaultClientId;
+  const isActive  = c.id === currentClientId;
+  div.innerHTML = `
+    <div class="client-card-head">
+      <input class="set-input cc-name" value="${esc(c.name)}">
+      ${isActive
+        ? `<span class="badge badge-active" data-i18n="client.activeBadge">aktiv</span>`
+        : `<button class="btn btn-ghost cc-select" data-i18n="clients.select">auswählen</button>`}
+    </div>
+    <label data-i18n="clients.chatId">Telegram Chat-ID</label>
+    <input class="set-input cc-chat" value="${esc(c.telegram_chat_id || '')}" placeholder="z. B. 123456789">
+    <div class="cc-toggles">
+      <label><input type="checkbox" class="cc-enabled" ${c.enabled ? 'checked' : ''}> <span data-i18n="clients.enabled">im Lauf aktiv</span></label>
+      <label><input type="checkbox" class="cc-tg" ${c.telegram_notifications !== 'off' ? 'checked' : ''}> <span data-i18n="clients.telegram">Telegram</span></label>
+      <label><input type="checkbox" class="cc-exp" ${c.expiry_notifications !== 'off' ? 'checked' : ''}> <span data-i18n="clients.expiry">Ablauf-Hinweise</span></label>
+    </div>
+    <label data-i18n="clients.minScore">Min. Relevanz-Score (leer = global)</label>
+    <input class="set-input set-num cc-min" type="number" min="1" max="10" value="${c.min_relevance_score ?? ''}">
+
+    <label class="cc-edit-label" data-i18n="clients.editContent">Inhalte dieses Klienten bearbeiten</label>
+    <div class="cc-edit">
+      <button class="btn cc-go" data-go="profile" data-i18n="tab.profile">Profil</button>
+      <button class="btn cc-go" data-go="sources" data-i18n="tab.sources">Quellen</button>
+      <button class="btn cc-go" data-go="prompts" data-i18n="tab.prompts">Prompts</button>
+    </div>
+
+    <div class="panel-actions">
+      <button class="btn btn-primary cc-save" data-i18n="btn.save">Speichern</button>
+      <button class="btn cc-test" data-i18n="clients.tgTest">Telegram-Test</button>
+      ${isDefault ? '' : `<button class="btn btn-danger cc-del" data-i18n="clients.delete">Löschen</button>`}
+    </div>
+    <p class="save-hint cc-msg"></p>`;
+  applyStaticI18n(div);
+
+  const msg = (text, kind) => { const m = div.querySelector('.cc-msg'); m.textContent = text; m.className = 'save-hint cc-msg ' + (kind || ''); };
+
+  div.querySelector('.cc-select')?.addEventListener('click', () => {
+    switchClient(c.id);
+    populateClientSwitcher();
+    renderClients();
+  });
+
+  // Jump straight to the scoped editor for this client (switches the active client
+  // first, then opens the relevant tab).
+  div.querySelectorAll('.cc-go').forEach(btn => btn.addEventListener('click', () => {
+    if (c.id !== currentClientId) { switchClient(c.id); populateClientSwitcher(); }
+    document.querySelector(`.tab[data-tab="${btn.dataset.go}"]`)?.click();
+  }));
+
+  div.querySelector('.cc-save').addEventListener('click', async () => {
+    const patch = {
+      name: div.querySelector('.cc-name').value.trim() || c.name,
+      telegram_chat_id: div.querySelector('.cc-chat').value.trim() || null,
+      enabled: div.querySelector('.cc-enabled').checked,
+      telegram_notifications: div.querySelector('.cc-tg').checked ? 'on' : 'off',
+      expiry_notifications: div.querySelector('.cc-exp').checked ? 'on' : 'off',
+      min_relevance_score: div.querySelector('.cc-min').value === '' ? null : Number(div.querySelector('.cc-min').value),
+    };
+    try {
+      const { client } = await api(`/api/clients/${encodeURIComponent(c.id)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+      });
+      Object.assign(c, client);
+      populateClientSwitcher();
+      msg(t('clients.saved'), 'ok');
+      toast(t('clients.saved'));
+    } catch (err) { msg(err.message, 'err'); }
+  });
+
+  div.querySelector('.cc-test').addEventListener('click', async (e) => {
+    const btn = e.currentTarget; btn.disabled = true;
+    try {
+      await api(`/api/clients/${encodeURIComponent(c.id)}/telegram-test`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telegram_chat_id: div.querySelector('.cc-chat').value.trim() }),
+      });
+      msg(t('clients.tgOk'), 'ok');
+    } catch (err) { msg(err.message, 'err'); }
+    finally { btn.disabled = false; }
+  });
+
+  div.querySelector('.cc-del')?.addEventListener('click', async () => {
+    if (!confirm(t('clients.delConfirm').replace('{name}', c.name))) return;
+    try {
+      await api(`/api/clients/${encodeURIComponent(c.id)}`, { method: 'DELETE' });
+      if (currentClientId === c.id) { currentClientId = defaultClientId; try { localStorage.setItem('clientId', currentClientId); } catch { /* ignore */ } }
+      await loadClients();
+      renderClients();
+      loadJobs();
+      toast(t('clients.deleted'));
+    } catch (err) { msg(err.message, 'err'); }
+  });
+
+  return div;
+}
+
+$('#add-client')?.addEventListener('click', async () => {
+  const name = prompt(t('clients.namePrompt'));
+  if (!name || !name.trim()) return;
+  try {
+    const { client } = await api('/api/clients', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() }),
+    });
+    await loadClients();
+    switchClient(client.id);
+    populateClientSwitcher();
+    renderClients();
+    toast(t('clients.created'));
+  } catch (err) { toast(t('toast.error') + err.message); }
+});
+
+// ── AUTH + boot ──────────────────────────────────────────────────────────────
+$('#login-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const user = $('#login-user').value;
+  const password = $('#login-pass').value;
+  const errEl = $('#login-error');
+  try {
+    await api('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user, password }),
+    });
+    location.reload();
+  } catch (err) { errEl.textContent = err.message; errEl.hidden = false; }
+});
+
+$('#logout-btn')?.addEventListener('click', async () => {
+  try { await api('/api/logout', { method: 'POST' }); } catch { /* ignore */ }
+  location.reload();
+});
+
+// Show/hide everything multi-tenant: the Klienten tab and the client selector in
+// the top bar. When off (private use), the app silently stays on the default client.
+function applyClientsVisibility(enabled) {
+  const tab = document.querySelector('.tab[data-tab="clients"]');
+  if (tab) tab.hidden = !enabled;
+  const sw = document.querySelector('.client-switch');
+  if (sw) sw.hidden = !enabled;
+  // If the Klienten tab was active when it got hidden, fall back to Jobs.
+  if (!enabled && tab && tab.classList.contains('active')) {
+    document.querySelector('.tab[data-tab="jobs"]')?.click();
+  }
+}
+
+async function boot() {
+  applyTheme(currentTheme());        // reflect saved scheme on the toggle buttons
+  applyPalette(currentPalette());    // reflect saved palette in the dropdown
+  const langSel = $('#lang-select'); if (langSel) langSel.value = lang;
+  applyStaticI18n();                 // translate static markup to the saved language
+
+  let auth;
+  try { auth = await api('/api/auth/status'); }
+  catch { auth = { authEnabled: false, authenticated: true, clientsEnabled: false }; }
+
+  if (auth.authEnabled && !auth.authenticated) {
+    $('#login-overlay').hidden = false;   // gate the whole app behind login
+    return;
+  }
+  if (auth.authEnabled) $('#logout-btn').hidden = false;
+  applyClientsVisibility(!!auth.clientsEnabled);
+
+  try { currentClientId = localStorage.getItem('clientId') || null; } catch { /* ignore */ }
+  try { await loadClients(); } catch { /* keep going with default scope */ }
+
+  loadJobs();
+  connectStream();
+}
+
+boot();

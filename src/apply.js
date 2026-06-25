@@ -1,4 +1,7 @@
-import { setApplicationStatus, getJobById, getAppliedJobs, markIrrelevant } from './database.js';
+import { setApplicationStatus, getJobById, getAppliedJobs, markIrrelevant, DEFAULT_CLIENT_ID } from './database.js';
+
+// This CLI manages the single-user default client.
+const CID = DEFAULT_CLIENT_ID;
 
 const VALID_STATUSES = ['applied', 'interview', 'offer', 'rejected'];
 const STATUS_LABELS  = { applied: 'Beworben', interview: 'Interview', offer: 'Angebot', rejected: 'Abgelehnt' };
@@ -35,18 +38,18 @@ if (cmd === 'ignore') {
     console.error(`Fehler: Job-ID fehlt.\n  Verwendung: npm run apply -- ignore <job_id>`);
     process.exit(1);
   }
-  const job = getJobById(id);
+  const job = getJobById(CID, id);
   if (!job) {
     console.error(`Fehler: kein Job mit ID "${id}" gefunden.`);
     process.exit(1);
   }
-  markIrrelevant(id);
+  markIrrelevant(CID, id);
   console.log(`✓  Als nicht relevant markiert: ${job.title} @ ${job.company || job.source}`);
   process.exit(0);
 }
 
 if (cmd === 'list') {
-  const jobs = getAppliedJobs();
+  const jobs = getAppliedJobs(CID);
   if (jobs.length === 0) {
     console.log('Noch keine Bewerbungen getrackt.');
   } else {
@@ -79,11 +82,11 @@ if (!VALID_STATUSES.includes(statusArg)) {
   process.exit(1);
 }
 
-const job = getJobById(id);
+const job = getJobById(CID, id);
 if (!job) {
   console.error(`Fehler: kein Job mit ID "${id}" gefunden.`);
   process.exit(1);
 }
 
-setApplicationStatus(id, statusArg);
+setApplicationStatus(CID, id, statusArg);
 console.log(`✓  ${STATUS_LABELS[statusArg]}: ${job.title} @ ${job.company || job.source}`);

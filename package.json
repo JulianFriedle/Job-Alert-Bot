@@ -1,6 +1,6 @@
 {
   "name": "job-alert-system",
-  "version": "1.3.1",
+  "version": "2.0.0",
   "description": "Automat1ed job alert system with AI relevance analysis and Telegram notifications",
   "type": "module",
   "main": "index.js",
@@ -18,7 +18,10 @@
     "apply": "node src/apply.js",
     "cover-letter": "node src/cover-letter.js",
     "refetch-descriptions": "node scripts/refetch-descriptions.js",
-    "gui": "node src/server.js"
+    "migrate": "node scripts/migrate-to-multitenant.js",
+    "hash-password": "node scripts/hash-password.js",
+    "gui": "node src/server.js",
+    "gui:operator": "node scripts/operator-sandbox.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",

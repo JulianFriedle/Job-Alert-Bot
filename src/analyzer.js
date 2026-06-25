@@ -1,14 +1,9 @@
 import 'dotenv/config';
 import Anthropic from '@anthropic-ai/sdk';
-import { readFile } from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { loadPrompts } from './prompts.js';
+import { getClientConfig } from './client-config.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROFILE_PATH = path.join(__dirname, '..', 'config', 'profile.json');
-const MODEL = process.env.ANALYZER_MODEL || 'claude-haiku-4-5-20251001';
-const MIN_RELEVANCE_SCORE = Number(process.env.MIN_RELEVANCE_SCORE) || 4;
+const MODEL = () => process.env.ANALYZER_MODEL || 'claude-haiku-4-5-20251001';
+const DEFAULT_MIN_RELEVANCE_SCORE = Number(process.env.MIN_RELEVANCE_SCORE) || 4;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
 
@@ -18,14 +13,6 @@ function log(msg) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-let _profile = null;
-async function getProfile() {
-  if (!_profile) {
-    _profile = JSON.parse(await readFile(PROFILE_PATH, 'utf-8'));
-  }
-  return _profile;
 }
 
 let _client = null;
@@ -62,15 +49,18 @@ Respond with this exact JSON structure:
 }`;
 }
 
-export async function analyzeJob(job) {
-  const profile = await getProfile();
+// `cfg` carries the resolved per-client { profile, prompts, minRelevanceScore }.
+// When omitted, it is resolved from the job's client_id (single-call convenience).
+export async function analyzeJob(job, cfg) {
+  if (!cfg) cfg = getClientConfig(job.client_id || 'default');
+  const { profile, prompts } = cfg;
+  const minScore = cfg.minRelevanceScore ?? DEFAULT_MIN_RELEVANCE_SCORE;
   const client = getClient();
-  const prompts = loadPrompts();   // read fresh so GUI edits apply without restart
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const response = await client.messages.create({
-        model: MODEL,
+        model: MODEL(),
         max_tokens: 800,
         system: [{ type: 'text', text: prompts.analyzerSystem, cache_control: { type: 'ephemeral' } }],
         messages: [
@@ -91,7 +81,7 @@ export async function analyzeJob(job) {
       const result = JSON.parse(jsonText);
 
       return {
-        relevant: result.relevant === true && Number(result.score) >= MIN_RELEVANCE_SCORE,
+        relevant: result.relevant === true && Number(result.score) >= minScore,
         score: result.score,
         reasons: result.reasons || [],
         concerns: result.concerns || [],

@@ -1,0 +1,14 @@
+node_modules/
+.git/
+data/
+logs/
+storage/
+.env
+*.md
+.DS_Store
+
+# Per-operator personal config — never bake into a shareable image.
+# Each deployment/client provides its own (DB-backed in multi-tenant mode).
+config/profile.json
+config/prompts.json
+config/setup-state.json

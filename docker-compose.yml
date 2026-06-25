@@ -1,0 +1,45 @@
+# Two services from one image, sharing the SQLite data volume:
+#   • gui       — the web dashboard (operator logs in, manages clients)
+#   • scheduler — the hourly cron pipeline across all enabled clients
+# SQLite WAL + busy_timeout (see src/database.js) makes concurrent access safe.
+
+services:
+  gui:
+    build: .
+    image: job-alert-bot
+    container_name: job-alert-gui
+    restart: unless-stopped
+    command: ["node", "src/server.js"]
+    ports:
+      - "3000:3000"          # put NGINX + Authelia in front of this
+    environment:
+      JOBS_DB_PATH: /app/data/jobs.db
+      GUI_PORT: "3000"
+      # ── Operator login (SaaS) ──
+      AUTH_ENABLED: "true"
+      OPERATOR_USER: "${OPERATOR_USER:-admin}"
+      OPERATOR_PASSWORD_HASH: "${OPERATOR_PASSWORD_HASH}"   # npm run hash-password -- "<pw>"
+      SESSION_SECRET: "${SESSION_SECRET}"                   # stable random string
+      # ── Shared keys (one for all clients) ──
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      ANALYZER_MODEL: "${ANALYZER_MODEL:-claude-haiku-4-5-20251001}"
+      COVER_LETTER_MODEL: "${COVER_LETTER_MODEL:-claude-sonnet-4-6}"
+    volumes:
+      - ./data:/app/data
+
+  scheduler:
+    build: .
+    image: job-alert-bot
+    container_name: job-alert-scheduler
+    restart: unless-stopped
+    command: ["node", "index.js"]   # startScheduler() → hourly runAll()
+    environment:
+      JOBS_DB_PATH: /app/data/jobs.db
+      CRON_SCHEDULE: "${CRON_SCHEDULE:-0 * * * *}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      ANALYZER_MODEL: "${ANALYZER_MODEL:-claude-haiku-4-5-20251001}"
+      COVER_LETTER_MODEL: "${COVER_LETTER_MODEL:-claude-sonnet-4-6}"
+    volumes:
+      - ./data:/app/data

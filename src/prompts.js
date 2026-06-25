@@ -47,16 +47,36 @@ export const PROMPT_FIELDS = [
     help: 'Konkrete Anweisung, wie das Anschreiben verfasst werden soll.' },
 ];
 
+// Merge an overrides object (e.g. a client's prompts_json) onto the defaults.
+// Anything missing/blank falls back to the default for that field.
+export function mergePrompts(overrides) {
+  const out = { ...DEFAULT_PROMPTS };
+  if (overrides && typeof overrides === 'object') {
+    for (const k of Object.keys(DEFAULT_PROMPTS)) {
+      if (typeof overrides[k] === 'string' && overrides[k].trim() !== '') out[k] = overrides[k];
+    }
+  }
+  return out;
+}
+
+// Keep only the fields that differ from the defaults, so persisted overrides stay
+// minimal and future default changes still flow through for untouched fields.
+export function minimizePromptOverrides(incoming) {
+  const overrides = {};
+  if (incoming && typeof incoming === 'object') {
+    for (const key of Object.keys(DEFAULT_PROMPTS)) {
+      const v = incoming[key];
+      if (typeof v === 'string' && v.trim() !== '' && v !== DEFAULT_PROMPTS[key]) overrides[key] = v;
+    }
+  }
+  return overrides;
+}
+
 // Merge defaults with config/prompts.json. Read fresh each call so GUI edits
-// take effect without restarting (volume is low — once per analysis/letter).
+// take effect without restarting (legacy single-user fallback for the default client).
 export function loadPrompts() {
   try {
-    const f = JSON.parse(readFileSync(PROMPTS_PATH, 'utf-8'));
-    const out = { ...DEFAULT_PROMPTS };
-    for (const k of Object.keys(DEFAULT_PROMPTS)) {
-      if (typeof f[k] === 'string' && f[k].trim() !== '') out[k] = f[k];
-    }
-    return out;
+    return mergePrompts(JSON.parse(readFileSync(PROMPTS_PATH, 'utf-8')));
   } catch {
     return { ...DEFAULT_PROMPTS };
   }
