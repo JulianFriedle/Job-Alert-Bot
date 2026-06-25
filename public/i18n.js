@@ -166,6 +166,7 @@ const I18N = {
     // Settings field chrome (frontend bits around backend labels)
     'settings.required': 'erforderlich', 'settings.secretSet': '•••••••• gesetzt',
     'settings.secretUnset': 'nicht gesetzt', 'settings.defaultPrefix': 'Standard: ',
+    'settings.version': 'Version',
     'settings.revealTitle': 'Anzeigen/Verbergen',
 
     // Setup wizard – static (non-schema) strings
@@ -355,6 +356,7 @@ const I18N = {
     // Settings field chrome
     'settings.required': 'required', 'settings.secretSet': '•••••••• set',
     'settings.secretUnset': 'not set', 'settings.defaultPrefix': 'Default: ',
+    'settings.version': 'Version',
     'settings.revealTitle': 'Show/hide',
 
     // Setup wizard – static (non-schema) strings
@@ -396,6 +398,7 @@ const SETTINGS_GROUPS_EN = {
   'Server': 'Server',
   'Datensicherung': 'Data backup',
   'Klienten (Mehrbenutzer)': 'Clients (multi-user)',
+  'Sicherheit (SaaS)': 'Security (SaaS)',
 };
 const SETTINGS_LABELS_EN = {
   ANTHROPIC_API_KEY: 'Anthropic API Key',
@@ -414,6 +417,10 @@ const SETTINGS_LABELS_EN = {
   BACKUP_ENABLED: 'Daily backup',
   BACKUP_RETENTION_DAYS: 'Retention (days)',
   CLIENTS_ENABLED: 'Show client management',
+  AUTH_ENABLED: 'Login enabled',
+  OPERATOR_USER: 'Operator user',
+  OPERATOR_PASSWORD_HASH: 'Password hash',
+  SESSION_SECRET: 'Session secret',
 };
 const SETTINGS_HELP_EN = {
   ANTHROPIC_API_KEY: 'API key from console.anthropic.com',
@@ -432,6 +439,28 @@ const SETTINGS_HELP_EN = {
   BACKUP_ENABLED: 'Automatically create one database backup per day (even without an active run). Manual backup, import, download and upload stay available regardless.',
   BACKUP_RETENTION_DAYS: 'How many daily backups to keep; older ones are deleted automatically. Manual, uploaded and pre-import backups are always kept.',
   CLIENTS_ENABLED: 'Show the multi-user management (Clients tab and the client selector in the top bar). Leave off for private use. Reload the page for the change to take effect.',
+  AUTH_ENABLED: "Set to 'true' to enable the operator login (SaaS). Private/localhost: 'false'. Requires a restart.",
+  OPERATOR_USER: 'Username for the GUI login (only when login is enabled)',
+  OPERATOR_PASSWORD_HASH: 'scrypt hash of the operator password. Generate with: npm run hash-password -- "<password>"',
+  SESSION_SECRET: 'Random string used to sign login sessions (otherwise regenerated on every restart → logout). Requires a restart.',
+};
+
+// English overrides for the backend PROMPT_FIELDS (src/prompts.js), keyed by group / field key.
+const PROMPTS_GROUPS_EN = {
+  'Analyse (Relevanz-Bewertung)': 'Analysis (relevance scoring)',
+  'Anschreiben': 'Cover letter',
+};
+const PROMPTS_LABELS_EN = {
+  analyzerSystem: 'System prompt',
+  analyzerInstructions: 'Scoring guidance',
+  coverLetterSystem: 'System prompt',
+  coverLetterInstructions: 'Task description',
+};
+const PROMPTS_HELP_EN = {
+  analyzerSystem: 'The AI’s role/instruction. Must still require pure JSON output.',
+  analyzerInstructions: 'Extra scoring rules. Inserted before the (fixed) JSON format.',
+  coverLetterSystem: 'Style & form of the cover letter.',
+  coverLetterInstructions: 'Concrete instruction for how the cover letter should be written.',
 };
 
 // English overrides for the setup wizard schema (src/setup.js), by step id / field key.
@@ -488,6 +517,9 @@ const careerPagesN = (n) => lang === 'en'
 const tSetGroup = (g) => (lang === 'en' ? (SETTINGS_GROUPS_EN[g] || g) : g);
 const tSetLabel = (key, fallback) => (lang === 'en' ? (SETTINGS_LABELS_EN[key] || fallback) : fallback);
 const tSetHelp = (key, fallback) => (lang === 'en' ? (SETTINGS_HELP_EN[key] ?? fallback) : fallback);
+const tPromptGroup = (g) => (lang === 'en' ? (PROMPTS_GROUPS_EN[g] || g) : g);
+const tPromptLabel = (key, fallback) => (lang === 'en' ? (PROMPTS_LABELS_EN[key] || fallback) : fallback);
+const tPromptHelp = (key, fallback) => (lang === 'en' ? (PROMPTS_HELP_EN[key] ?? fallback) : fallback);
 const wzStep = (id, field) => (lang === 'en' ? WIZARD_STEPS_EN[id]?.[field] : undefined);
 const wzField = (key, field) => (lang === 'en' ? WIZARD_FIELDS_EN[key]?.[field] : undefined);
 

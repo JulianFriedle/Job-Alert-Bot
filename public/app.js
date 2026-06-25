@@ -696,8 +696,8 @@ function renderBackups({ backups = [] } = {}) {
   </tr>`).join('');
   list.innerHTML = `<div class="table-scroll"><table class="data-table bk-table">
     <thead><tr>
-      <th data-i18n="backup.colDate">Datum</th><th data-i18n="backup.colType">Typ</th>
-      <th data-i18n="backup.colSize">Größe</th><th></th>
+      <th>${esc(t('backup.colDate'))}</th><th>${esc(t('backup.colType'))}</th>
+      <th>${esc(t('backup.colSize'))}</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -1025,17 +1025,17 @@ function renderPrompts(fields, values) {
   const groups = [...new Set(fields.map(f => f.group))];
   $('#prompts-groups').innerHTML = groups.map(g => `
     <div class="card">
-      <div class="card-head"><h2>${esc(g)}</h2></div>
+      <div class="card-head"><h2>${esc(tPromptGroup(g))}</h2></div>
       <div class="setting-list">
         ${fields.filter(f => f.group === g).map(f => {
           const id = `pr-${f.key}`;
           return `<div class="setting">
-            <label class="set-label" for="${id}">${esc(f.label)}
+            <label class="set-label" for="${id}">${esc(tPromptLabel(f.key, f.label))}
               <button type="button" class="btn btn-ghost prompt-default" data-key="${esc(f.key)}" title="${esc(t('prompts.defaultTitle'))}">${esc(t('prompts.defaultBtn'))}</button>
             </label>
             <div class="set-control">
               <textarea id="${id}" class="set-input su-textarea" data-key="${esc(f.key)}" rows="5" spellcheck="false">${esc(values[f.key] ?? '')}</textarea>
-              <p class="set-help">${esc(f.help || '')}</p>
+              <p class="set-help">${esc(tPromptHelp(f.key, f.help) || '')}</p>
             </div>
           </div>`;
         }).join('')}
@@ -1112,6 +1112,8 @@ onLangChange(() => {
   if (settingsLoaded) renderSettings();
   if (statsLoaded) loadStats();
   if (profileLoaded) renderProfile();
+  if (promptsLoaded) loadPrompts();
+  if ($('#backup-list')?.querySelector('table')) loadBackups();
 });
 
 // ── CLIENTS (tenant management) ──────────────────────────────────────────────
@@ -1326,6 +1328,9 @@ async function boot() {
   }
   if (auth.authEnabled) $('#logout-btn').hidden = false;
   applyClientsVisibility(!!auth.clientsEnabled);
+
+  const verEl = $('#app-version');
+  if (verEl && auth.version) { verEl.textContent = `${t('settings.version')} ${auth.version}`; verEl.hidden = false; }
 
   try { currentClientId = localStorage.getItem('clientId') || null; } catch { /* ignore */ }
   try { await loadClients(); } catch { /* keep going with default scope */ }

@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import http from 'http';
 import { readFile, writeFile, stat } from 'fs/promises';
-import { createReadStream, createWriteStream } from 'fs';
+import { createReadStream, createWriteStream, readFileSync } from 'fs';
 import { spawn } from 'child_process';
 import crypto from 'crypto';
 import path from 'path';
@@ -31,6 +31,13 @@ const ROOT = path.join(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const ENV_FILE = path.join(ROOT, '.env');
 const PORT = process.env.GUI_PORT || 3000;
+
+// App version shown in the GUI footer — read once from package.json (maintained
+// manually). Falls back to an empty string if it can't be read.
+const APP_VERSION = (() => {
+  try { return JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf-8')).version || ''; }
+  catch { return ''; }
+})();
 
 // ── Operator authentication ─────────────────────────────────────────────────
 // Disabled by default (private/localhost). On the SaaS deployment set
@@ -415,6 +422,7 @@ const server = http.createServer(async (req, res) => {
           authEnabled: AUTH_ENABLED,
           authenticated: isAuthenticated(req),
           clientsEnabled: clientsEnabled(),
+          version: APP_VERSION,
         });
       }
       // POST /api/login { user, password }

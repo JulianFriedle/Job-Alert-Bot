@@ -490,6 +490,7 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 
 .restart-card { border-color: color-mix(in srgb, var(--red) 25%, var(--border)); }
 .restart-card .muted { margin-bottom: 14px; }
+.app-version { text-align: center; font-size: .78rem; opacity: .7; margin-top: 18px; }
 .btn-restart { border-color: color-mix(in srgb, var(--red) 40%, var(--border)); color: var(--red); }
 .btn-restart:hover { background: color-mix(in srgb, var(--red) 10%, var(--surface)); border-color: var(--red); }
 .btn-restart:disabled { opacity: .6; cursor: not-allowed; }
