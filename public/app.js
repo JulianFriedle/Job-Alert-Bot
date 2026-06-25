@@ -1151,6 +1151,7 @@ function switchClient(id) {
   else if (active === 'profile') loadProfile();
   else if (active === 'prompts') loadPrompts();
   else if (active === 'clients') renderClients();
+  else if (active === 'run') loadRecentRuns();
 }
 
 function renderClients() {

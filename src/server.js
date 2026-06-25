@@ -193,7 +193,9 @@ function parseEnvFile(raw) {
     const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
     if (!m) continue;
     let val = m[2].trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
+    if (val.length >= 2 && val.startsWith('"') && val.endsWith('"'))
+      val = val.slice(1, -1).replace(/\\"/g, '"');   // undo envQuote's \" escaping
+    else if (val.length >= 2 && val.startsWith("'") && val.endsWith("'"))
       val = val.slice(1, -1);
     out[m[1]] = val;
   }

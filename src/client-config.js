@@ -89,7 +89,10 @@ export function getPrompts(clientOrId) {
 export function getMinRelevanceScore(clientOrId) {
   const client = resolveClient(clientOrId);
   if (client.min_relevance_score != null) return Number(client.min_relevance_score);
-  return Number(process.env.MIN_RELEVANCE_SCORE) || 4;
+  const envRaw = process.env.MIN_RELEVANCE_SCORE;
+  if (envRaw == null || envRaw.trim() === '') return 4;   // unset/blank → default
+  const envScore = Number(envRaw);
+  return Number.isFinite(envScore) ? envScore : 4;
 }
 
 // Everything the pipeline needs for one client, loaded once per run.

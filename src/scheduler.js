@@ -139,7 +139,7 @@ async function runClientPipeline(client) {
 
   // 3. Title blocklist — skip structurally irrelevant jobs before touching Claude
   const isTitleBlocked = (title) =>
-    TITLE_BLOCKLIST.some(kw => title.toLowerCase().includes(kw));
+    TITLE_BLOCKLIST.some(kw => (title || '').toLowerCase().includes(kw));
 
   const blockedJobs = newJobs.filter(job => isTitleBlocked(job.title));
   const jobsToProcess = newJobs.filter(job => !isTitleBlocked(job.title));
@@ -202,7 +202,7 @@ async function runClientPipeline(client) {
   const toAnalyze = allUnanalyzed.filter(job => !isTitleBlocked(job.title));
   log(`Analyzing ${toAnalyze.length} unanalyzed job(s)...`);
 
-  const isPriority = (title) => PRIORITY_KEYWORDS.some(kw => title.toLowerCase().includes(kw));
+  const isPriority = (title) => PRIORITY_KEYWORDS.some(kw => (title || '').toLowerCase().includes(kw));
 
   const analysisCache = new Map(); // id → analysis (reused for notifications)
   let analysisIdx = 0;
@@ -218,7 +218,8 @@ async function runClientPipeline(client) {
         if (!analysis) { log(`  ${progress} No result for "${job.title}"`); continue; }
 
         if (isPriority(job.title)) {
-          if (analysis.score < 7) analysis.score = 7;
+          // Floor priority jobs at 7 — `!(score >= 7)` also covers a missing/NaN score.
+          if (!(analysis.score >= 7)) analysis.score = 7;
           analysis.relevant = analysis.relevant || analysis.score >= 4;
         }
 
@@ -259,9 +260,9 @@ async function runClientPipeline(client) {
         if (analysis) pairs.push({ job, analysis });
       }
 
-      await notifyBatch(pairs, client);
+      const sentJobs = await notifyBatch(pairs, client);
 
-      for (const { job } of pairs) {
+      for (const job of sentJobs) {
         try {
           markNotified(clientId, job.id);
           if (sourceStats[job.source]) sourceStats[job.source].notified++;
@@ -341,6 +342,9 @@ export async function runAll({ onlyClientId } = {}) {
     if (onlyClientId && !clients.length) {
       log(`Klient "${onlyClientId}" nicht gefunden.`);
       return;
+    }
+    if (onlyClientId && clients[0] && !clients[0].enabled) {
+      log(`Hinweis: Klient "${clients[0].name}" ist deaktiviert — wird wegen expliziter Auswahl trotzdem ausgeführt.`);
     }
     log(`Run startet für ${clients.length} Klient(en)…`);
     for (const client of clients) {

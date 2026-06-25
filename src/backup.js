@@ -90,6 +90,7 @@ export async function createBackup(reason = 'manual') {
     chmodSync(finalPath, 0o444);
   } catch (err) {
     rmDbFiles(tmpPath);
+    rmDbFiles(finalPath);   // rename may have already happened (e.g. chmod failed after)
     throw err;
   }
   log(`Created ${name} (${(statSync(finalPath).size / 1e6).toFixed(1)} MB)`);

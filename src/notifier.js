@@ -106,24 +106,25 @@ export async function notifyExpired(job, client) {
   log(`Expired notification: ${job.title} @ ${job.source}`);
 }
 
+// Returns the jobs that were actually sent, so the caller only marks those as
+// notified — a failed send stays unnotified and is retried on the next run.
 export async function notifyBatch(jobAnalysisPairs, client) {
   if (!isTelegramEnabled(client)) {
     if (jobAnalysisPairs.length) log(`Telegram disabled — skipping ${jobAnalysisPairs.length} notification(s).`);
-    return 0;
+    return [];
   }
-  let sent = 0;
-  for (const { job, analysis } of jobAnalysisPairs) {
+  const sentJobs = [];
+  for (let i = 0; i < jobAnalysisPairs.length; i++) {
+    const { job, analysis } = jobAnalysisPairs[i];
     try {
       await notify(job, analysis, client);
-      sent++;
-      if (sent < jobAnalysisPairs.length) {
-        await sleep(NOTIFICATION_DELAY_MS);
-      }
+      sentJobs.push(job);
     } catch (err) {
       log(`Failed to notify for "${job.title}": ${err.message}`);
     }
+    if (i < jobAnalysisPairs.length - 1) await sleep(NOTIFICATION_DELAY_MS);
   }
-  return sent;
+  return sentJobs;
 }
 
 // Allow direct execution for testing
