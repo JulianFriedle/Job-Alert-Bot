@@ -3,6 +3,14 @@ import TelegramBot from 'node-telegram-bot-api';
 import { fileURLToPath } from 'url';
 
 const NOTIFICATION_DELAY_MS = 1000;
+const TELEGRAM_MAX_LEN = 4096;
+
+// Trim a plain (un-escaped) string to `max` chars with an ellipsis. Done before
+// escaping so the added backslashes can't be split mid-sequence.
+function truncate(text, max) {
+  const s = String(text);
+  return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s;
+}
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [notifier] ${msg}`);
@@ -34,15 +42,19 @@ export function isTelegramEnabled(client) {
 }
 
 function formatMessage(job, analysis) {
-  const reasons = (analysis.reasons || []).map(r => `• ${escapeMarkdown(r)}`).join('\n') || '• N/A';
-  const concerns = (analysis.concerns || []).map(c => `• ${escapeMarkdown(c)}`).join('\n') || '• None';
+  // Bound the variable-length AI fields so a verbose analysis can't blow past
+  // Telegram's 4096-char limit; the bullet list is capped too.
+  const bullet = (items, max, fallback) =>
+    (items || []).slice(0, 6).map(x => `• ${escapeMarkdown(truncate(x, max))}`).join('\n') || fallback;
+  const reasons = bullet(analysis.reasons, 200, '• N/A');
+  const concerns = bullet(analysis.concerns, 200, '• None');
 
-  return [
+  const message = [
     `🆕 *New Job Match\\!*`,
     ``,
-    `💼 ${escapeMarkdown(job.title || 'N/A')}`,
-    `🏢 ${escapeMarkdown(job.company || 'N/A')}`,
-    `📍 ${escapeMarkdown(job.location || 'N/A')}`,
+    `💼 ${escapeMarkdown(truncate(job.title || 'N/A', 200))}`,
+    `🏢 ${escapeMarkdown(truncate(job.company || 'N/A', 120))}`,
+    `📍 ${escapeMarkdown(truncate(job.location || 'N/A', 120))}`,
     `⭐ Match Score: *${analysis.score}/10*`,
     ``,
     `✅ *Why it fits:*`,
@@ -51,17 +63,35 @@ function formatMessage(job, analysis) {
     `⚠️ *Concerns:*`,
     concerns,
     ``,
-    `💬 ${escapeMarkdown(analysis.summary || '')}`,
+    `💬 ${escapeMarkdown(truncate(analysis.summary || '', 600))}`,
     ``,
-    `🔗 [Apply here](${job.url})`,
+    `🔗 [Apply here](${escapeMarkdownUrl(job.url)})`,
     ``,
     `🆔 ID: \`${job.id}\``,
   ].join('\n');
+
+  return clampToTelegramLimit(message);
+}
+
+// Last-resort guard: if a message is still over the limit, drop whole trailing
+// lines (each line is self-contained markdown, so this can't break a span) until
+// it fits. Keeps the structural header intact even in pathological cases.
+function clampToTelegramLimit(message) {
+  if (message.length <= TELEGRAM_MAX_LEN) return message;
+  const lines = message.split('\n');
+  while (lines.length > 1 && lines.join('\n').length > TELEGRAM_MAX_LEN) lines.pop();
+  return lines.join('\n');
 }
 
 // Escape special MarkdownV2 characters
 function escapeMarkdown(text) {
   return String(text).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
+}
+
+// Inside a MarkdownV2 link destination `[text](url)` only ')' and '\' are
+// special and must be escaped — escaping the others would corrupt the URL.
+function escapeMarkdownUrl(url) {
+  return String(url).replace(/[)\\]/g, '\\$&');
 }
 
 export async function notify(job, analysis, client) {
@@ -100,7 +130,7 @@ export async function notifyExpired(job, client) {
     `📍 ${escapeMarkdown(job.location || '')}`,
     `⭐ Score war: *${job.score ?? '?'}/10*`,
     ``,
-    `🔗 [Zum Stellenangebot](${job.url})`,
+    `🔗 [Zum Stellenangebot](${escapeMarkdownUrl(job.url)})`,
   ].join('\n');
   await bot.sendMessage(chatId, message, { parse_mode: 'MarkdownV2', disable_web_page_preview: true });
   log(`Expired notification: ${job.title} @ ${job.source}`);

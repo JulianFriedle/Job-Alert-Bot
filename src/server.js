@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import {
   getRelevantJobs, getJobById, setApplicationStatus,
   clearApplicationStatus, markIrrelevant,
-  getLatestRunOverview, getAllTimeBySource, getApplicationActivity,
+  getCombinedRunOverview, getAllTimeBySource, getApplicationActivity,
   getAppliedByCompany, getStatusBreakdown, getRunHistory, getRecentRuns, getTotals,
   getClients, getClient, createClient, updateClient, deleteClient,
   DEFAULT_CLIENT_ID,
@@ -574,7 +574,7 @@ const server = http.createServer(async (req, res) => {
       if (method === 'GET' && pathname === '/api/stats') {
         return sendJson(res, 200, {
           totals:       getTotals(clientId),
-          overview:     getLatestRunOverview(clientId),   // null if no run recorded yet
+          overview:     getCombinedRunOverview(clientId), // all runs combined; null if none yet
           allTime:      getAllTimeBySource(clientId),
           activity:     getApplicationActivity(clientId),
           appliedByCompany: getAppliedByCompany(clientId),

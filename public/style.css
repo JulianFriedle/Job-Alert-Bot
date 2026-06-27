@@ -371,8 +371,27 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .hbar-fill { display: block; height: 100%; background: var(--accent); border-radius: 5px; transition: width .4s ease; }
 .hbar-val { font-size: .8rem; font-weight: 600; text-align: right; color: var(--muted); }
 
+/* Run-history chart axes */
+.runchart { display: flex; }
+.runchart-yaxis { position: relative; width: 34px; height: 180px; flex: none; }
+.runchart-yaxis span { position: absolute; right: 6px; transform: translateY(-50%); font-size: .68rem; line-height: 1; color: var(--muted); }
+.runchart-plot { position: relative; flex: 1; padding-bottom: 18px; }
+.runchart-xaxis { position: absolute; left: 0; right: 0; top: 180px; height: 18px; }
+.runchart-xaxis span { position: absolute; transform: translateX(-50%); margin-top: 4px; font-size: .68rem; line-height: 1; white-space: nowrap; color: var(--muted); }
+
+/* Run-history hover */
+.runchart-hover { position: absolute; left: 0; right: 0; top: 0; height: 180px; pointer-events: none; }
+.rc-vline { position: absolute; top: 0; height: 180px; width: 1px; background: var(--border); transform: translateX(-0.5px); }
+.rc-dot { position: absolute; width: 7px; height: 7px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--surface, #fff); }
+.rc-dot-found { background: var(--muted); }
+.rc-dot-rel { background: var(--accent); }
+.runchart-tip { position: absolute; top: 8px; z-index: 5; pointer-events: none; background: var(--surface, #fff); border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: .74rem; line-height: 1.5; box-shadow: 0 4px 14px rgba(0,0,0,.12); white-space: nowrap; }
+.runchart-tip .rc-tip-date { font-weight: 600; margin-bottom: 2px; }
+.runchart-tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+
 /* Run-history legend */
 .legend { display: flex; gap: 16px; justify-content: center; margin-top: 8px; font-size: .78rem; color: var(--muted); }
+.legend .legend-note { font-style: italic; opacity: .7; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
 
 /* Data table */

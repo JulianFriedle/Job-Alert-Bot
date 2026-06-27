@@ -423,34 +423,119 @@ function renderSourcesChart(allTime = []) {
     </div>`).join('') + `</div>`;
 }
 
-// Line chart of found vs relevant over recent runs.
+// Build the y-axis tick values for a log chart: 0, then each power of ten up to
+// the data max (plus the max itself so the top line is labelled with its value).
+function logTicks(max) {
+  const ticks = [0];
+  for (let p = 1; p <= max; p *= 10) ticks.push(p);
+  if (ticks[ticks.length - 1] !== max) ticks.push(max);
+  return ticks;
+}
+
+// Line chart of found vs relevant over recent runs (log y-scale so the small
+// relevant counts stay readable next to the much larger found counts).
 function renderRunHistory(runs = []) {
   const card = $('#card-runhistory');
   if (!runs || runs.length < 2) { card.hidden = true; return; }
   card.hidden = false;
+  const PX_H = 180;
   const W = 100, H = 100, pad = 4;
-  const maxY = Math.max(...runs.map(r => r.total_found || 0), 1);
+  const rawMax = Math.max(...runs.map(r => r.total_found || 0), 1);
+  // log10(v + 1) keeps zero at the baseline while still spreading out low values.
+  const lg = (v) => Math.log10((v || 0) + 1);
+  const lgMax = lg(rawMax) || 1;
   const xFor = (i) => pad + (i / (runs.length - 1)) * (W - 2 * pad);
-  const yFor = (v) => (H - pad) - (v / maxY) * (H - 2 * pad - 6);
+  const yFor = (v) => (H - pad) - (lg(v) / lgMax) * (H - 2 * pad - 6);
+  const dateOf = (r) => {
+    const d = r.ran_at ? new Date(r.ran_at) : null;
+    return d ? d.toLocaleDateString(locale(), { month: 'short', day: 'numeric' }) : '';
+  };
   const line = (key, color) => {
     const pts = runs.map((r, i) => `${xFor(i)},${yFor(r[key] || 0)}`).join(' ');
     return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`;
   };
+  const ticks = logTicks(rawMax);
+  const grid = ticks.map(v =>
+    `<line x1="${pad}" y1="${yFor(v)}" x2="${W - pad}" y2="${yFor(v)}" stroke="var(--border)" stroke-width="0.5" vector-effect="non-scaling-stroke"/>`
+  ).join('');
+  const yLabels = ticks.map(v =>
+    `<span style="top:${yFor(v)}%">${v}</span>`
+  ).join('');
+  // A few evenly spaced x-axis date labels (avoid crowding on dense histories).
+  const xCount = Math.min(runs.length, 5);
+  const xLabels = Array.from({ length: xCount }, (_, k) => {
+    const i = Math.round(k * (runs.length - 1) / (xCount - 1));
+    const label = dateOf(runs[i]) || (i + 1);
+    return `<span style="left:${xFor(i)}%">${esc(String(label))}</span>`;
+  }).join('');
   $('#chart-runs').innerHTML = `
-    <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:180px">
-      ${line('total_found', 'var(--muted)')}
-      ${line('total_relevant', 'var(--accent)')}
-    </svg>
+    <div class="runchart">
+      <div class="runchart-yaxis">${yLabels}</div>
+      <div class="runchart-plot">
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:${PX_H}px">
+          ${grid}
+          ${line('total_found', 'var(--muted)')}
+          ${line('total_relevant', 'var(--accent)')}
+        </svg>
+        <div class="runchart-hover" hidden>
+          <div class="rc-vline"></div>
+          <div class="rc-dot rc-dot-found"></div>
+          <div class="rc-dot rc-dot-rel"></div>
+        </div>
+        <div class="runchart-tip" hidden></div>
+        <div class="runchart-xaxis">${xLabels}</div>
+      </div>
+    </div>
     <div class="legend">
       <span><i style="background:var(--muted)"></i> ${esc(t('stats.legendFound'))}</span>
       <span><i style="background:var(--accent)"></i> ${esc(t('stats.legendRelevant'))}</span>
+      <span class="legend-note">${esc(t('stats.logScale'))}</span>
     </div>`;
+
+  // Hover interaction: snap to the nearest run and show exact counts.
+  const points = runs.map((r, i) => ({
+    x: xFor(i),
+    found: r.total_found || 0,
+    rel: r.total_relevant || 0,
+    yFound: yFor(r.total_found || 0) / 100 * PX_H,
+    yRel: yFor(r.total_relevant || 0) / 100 * PX_H,
+    date: dateOf(r),
+  }));
+  const plot  = $('#chart-runs .runchart-plot');
+  const hover = plot.querySelector('.runchart-hover');
+  const vline = plot.querySelector('.rc-vline');
+  const dotF  = plot.querySelector('.rc-dot-found');
+  const dotR  = plot.querySelector('.rc-dot-rel');
+  const tip   = plot.querySelector('.runchart-tip');
+  plot.addEventListener('mousemove', (ev) => {
+    const rect = plot.getBoundingClientRect();
+    const frac = ((ev.clientX - rect.left) / rect.width) * 100;
+    let best = 0, bestD = Infinity;
+    points.forEach((p, i) => { const d = Math.abs(p.x - frac); if (d < bestD) { bestD = d; best = i; } });
+    const p = points[best];
+    hover.hidden = false;
+    vline.style.left = p.x + '%';
+    dotF.style.left  = p.x + '%'; dotF.style.top = p.yFound + 'px';
+    dotR.style.left  = p.x + '%'; dotR.style.top = p.yRel + 'px';
+    tip.hidden = false;
+    tip.innerHTML =
+      `<div class="rc-tip-date">${esc(p.date)}</div>` +
+      `<div><i style="background:var(--muted)"></i>${esc(t('stats.legendFound'))}: <b>${p.found}</b></div>` +
+      `<div><i style="background:var(--accent)"></i>${esc(t('stats.legendRelevant'))}: <b>${p.rel}</b></div>`;
+    // Keep the tip inside the plot; flip to the left of the cursor near the edge.
+    const flip = p.x > 60;
+    tip.style.left = `calc(${p.x}% ${flip ? '- 12px' : '+ 12px'})`;
+    tip.style.transform = flip ? 'translateX(-100%)' : 'none';
+  });
+  plot.addEventListener('mouseleave', () => { hover.hidden = true; tip.hidden = true; });
 }
 
 function renderOverviewTable(overview, allTime = []) {
   const table = $('#overview-table');
   if (overview && overview.rows?.length) {
-    $('#overview-sub').textContent = t('stats.lastRun') + new Date(overview.ranAt).toLocaleString(locale());
+    $('#overview-sub').textContent = overview.combined
+      ? `${overview.runCount} ${t('stats.runsWord')} ${t('stats.combinedRuns')}`
+      : t('stats.lastRun') + new Date(overview.ranAt).toLocaleString(locale());
     const head = t('stats.headers');
     const rows = overview.rows.map(r => `<tr>
       <td class="t-name">${esc(r.source)}</td>

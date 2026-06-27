@@ -514,6 +514,37 @@ export function getLatestRunOverview(clientId) {
   return { ranAt: run.ran_at, rows };
 }
 
+// All recorded runs aggregated per source. Flow counters (found, new, blocked,
+// analyzed, new-relevant, notified) are summed across every run; snapshot
+// counters (per-site total, total-relevant) keep their most recent value.
+// Powers the combined "Lauf-Übersicht" on the stats page.
+export function getCombinedRunOverview(clientId) {
+  const meta = db.prepare(
+    'SELECT COUNT(*) AS runCount, MIN(ran_at) AS firstRanAt, MAX(ran_at) AS lastRanAt FROM runs WHERE client_id = ?'
+  ).get(clientId);
+  if (!meta || !meta.runCount) return null;
+  const rows = db.prepare(`
+    SELECT rs.source                       AS source,
+           SUM(rs.found)                   AS found,
+           SUM(rs.new_db)                  AS newDb,
+           SUM(rs.blocked)                 AS blocked,
+           SUM(rs.analyzed)                AS analyzed,
+           SUM(rs.new_relevant)            AS newRelevant,
+           SUM(rs.notified)                AS notified,
+           (SELECT rs2.site_total FROM run_stats rs2 JOIN runs r2 ON r2.id = rs2.run_id
+              WHERE r2.client_id = @cid AND rs2.source = rs.source
+              ORDER BY r2.id DESC LIMIT 1) AS siteTotal,
+           (SELECT rs3.total_relevant FROM run_stats rs3 JOIN runs r3 ON r3.id = rs3.run_id
+              WHERE r3.client_id = @cid AND rs3.source = rs.source
+              ORDER BY r3.id DESC LIMIT 1) AS totalRelevant
+    FROM run_stats rs JOIN runs r ON r.id = rs.run_id
+    WHERE r.client_id = @cid
+    GROUP BY rs.source
+    ORDER BY totalRelevant DESC, found DESC
+  `).all({ cid: clientId });
+  return { combined: true, runCount: meta.runCount, firstRanAt: meta.firstRanAt, lastRanAt: meta.lastRanAt, rows };
+}
+
 // The last `limit` recorded runs (newest first), each with its totals and the
 // full per-source breakdown — powers the "Letzte Läufe" overview on the Run tab.
 export function getRecentRuns(clientId, limit = 10) {
