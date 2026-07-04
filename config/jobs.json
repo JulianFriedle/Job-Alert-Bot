@@ -281,6 +281,146 @@
       "name": "Alten Consulting",
       "url": "https://www.alten-consulting.de/karriere/stellenangebote",
       "type": "careers-page"
+    },
+    {
+      "name": "Siemens DISW",
+      "url": "https://jobs.sw.siemens.com/jobs/?location=Germany&stretchUnit=MILES&stretch=10",
+      "type": "careers-page"
+    },
+    {
+      "name": "Isar Aerospace",
+      "url": "https://job-boards.eu.greenhouse.io/isaraerospace",
+      "type": "careers-page"
+    },
+    {
+      "name": "Nikon SLM Solutions",
+      "url": "https://hr.slm-solutions.com/",
+      "type": "careers-page"
+    },
+    {
+      "name": "Freudenberg",
+      "url": "https://freudenberg.wd3.myworkdayjobs.com/freudenberg-group?locationCountry=dcc5b7608d8644b3a93716604e78e995",
+      "type": "careers-page"
+    },
+    {
+      "name": "Ottobock",
+      "url": "https://jobs.ottobock.com/search/?q=&locationsearch=",
+      "type": "careers-page"
+    },
+    {
+      "name": "Stihl",
+      "url": "https://corporate.stihl.de/de/karriere/stellenangebote",
+      "type": "careers-page"
+    },
+    {
+      "name": "DMG Mori",
+      "url": "https://recruiting.dmgmori.com/Jobs/All",
+      "type": "careers-page"
+    },
+    {
+      "name": "ElringKlinger",
+      "url": "https://elringklinger.de/en/career/job-openings",
+      "type": "careers-page"
+    },
+    {
+      "name": "Cellcentric",
+      "url": "https://jobs.cellcentric.net/search/",
+      "type": "careers-page"
+    },
+    {
+      "name": "Balluff",
+      "url": "https://jobs.balluff.com/Jobs/All",
+      "type": "careers-page"
+    },
+    {
+      "name": "Marquardt",
+      "url": "https://www.marquardt.com/de/karriere/jobsuche",
+      "type": "careers-page"
+    },
+    {
+      "name": "Bürkert",
+      "url": "https://www.buerkert.de/de/unternehmen-karriere/karriere/stellenangebote",
+      "type": "careers-page"
+    },
+    {
+      "name": "Erbe Elektromedizin",
+      "url": "https://de.erbegroup.com/de-de/karriere/jobs/",
+      "type": "careers-page"
+    },
+    {
+      "name": "KLS Martin",
+      "url": "https://www.klsmartin.com/de/karriere/stellenangebote/",
+      "type": "careers-page"
+    },
+    {
+      "name": "EnBW",
+      "url": "https://careers.enbw.com/de_DE/careers/SearchJobs",
+      "type": "careers-page"
+    },
+    {
+      "name": "INDEX-Werke",
+      "url": "https://www.index-group.com/de/unternehmen/jobs-karriere/stellenangebote",
+      "type": "careers-page"
+    },
+    {
+      "name": "CHIRON",
+      "url": "https://career.chiron-group.com/",
+      "type": "careers-page"
+    },
+    {
+      "name": "Ziehl-Abegg",
+      "url": "https://karriere.ziehl-abegg.de/jobs",
+      "type": "careers-page"
+    },
+    {
+      "name": "Bertrandt",
+      "url": "https://bertrandt.jobs.hr.cloud.sap/search/",
+      "type": "careers-page"
+    },
+    {
+      "name": "Optima",
+      "url": "https://www.optima-packaging.com/de/karriere/aktuelle-stellenangebote",
+      "type": "careers-page"
+    },
+    {
+      "name": "Woodward",
+      "url": "https://woodward.wd5.myworkdayjobs.com/woodward?locationCountry=dcc5b7608d8644b3a93716604e78e995",
+      "type": "careers-page"
+    },
+    {
+      "name": "Lapp",
+      "url": "https://www.lappcareer.com/stellenangebote.html",
+      "type": "careers-page"
+    },
+    {
+      "name": "Hermle",
+      "url": "https://www.hermle.de/de/karriere/stellenangebote/alle_stellen/",
+      "type": "careers-page"
+    },
+    {
+      "name": "Bausch+Ströbel",
+      "url": "https://karriere.bausch-stroebel.com/de/stellenangebote/fach-fuehrungskraefte",
+      "type": "careers-page"
+    },
+    {
+      "name": "MAPAL",
+      "url": "https://jobs.mapal.com/search/",
+      "type": "careers-page"
+    },
+    {
+      "name": "Walter AG",
+      "url": "https://sandvik.wd3.myworkdayjobs.com/de-DE/walter-jobs?locationCountry=dcc5b7608d8644b3a93716604e78e995",
+      "type": "careers-page"
+    },
+    {
+      "name": "Testo",
+      "url": "https://testo.mhmhr.com/index",
+      "type": "careers-page"
+    },
+    {
+      "name": "Gühring",
+      "url": "https://jobs.guehring.de/Jobs/All",
+      "type": "careers-page"
     }
   ]
 }
