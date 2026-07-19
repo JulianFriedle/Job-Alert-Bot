@@ -35,3 +35,8 @@ storage/
 
 # Run logs
 logs/
+
+# Auto-apply: saved platform login sessions, per-client CVs, submit screenshots
+data/sessions/
+data/cv/
+data/apply-artifacts/

@@ -180,6 +180,12 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `SESSION_COOKIE_SECURE` | auto | Force the `Secure` flag on the login cookie (`true`/`false`). Auto: on over HTTPS / a real hostname, off for localhost |
 | `BACKUP_ENABLED` | `true` | Set to `false` to disable the automatic daily database backup |
 | `BACKUP_RETENTION_DAYS` | `30` | How many daily backups to keep before the oldest are pruned |
+| `AUTO_APPLY_ENABLED` | `false` | Global switch for auto-apply — off means nothing is ever prepared or submitted |
+| `CREDENTIALS_KEY` | — | 64-hex-char key encrypting platform logins at rest (`npm run generate-credentials-key`) |
+| `APPLY_DRY_RUN` | `true` | Fill apply forms but never click the final submit (screenshot instead) |
+| `APPLY_DAILY_CAP` | `10` | Max submitted applications per client+platform+day (LinkedIn/Indeed hard-capped at 5) |
+| `APPLY_COOLDOWN_MINUTES` | `15` | Minimum minutes between two submissions on the same platform |
+| `APPLY_HEADFUL` | `false` | Show the apply browser window (for first logins with 2FA) |
 
 > **Per-client vs global.** `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, models and the auth/server
 > vars above are **global** (operator-wide). A client's **CV, sources, filters, prompts, Telegram
@@ -214,6 +220,51 @@ This project is tuned for the **German job market** out of the box:
 - Console/log output and Telegram labels are partly German.
 
 To adapt it to another country/language, edit `config/filters.json`, the prompts in those two files, and supply your own `config/jobs.json` sources.
+
+## Job boards (LinkedIn / StepStone / Indeed) & Auto-Apply
+
+Besides company career pages, three job boards can be scraped. They are configured as
+sources with a `search` object instead of a `url` (Sources tab or `sources_json`):
+
+```json
+{ "name": "LinkedIn Suche",  "type": "linkedin",
+  "search": { "keywords": "Entwicklungsingenieur", "location": "Stuttgart",
+              "radiusKm": 40, "postedWithinDays": 7, "maxResults": 100 } }
+{ "name": "StepStone Suche", "type": "stepstone",
+  "search": { "keywords": "Entwicklungsingenieur", "location": "Stuttgart", "radiusKm": 30, "maxPages": 5 } }
+{ "name": "Indeed Suche",    "type": "indeed",
+  "search": { "keywords": "Entwicklungsingenieur", "location": "Stuttgart", "radiusKm": 25, "maxPages": 5 } }
+```
+
+Scraping is read-only and needs **no login** (LinkedIn uses the public guest search).
+StepStone/Indeed results carry an ⚡ *Einfach bewerben* flag; LinkedIn's is verified later.
+
+### Auto-Apply (approval required — nothing is sent on its own)
+
+For platform jobs with one-click application the bot can prepare the application:
+cover letter (Claude), the apply form's screening questions (dry-run, never submitted),
+answers pre-filled from an **answer library** of your previous answers. The prepared
+application must then be **explicitly approved** — either in the job popup in the GUI
+(*Bewerben* button) or via Telegram (review summary with ✅ Bewerben / ✏️ Ändern /
+❌ Verwerfen buttons). Unknown required questions are asked via Telegram one by one.
+After submission the job status flips to *Beworben* automatically.
+
+Setup:
+1. `npm run generate-credentials-key` → put the key into `.env` as `CREDENTIALS_KEY` (or GUI → Einstellungen → Auto-Bewerbung).
+2. GUI → Profil → **Plattform-Zugänge**: enter the platform e-mail/password per client (stored AES-256-GCM-encrypted), optionally upload a CV (PDF), and enable *Auto-Bewerbung* for the client.
+3. Set `AUTO_APPLY_ENABLED=true`. Keep `APPLY_DRY_RUN=true` for the first runs — forms are filled and screenshotted (`data/apply-artifacts/`) but never submitted.
+4. First login per platform may require 2FA — run once with `APPLY_HEADFUL=true` and complete it in the window; the session (`data/sessions/`) is then reused for weeks.
+
+**Status per Telegram:** react to a job notification with 👍 (beworben), 👎 (Absage),
+🤝 (Interview) or 🎉 (Angebot), or reply to it with one of those words — the status is
+updated like in the GUI.
+
+> ⚠️ **Honest warning:** automated applying violates the terms of service of
+> LinkedIn/Indeed (and likely StepStone). Accounts can be restricted or suspended.
+> The bot mitigates (rate caps, cooldowns, human-paced input, persisted sessions,
+> mandatory human approval, no CAPTCHA solving) but cannot eliminate that risk.
+> Cloudflare challenges on Indeed and LinkedIn login checkpoints are detected and
+> reported — never bypassed.
 
 ## Running
 

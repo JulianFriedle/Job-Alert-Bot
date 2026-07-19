@@ -11,7 +11,16 @@ export const DB_PATH = process.env.JOBS_DB_PATH || path.join(__dirname, '..', 'd
 // Every table that holds real data — used by the backup/restore copy. Order does
 // not matter for the wipe+refill (foreign keys are not enforced), but we keep a
 // single source of truth so a new table is never silently left out of a restore.
-export const DATA_TABLES = ['clients', 'jobs', 'runs', 'run_stats', 'status_history'];
+export const DATA_TABLES = [
+  'clients', 'jobs', 'runs', 'run_stats', 'status_history',
+  'client_credentials', 'applications', 'application_events',
+  'telegram_prompts', 'telegram_messages', 'answer_library',
+];
+
+// Tables a backup MUST contain to be restorable. Kept separate from DATA_TABLES
+// so backups taken before the auto-apply tables existed stay restorable — the
+// newer tables are created empty on the staged copy during restore.
+export const CORE_TABLES = ['clients', 'jobs', 'runs', 'run_stats', 'status_history'];
 
 // The single-user / private install is modelled as exactly one client with this
 // fixed id. Multi-tenant (SaaS) installs add further clients alongside it. Every
@@ -31,6 +40,17 @@ function openDb() {
   // while a child `node index.js --once` process may be writing concurrently.
   db.pragma('busy_timeout = 5000');
 
+  createSchema(db);
+  migrateSchema(db);
+  ensureDefaultClient(db);
+
+  return db;
+}
+
+// All CREATE TABLE IF NOT EXISTS blocks live here (not inline in openDb) so a
+// restore can bring a staged copy of an older backup up to the full current
+// schema before the table-by-table copy runs.
+function createSchema(db) {
   // ── Clients (tenants) ──────────────────────────────────────────────────────
   // Each client owns its own profile/sources/filters/prompts (stored as JSON, a
   // 1:1 mapping of the former config/*.json files) plus its own Telegram target.
@@ -124,10 +144,99 @@ function openDb() {
       ON status_history (client_id, status);
   `);
 
-  migrateSchema(db);
-  ensureDefaultClient(db);
+  // ── Auto-apply: platform credentials ─────────────────────────────────────────
+  // Per-client login for LinkedIn/StepStone/Indeed. email/password are AES-256-GCM
+  // blobs (see src/credentials.js) — never stored in plain text.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS client_credentials (
+      client_id     TEXT NOT NULL,
+      platform      TEXT NOT NULL,
+      email_enc     TEXT,
+      password_enc  TEXT,
+      login_state   TEXT DEFAULT 'unknown',
+      last_login_at TEXT,
+      updated_at    TEXT,
+      PRIMARY KEY (client_id, platform)
+    );
+  `);
 
-  return db;
+  // ── Auto-apply: application queue + audit trail ──────────────────────────────
+  // One row per (client, job) application attempt; `state` is the state machine
+  // (queued → preparing → awaiting_answers → ready_for_review → approved →
+  // submitting → submitted, plus failed/discarded). Transitions happen ONLY via
+  // claimApplication's atomic compare-and-set so GUI/worker/Telegram can't race.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS applications (
+      id             TEXT PRIMARY KEY,
+      client_id      TEXT NOT NULL,
+      job_id         TEXT NOT NULL,
+      platform       TEXT NOT NULL,
+      state          TEXT NOT NULL DEFAULT 'queued',
+      cover_letter   TEXT,
+      questions_json TEXT,
+      error          TEXT,
+      attempts       INTEGER DEFAULT 0,
+      created_at     TEXT,
+      prepared_at    TEXT,
+      approved_at    TEXT,
+      submitted_at   TEXT,
+      updated_at     TEXT,
+      UNIQUE (client_id, job_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_applications_state  ON applications (state);
+    CREATE INDEX IF NOT EXISTS idx_applications_client ON applications (client_id, state);
+    CREATE TABLE IF NOT EXISTS application_events (
+      application_id TEXT NOT NULL,
+      event          TEXT NOT NULL,
+      detail         TEXT,
+      created_at     TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_app_events ON application_events (application_id);
+  `);
+
+  // ── Telegram correlation tables ──────────────────────────────────────────────
+  // telegram_prompts: maps a sent question message to (application, question) so a
+  // reply can be routed. telegram_messages: maps job notifications / review
+  // messages to jobs so emoji reactions and text replies can update status.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS telegram_prompts (
+      chat_id        TEXT NOT NULL,
+      message_id     INTEGER NOT NULL,
+      application_id TEXT NOT NULL,
+      question_id    TEXT NOT NULL,
+      answered       INTEGER DEFAULT 0,
+      sent_at        TEXT,
+      PRIMARY KEY (chat_id, message_id)
+    );
+    CREATE TABLE IF NOT EXISTS telegram_messages (
+      chat_id    TEXT NOT NULL,
+      message_id INTEGER NOT NULL,
+      client_id  TEXT NOT NULL,
+      job_id     TEXT NOT NULL,
+      kind       TEXT DEFAULT 'notification',
+      sent_at    TEXT,
+      PRIMARY KEY (chat_id, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_telegram_messages_job ON telegram_messages (client_id, job_id);
+  `);
+
+  // ── Answer library ───────────────────────────────────────────────────────────
+  // Remembered screening-question answers per client. question_key is the
+  // normalized label (lowercase, trimmed, punctuation stripped) so the same
+  // question re-asked by another posting is matched and pre-filled.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS answer_library (
+      client_id    TEXT NOT NULL,
+      question_key TEXT NOT NULL,
+      label        TEXT,
+      type         TEXT,
+      options_json TEXT,
+      answer       TEXT,
+      use_count    INTEGER DEFAULT 0,
+      updated_at   TEXT,
+      PRIMARY KEY (client_id, question_key)
+    );
+  `);
 }
 
 // Idempotent migrations for DBs created before multi-tenancy. The jobs table is
@@ -147,6 +256,16 @@ function migrateSchema(db) {
   if (!jobCols.includes('applied'))      db.exec('ALTER TABLE jobs ADD COLUMN applied      INTEGER DEFAULT 0');
   if (!jobCols.includes('applied_at'))   db.exec('ALTER TABLE jobs ADD COLUMN applied_at   TEXT');
   if (!jobCols.includes('status'))       db.exec('ALTER TABLE jobs ADD COLUMN status        TEXT');
+  // Platform-scraper columns: easy_apply is 1/0/NULL (NULL = unknown, e.g.
+  // LinkedIn guest search doesn't expose it); platform is linkedin|stepstone|indeed.
+  if (!jobCols.includes('easy_apply'))   db.exec('ALTER TABLE jobs ADD COLUMN easy_apply   INTEGER');
+  if (!jobCols.includes('platform'))     db.exec('ALTER TABLE jobs ADD COLUMN platform     TEXT');
+
+  const clientCols = db.prepare("PRAGMA table_info(clients)").all().map(r => r.name);
+  if (!clientCols.includes('auto_apply'))
+    db.exec("ALTER TABLE clients ADD COLUMN auto_apply TEXT DEFAULT 'off'");
+  if (!clientCols.includes('max_applies_per_day'))
+    db.exec('ALTER TABLE clients ADD COLUMN max_applies_per_day INTEGER');
 
   // Multi-tenant rebuild: old jobs table had `id` as sole PRIMARY KEY. Recreate it
   // with the composite (client_id, id) key and backfill the default client.
@@ -229,6 +348,7 @@ const CLIENT_FIELDS = [
   'name', 'enabled', 'telegram_chat_id', 'telegram_notifications',
   'expiry_notifications', 'min_relevance_score',
   'profile_json', 'sources_json', 'filters_json', 'prompts_json',
+  'auto_apply', 'max_applies_per_day',
 ];
 
 export function getClients() {
@@ -294,6 +414,13 @@ export function deleteClient(id) {
     db.prepare('DELETE FROM run_stats WHERE run_id IN (SELECT id FROM runs WHERE client_id = ?)').run(id);
     db.prepare('DELETE FROM runs WHERE client_id = ?').run(id);
     db.prepare('DELETE FROM jobs WHERE client_id = ?').run(id);
+    db.prepare('DELETE FROM status_history WHERE client_id = ?').run(id);
+    db.prepare('DELETE FROM application_events WHERE application_id IN (SELECT id FROM applications WHERE client_id = ?)').run(id);
+    db.prepare('DELETE FROM telegram_prompts WHERE application_id IN (SELECT id FROM applications WHERE client_id = ?)').run(id);
+    db.prepare('DELETE FROM applications WHERE client_id = ?').run(id);
+    db.prepare('DELETE FROM client_credentials WHERE client_id = ?').run(id);
+    db.prepare('DELETE FROM telegram_messages WHERE client_id = ?').run(id);
+    db.prepare('DELETE FROM answer_library WHERE client_id = ?').run(id);
     db.prepare('DELETE FROM clients WHERE id = ?').run(id);
   });
   tx();
@@ -309,9 +436,11 @@ export function isNewJob(clientId, id) {
 export function saveJob(clientId, job) {
   db.prepare(`
     INSERT OR IGNORE INTO jobs
-      (client_id, id, title, company, url, location, description, source, relevant, notified, scraped_at)
+      (client_id, id, title, company, url, location, description, source, relevant, notified, scraped_at,
+       easy_apply, platform)
     VALUES
-      (@client_id, @id, @title, @company, @url, @location, @description, @source, NULL, 0, @scraped_at)
+      (@client_id, @id, @title, @company, @url, @location, @description, @source, NULL, 0, @scraped_at,
+       @easy_apply, @platform)
   `).run({
     client_id: clientId,
     id: job.id,
@@ -322,7 +451,14 @@ export function saveJob(clientId, job) {
     description: job.description || '',
     source: job.source || '',
     scraped_at: new Date().toISOString(),
+    easy_apply: job.easyApply == null ? null : (job.easyApply ? 1 : 0),
+    platform: job.platform ?? null,
   });
+}
+
+export function setJobEasyApply(clientId, id, easyApply) {
+  db.prepare('UPDATE jobs SET easy_apply = ? WHERE client_id = ? AND id = ?')
+    .run(easyApply == null ? null : (easyApply ? 1 : 0), clientId, id);
 }
 
 export function markAnalyzed(clientId, id, relevant, score = null, summary = null) {
@@ -335,11 +471,13 @@ export function markAnalyzed(clientId, id, relevant, score = null, summary = nul
 
 export function getRelevantJobs(clientId) {
   return db.prepare(`
-    SELECT id, title, company, location, url, score, summary, source, scraped_at,
-           applied, applied_at, status
-    FROM jobs
-    WHERE client_id = ? AND relevant = 1
-    ORDER BY applied DESC, score DESC, scraped_at DESC
+    SELECT j.id, j.title, j.company, j.location, j.url, j.score, j.summary, j.source, j.scraped_at,
+           j.applied, j.applied_at, j.status, j.platform, j.easy_apply,
+           a.id AS application_id, a.state AS application_state
+    FROM jobs j
+    LEFT JOIN applications a ON a.client_id = j.client_id AND a.job_id = j.id
+    WHERE j.client_id = ? AND j.relevant = 1
+    ORDER BY j.applied DESC, j.score DESC, j.scraped_at DESC
   `).all(clientId);
 }
 
@@ -638,6 +776,214 @@ export function getTotals(clientId) {
   `).get(clientId);
 }
 
+// ── Applications (auto-apply queue) ──────────────────────────────────────────
+
+// Fields updateApplication may touch. `state` is deliberately NOT here — state
+// changes go through claimApplication only, so no code path can skip the
+// compare-and-set guard.
+const APPLICATION_FIELDS = [
+  'cover_letter', 'questions_json', 'error', 'attempts',
+  'prepared_at', 'approved_at', 'submitted_at',
+];
+
+export function createApplication(clientId, jobId, platform) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR IGNORE INTO applications (id, client_id, job_id, platform, state, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'queued', ?, ?)
+  `).run(randomUUID(), clientId, jobId, platform, now, now);
+  return getApplicationByJob(clientId, jobId);
+}
+
+export function getApplicationById(id) {
+  return db.prepare('SELECT * FROM applications WHERE id = ?').get(id);
+}
+
+export function getApplicationByJob(clientId, jobId) {
+  return db.prepare('SELECT * FROM applications WHERE client_id = ? AND job_id = ?').get(clientId, jobId);
+}
+
+// List a client's applications (newest first), joined with the job's headline
+// fields so the GUI can render the queue without extra lookups.
+export function getApplications(clientId, { state } = {}) {
+  const where = state ? 'a.client_id = ? AND a.state = ?' : 'a.client_id = ?';
+  const params = state ? [clientId, state] : [clientId];
+  return db.prepare(`
+    SELECT a.*, j.title, j.company, j.location, j.url, j.score
+    FROM applications a
+    LEFT JOIN jobs j ON j.client_id = a.client_id AND j.id = a.job_id
+    WHERE ${where}
+    ORDER BY a.created_at DESC
+  `).all(...params);
+}
+
+// Partial update of non-state fields (whitelisted).
+export function updateApplication(id, patch) {
+  const sets = [];
+  const params = { id, updated_at: new Date().toISOString() };
+  for (const f of APPLICATION_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(patch, f)) {
+      sets.push(`${f} = @${f}`);
+      params[f] = patch[f] ?? null;
+    }
+  }
+  if (sets.length) {
+    db.prepare(`UPDATE applications SET ${sets.join(', ')}, updated_at = @updated_at WHERE id = @id`).run(params);
+  }
+  return getApplicationById(id);
+}
+
+// The ONLY way to change an application's state: an atomic compare-and-set.
+// Returns true when this caller won the transition; false means someone else
+// (GUI, Telegram button, worker) already moved the row — back off.
+export function claimApplication(id, fromState, toState) {
+  const res = db.prepare(`
+    UPDATE applications SET state = ?, updated_at = ? WHERE id = ? AND state = ?
+  `).run(toState, new Date().toISOString(), id, fromState);
+  return res.changes === 1;
+}
+
+// Oldest application in a state — the worker's work queue (across all clients).
+export function getNextApplicationByState(state) {
+  return db.prepare(
+    'SELECT * FROM applications WHERE state = ? ORDER BY created_at ASC LIMIT 1'
+  ).get(state);
+}
+
+export function getApplicationsByState(state) {
+  return db.prepare('SELECT * FROM applications WHERE state = ? ORDER BY created_at ASC').all(state);
+}
+
+export function logApplicationEvent(applicationId, event, detail = null) {
+  db.prepare(`
+    INSERT INTO application_events (application_id, event, detail, created_at) VALUES (?, ?, ?, ?)
+  `).run(applicationId, event, detail, new Date().toISOString());
+}
+
+export function getApplicationEvents(applicationId) {
+  return db.prepare(
+    'SELECT event, detail, created_at FROM application_events WHERE application_id = ? ORDER BY created_at ASC'
+  ).all(applicationId);
+}
+
+// Safety-rail queries: submissions in the local calendar day / most recent one.
+export function countSubmittedToday(clientId, platform) {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS n FROM applications
+    WHERE client_id = ? AND platform = ? AND state = 'submitted'
+      AND date(submitted_at, 'localtime') = date('now', 'localtime')
+  `).get(clientId, platform);
+  return row.n;
+}
+
+export function getLastSubmittedAt(platform) {
+  const row = db.prepare(`
+    SELECT MAX(submitted_at) AS last FROM applications WHERE platform = ? AND state = 'submitted'
+  `).get(platform);
+  return row?.last || null;
+}
+
+// ── Platform credentials (encrypted blobs — see src/credentials.js) ──────────
+
+export function getCredentialRow(clientId, platform) {
+  return db.prepare('SELECT * FROM client_credentials WHERE client_id = ? AND platform = ?')
+    .get(clientId, platform);
+}
+
+export function listCredentialRows(clientId) {
+  return db.prepare('SELECT * FROM client_credentials WHERE client_id = ?').all(clientId);
+}
+
+export function setCredentialRow(clientId, platform, { email_enc, password_enc }) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO client_credentials (client_id, platform, email_enc, password_enc, login_state, updated_at)
+    VALUES (@client_id, @platform, @email_enc, @password_enc, 'unknown', @now)
+    ON CONFLICT (client_id, platform) DO UPDATE SET
+      email_enc    = COALESCE(@email_enc, email_enc),
+      password_enc = COALESCE(@password_enc, password_enc),
+      login_state  = 'unknown',
+      updated_at   = @now
+  `).run({ client_id: clientId, platform, email_enc: email_enc ?? null, password_enc: password_enc ?? null, now });
+}
+
+export function deleteCredentialRow(clientId, platform) {
+  db.prepare('DELETE FROM client_credentials WHERE client_id = ? AND platform = ?').run(clientId, platform);
+}
+
+export function setLoginState(clientId, platform, state, { touchLogin = false } = {}) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    UPDATE client_credentials SET login_state = ?, last_login_at = CASE WHEN ? THEN ? ELSE last_login_at END
+    WHERE client_id = ? AND platform = ?
+  `).run(state, touchLogin ? 1 : 0, now, clientId, platform);
+}
+
+// ── Telegram correlation ─────────────────────────────────────────────────────
+
+export function recordTelegramMessage(chatId, messageId, clientId, jobId, kind = 'notification') {
+  db.prepare(`
+    INSERT OR REPLACE INTO telegram_messages (chat_id, message_id, client_id, job_id, kind, sent_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(String(chatId), messageId, clientId, jobId, kind, new Date().toISOString());
+}
+
+export function getTelegramMessage(chatId, messageId) {
+  return db.prepare('SELECT * FROM telegram_messages WHERE chat_id = ? AND message_id = ?')
+    .get(String(chatId), messageId);
+}
+
+export function recordTelegramPrompt(chatId, messageId, applicationId, questionId) {
+  db.prepare(`
+    INSERT OR REPLACE INTO telegram_prompts (chat_id, message_id, application_id, question_id, answered, sent_at)
+    VALUES (?, ?, ?, ?, 0, ?)
+  `).run(String(chatId), messageId, applicationId, questionId, new Date().toISOString());
+}
+
+export function getTelegramPrompt(chatId, messageId) {
+  return db.prepare('SELECT * FROM telegram_prompts WHERE chat_id = ? AND message_id = ?')
+    .get(String(chatId), messageId);
+}
+
+export function getOpenTelegramPrompts(chatId) {
+  return db.prepare('SELECT * FROM telegram_prompts WHERE chat_id = ? AND answered = 0 ORDER BY sent_at ASC')
+    .all(String(chatId));
+}
+
+export function markTelegramPromptAnswered(chatId, messageId) {
+  db.prepare('UPDATE telegram_prompts SET answered = 1 WHERE chat_id = ? AND message_id = ?')
+    .run(String(chatId), messageId);
+}
+
+// Cancel every open prompt of an application (e.g. the GUI answered the
+// questions) so a late Telegram reply to a stale prompt is ignored.
+export function closeTelegramPromptsForApplication(applicationId) {
+  db.prepare('UPDATE telegram_prompts SET answered = 1 WHERE application_id = ?').run(applicationId);
+}
+
+// ── Answer library (remembered screening-question answers) ───────────────────
+
+export function getLibraryAnswer(clientId, questionKey) {
+  return db.prepare('SELECT * FROM answer_library WHERE client_id = ? AND question_key = ?')
+    .get(clientId, questionKey);
+}
+
+export function getLibraryAnswers(clientId) {
+  return db.prepare('SELECT * FROM answer_library WHERE client_id = ? ORDER BY updated_at DESC').all(clientId);
+}
+
+export function upsertLibraryAnswer(clientId, { question_key, label, type, options_json, answer }) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO answer_library (client_id, question_key, label, type, options_json, answer, use_count, updated_at)
+    VALUES (@client_id, @question_key, @label, @type, @options_json, @answer, 1, @now)
+    ON CONFLICT (client_id, question_key) DO UPDATE SET
+      label = @label, type = @type, options_json = @options_json,
+      answer = @answer, use_count = use_count + 1, updated_at = @now
+  `).run({ client_id: clientId, question_key, label: label ?? null, type: type ?? null,
+           options_json: options_json ?? null, answer: answer ?? null, now });
+}
+
 export function close() {
   db.close();
 }
@@ -691,7 +1037,9 @@ export function validateBackup(srcPath) {
     const tables = new Set(
       probe.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name)
     );
-    const missing = DATA_TABLES.filter(t => !tables.has(t));
+    // Only the core tables are required — backups from before the auto-apply
+    // tables existed must stay restorable (those tables are created empty).
+    const missing = CORE_TABLES.filter(t => !tables.has(t));
     if (missing.length) throw new Error(`Backup unvollständig — fehlende Tabellen: ${missing.join(', ')}.`);
   } finally {
     probe.close();
@@ -712,7 +1060,10 @@ export function restoreFromBackup(srcPath) {
   try {
     // Bring the copy up to the current schema, then make sure WAL is fully folded
     // back into the main file so the single ATTACH below sees all rows.
+    // createSchema first: an older backup may lack entire tables (e.g. the
+    // auto-apply ones), which migrateSchema's column-adds don't create.
     const staged = new Database(tmp);
+    createSchema(staged);
     migrateSchema(staged);
     // Fold any WAL back into the main file and switch to a rollback journal, so the
     // single ATTACH below sees every row and no WAL/SHM sidecars linger.

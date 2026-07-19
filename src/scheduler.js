@@ -9,13 +9,16 @@ import {
   isNewJob, saveJob, markAnalyzed, markNotified, getUnanalyzedJobs,
   getRelevantUnnotifiedJobs, getRelevantCountBySource, updateLastSeenBatch,
   getJobsToExpire, markExpired, saveRunSnapshot, getEnabledClients, getClient,
-  checkpointWal,
+  checkpointWal, getJobById, createApplication,
 } from './database.js';
 import { analyzeJob } from './analyzer.js';
 import { notifyBatch, notifyExpired, isTelegramEnabled } from './notifier.js';
 import { exportToExcel } from './exporter.js';
 import { getClientConfig } from './client-config.js';
 import { maybeRunDailyBackup } from './backup.js';
+import { startApplyWorker } from './apply-worker.js';
+import { startTelegramBot } from './telegram-bot.js';
+import { isTruthy } from './scrapers/browser.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -158,16 +161,18 @@ async function runClientPipeline(client) {
 
   const newJobIds = new Set(jobsToProcess.map(j => j.id));
 
-  // 4. Fetch full descriptions only for jobs that passed the title filter
+  // 4. Fetch full descriptions only for jobs that passed the title filter and
+  //    don't already carry one (platform scrapers may fill it during scrape)
+  const needsDescription = jobsToProcess.filter(j => !j.description);
   tick('descriptions');
-  if (jobsToProcess.length > 0) {
+  if (needsDescription.length > 0) {
     try {
-      await fetchDescriptions(jobsToProcess);
+      await fetchDescriptions(needsDescription);
     } catch (err) {
       log(`ERROR fetching descriptions: ${err.message}`);
     }
   }
-  log(`⏱  Descriptions (${jobsToProcess.length} jobs): ${tock('descriptions')}`);
+  log(`⏱  Descriptions (${needsDescription.length} jobs): ${tock('descriptions')}`);
 
   // 5. Save passing jobs to DB (now with descriptions)
   for (const job of jobsToProcess) {
@@ -272,6 +277,31 @@ async function runClientPipeline(client) {
     }
   }
   log(`⏱  Notifications (${toNotify.length} jobs): ${tock('notifications')}`);
+
+  // 8b. Auto-enqueue applications: new relevant platform jobs with
+  // "Einfach bewerben" (or unknown for LinkedIn — prepare verifies it) land in
+  // the approval queue when the client opted in AND the global switch is on.
+  // Enqueued means "prepare it", never "send it" — submission always requires
+  // an explicit approval.
+  if (client.auto_apply === 'queue' && isTruthy(process.env.AUTO_APPLY_ENABLED)) {
+    const MAX_ENQUEUE_PER_RUN = 15;
+    let enqueued = 0;
+    for (const job of jobsToProcess) {
+      if (enqueued >= MAX_ENQUEUE_PER_RUN) break;
+      if (!job.platform) continue;
+      if (job.easyApply === 0) continue; // known external-apply
+      const row = getJobById(clientId, job.id);
+      if (!row || !row.relevant) continue;
+      if ((row.score ?? 0) < cfg.minRelevanceScore) continue;
+      try {
+        createApplication(clientId, job.id, job.platform);
+        enqueued++;
+      } catch (err) {
+        log(`ERROR enqueuing application for "${job.title}": ${err.message}`);
+      }
+    }
+    if (enqueued > 0) log(`Auto-Apply: ${enqueued} Bewerbung(en) in die Warteschlange gestellt.`);
+  }
 
   // 9. Detect and notify expired jobs (notified but not seen for 3+ days).
   const expiryOn = isTelegramEnabled(client)
@@ -382,6 +412,11 @@ async function backupThenRun(label) {
 
 export function startScheduler() {
   log(`Scheduler starting — schedule: ${CRON_SCHEDULE}`);
+  // Interactive Telegram bot (Q&A, Freigabe-Buttons, Status per Reaktion) and
+  // the auto-apply worker live in THIS process only — exactly one Telegram
+  // poller per token, and exactly one process touching Playwright sessions.
+  startTelegramBot();
+  startApplyWorker();
   // The scheduler is long-lived, so it also ensures today's backup exists (idempotent
   // + cross-process lock → never a duplicate of the GUI's), then runs.
   backupThenRun('initial');

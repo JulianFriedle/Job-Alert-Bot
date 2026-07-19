@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import TelegramBot from 'node-telegram-bot-api';
 import { fileURLToPath } from 'url';
+import { recordTelegramMessage } from './database.js';
 
 const NOTIFICATION_DELAY_MS = 1000;
 const TELEGRAM_MAX_LEN = 4096;
@@ -101,10 +102,17 @@ export async function notify(job, analysis, client) {
   const bot = getBot();
   const message = formatMessage(job, analysis);
 
-  await bot.sendMessage(chatId, message, {
+  const sent = await bot.sendMessage(chatId, message, {
     parse_mode: 'MarkdownV2',
     disable_web_page_preview: false,
   });
+
+  // Remember which Telegram message announced which job, so a reaction (👍/👎)
+  // or a text reply on it can set the application status later.
+  if (client.id && sent?.message_id) {
+    try { recordTelegramMessage(chatId, sent.message_id, client.id, job.id, 'notification'); }
+    catch (err) { log(`Konnte Telegram-Nachricht nicht zuordnen: ${err.message}`); }
+  }
 
   log(`Notified ${client.name}: ${job.title} @ ${job.company || 'unknown'} (score ${analysis.score})`);
 }

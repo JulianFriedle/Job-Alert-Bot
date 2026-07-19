@@ -20,6 +20,8 @@
     "refetch-descriptions": "node scripts/refetch-descriptions.js",
     "migrate": "node scripts/migrate-to-multitenant.js",
     "hash-password": "node scripts/hash-password.js",
+    "generate-credentials-key": "node scripts/generate-credentials-key.js",
+    "test": "node --test 'test/*.test.js'",
     "gui": "node src/server.js",
     "gui:operator": "node scripts/operator-sandbox.js"
   },

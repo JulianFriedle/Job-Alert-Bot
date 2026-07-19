@@ -111,6 +111,23 @@ function scoreClass(s) {
   return s >= 8 ? 's-high' : s >= 6 ? 's-mid' : 's-low';
 }
 
+// Job-board platform metadata (icon badge + label) for the job list/popup.
+const PLATFORM_META = {
+  linkedin:  { label: 'LinkedIn',  short: 'in' },
+  stepstone: { label: 'StepStone', short: 'St' },
+  indeed:    { label: 'Indeed',    short: 'Id' },
+};
+
+// Application-queue states → i18n label keys (see i18n.js 'ap.state.*').
+const AP_STATES = ['queued', 'preparing', 'awaiting_answers', 'ready_for_review', 'approved', 'submitting', 'submitted', 'failed', 'discarded'];
+const apStateLabel = (s) => AP_STATES.includes(s) ? t('ap.state.' + s) : s;
+
+function platformBadge(j) {
+  const meta = PLATFORM_META[j.platform];
+  if (!meta) return '';
+  return `<span class="platform-badge pf-${esc(j.platform)}" title="${esc(meta.label)}">${esc(meta.short)}</span>`;
+}
+
 function renderJobs() {
   const jobs = filteredJobs();
   $('#result-count').textContent = `${jobs.length} ${t('jobs.of')} ${allJobs.length}`;
@@ -123,16 +140,23 @@ function renderJobs() {
       ...statuses.map(s => `<option value="${s}"${j.status === s ? ' selected' : ''}>${esc(statusLabel(s))}</option>`)
     ].join('');
     const pill = j.status ? `<span class="pill st-${j.status}">${esc(statusLabel(j.status))}${j.applied_at ? ' · ' + fmtDate(j.applied_at) : ''}</span>` : '';
+    // Application-queue badge (only while the job isn't simply "applied" yet)
+    const apPill = (j.application_state && !['discarded'].includes(j.application_state) && j.status !== 'applied')
+      ? `<span class="pill ap-${esc(j.application_state)}">${esc(apStateLabel(j.application_state))}</span>` : '';
+    const easy = (j.easy_apply === 1 && !j.application_state && !j.status)
+      ? `<span class="pill pill-easy" title="${esc(t('ap.easyTitle'))}">⚡ ${esc(t('ap.easy'))}</span>` : '';
     const loc = j.location ? `<span>${esc(j.location)}</span><span class="dot">·</span>` : '';
     return `
       <article class="job" data-id="${esc(j.id)}">
         <div class="score-badge ${scoreClass(j.score)}">${j.score ?? '–'}</div>
         <div class="job-main">
-          <div class="job-title"><a href="${esc(j.url)}" target="_blank" rel="noopener">${esc(j.title)}</a></div>
+          <div class="job-title">${platformBadge(j)}<a href="${esc(j.url)}" target="_blank" rel="noopener">${esc(j.title)}</a></div>
           <div class="job-meta">
             <strong>${esc(j.company || j.source)}</strong><span class="dot">·</span>
             ${loc}<span>${esc(j.source)}</span>
             ${pill ? '<span class="dot">·</span>' + pill : ''}
+            ${apPill ? '<span class="dot">·</span>' + apPill : ''}
+            ${easy ? '<span class="dot">·</span>' + easy : ''}
           </div>
           ${j.summary ? `<div class="job-summary">${esc(j.summary)}</div>` : ''}
         </div>
@@ -171,6 +195,13 @@ $('#job-list').addEventListener('click', async (e) => {
     return openCoverLetter(allJobs.find(j => j.id === id));
   }
 
+  // Clicking the card body (not a link/control) opens the job popup too —
+  // that's where the application panel for platform jobs lives.
+  if (e.target.closest('.job-main') && !e.target.closest('a')) {
+    const id = e.target.closest('.job').dataset.id;
+    return openCoverLetter(allJobs.find(j => j.id === id));
+  }
+
   const btn = e.target.closest('.js-ignore');
   if (!btn) return;
   const card = e.target.closest('.job');
@@ -201,7 +232,161 @@ async function openCoverLetter(job) {
   $('#cl-generate').hidden = false;
   updateAppliedBtn();
   $('#cl-modal').hidden = false;
+  renderApplyPanel(job);
   $('#cl-notes').focus();
+}
+
+// ── AUTO-APPLY PANEL (in the job popup, platform jobs only) ──────────────────
+let apDetail = null; // { application, events } for the open job
+
+async function renderApplyPanel(job) {
+  const panel = $('#ap-panel');
+  apDetail = null;
+  if (!job.platform) { panel.hidden = true; panel.innerHTML = ''; return; }
+  panel.hidden = false;
+  panel.innerHTML = `<div class="ap-head"><span class="spinner"></span></div>`;
+
+  try {
+    if (job.application_id) {
+      apDetail = await api(`/api/applications/${encodeURIComponent(job.application_id)}`);
+    }
+  } catch { /* treat as "no application yet" */ }
+  drawApplyPanel(job);
+}
+
+function drawApplyPanel(job) {
+  const panel = $('#ap-panel');
+  const meta = PLATFORM_META[job.platform] || { label: job.platform };
+  const app = apDetail?.application;
+
+  // No application yet → offer to prepare one (unless known external-apply).
+  if (!app || app.state === 'discarded') {
+    if (job.easy_apply === 0) {
+      panel.innerHTML = `<div class="ap-head">
+        ${platformBadge(job)}<span class="muted">${esc(t('ap.externalOnly'))}</span>
+      </div>`;
+      return;
+    }
+    panel.innerHTML = `<div class="ap-head">
+      ${platformBadge(job)}<strong>${esc(t('ap.easyTitle'))}</strong>
+      <button class="btn btn-primary" id="ap-create">⚡ ${esc(t('ap.prepare'))}</button>
+      <span class="muted">${esc(t('ap.prepareHelp'))}</span>
+    </div>`;
+    $('#ap-create')?.addEventListener('click', async () => {
+      try {
+        const { application } = await api('/api/applications', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId: job.id }),
+        });
+        job.application_id = application.id;
+        job.application_state = application.state;
+        apDetail = { application, events: [] };
+        drawApplyPanel(job);
+        renderJobs();
+        toast(t('ap.queuedToast'));
+      } catch (err) { toast(t('toast.error') + err.message); }
+    });
+    return;
+  }
+
+  const questions = (() => { try { return JSON.parse(app.questions_json || '[]'); } catch { return []; } })();
+  const editable = ['queued', 'awaiting_answers', 'ready_for_review', 'failed'].includes(app.state);
+
+  const qHtml = questions.length ? `
+    <div class="ap-questions">
+      <h3>${esc(t('ap.questions'))}</h3>
+      ${questions.map(q => {
+        const lib = q.answeredVia === 'library' ? ` <span class="pill pill-lib" title="${esc(t('ap.fromLibraryTitle'))}">💾</span>` : '';
+        const req = q.required ? ' <span class="req">*</span>' : '';
+        let input;
+        if ((q.type === 'select' || q.type === 'radio') && Array.isArray(q.options) && q.options.length) {
+          input = `<select class="set-input ap-answer" data-qid="${esc(q.id)}" ${editable ? '' : 'disabled'}>
+            <option value=""></option>
+            ${q.options.map(o => `<option value="${esc(o)}"${String(q.answer) === String(o) ? ' selected' : ''}>${esc(o)}</option>`).join('')}
+          </select>`;
+        } else {
+          input = `<input class="set-input ap-answer" data-qid="${esc(q.id)}" type="${q.type === 'number' ? 'number' : 'text'}"
+            value="${esc(q.answer ?? '')}" ${editable ? '' : 'disabled'}>`;
+        }
+        return `<div class="ap-q"><label>${esc(q.label)}${req}${lib}</label>${input}</div>`;
+      }).join('')}
+    </div>` : '';
+
+  const coverHtml = app.cover_letter ? `
+    <details class="ap-cover"><summary>${esc(t('ap.coverLetter'))}</summary>
+      <textarea class="set-input su-textarea" id="ap-cover" rows="8" ${editable ? '' : 'disabled'}>${esc(app.cover_letter)}</textarea>
+    </details>` : '';
+
+  const errHtml = app.error ? `<p class="ap-error">⚠ ${esc(app.error)}</p>` : '';
+
+  const buttons = [];
+  if (editable && (questions.length || app.cover_letter))
+    buttons.push(`<button class="btn" id="ap-save">${esc(t('btn.save'))}</button>`);
+  if (app.state === 'ready_for_review')
+    buttons.push(`<button class="btn btn-primary" id="ap-approve">✅ ${esc(t('ap.approve'))}</button>`);
+  if (app.state === 'failed' && (app.attempts || 0) < 3)
+    buttons.push(`<button class="btn" id="ap-retry">↻ ${esc(t('ap.retry'))}</button>`);
+  if (!['submitting', 'submitted'].includes(app.state))
+    buttons.push(`<button class="btn btn-ghost btn-danger" id="ap-discard">${esc(t('ap.discard'))}</button>`);
+
+  panel.innerHTML = `
+    <div class="ap-head">
+      ${platformBadge(job)}<strong>${esc(t('ap.title'))}</strong>
+      <span class="pill ap-${esc(app.state)}">${esc(apStateLabel(app.state))}</span>
+    </div>
+    ${errHtml}${qHtml}${coverHtml}
+    <div class="ap-actions">${buttons.join('')}</div>`;
+
+  const collectAnswers = () => {
+    const answers = {};
+    for (const el of $$('#ap-panel .ap-answer')) {
+      if (el.value !== '') answers[el.dataset.qid] = el.value;
+    }
+    return answers;
+  };
+  const saveEdits = async () => {
+    const body = { answers: collectAnswers() };
+    const cover = $('#ap-cover');
+    if (cover) body.cover_letter = cover.value;
+    const { application } = await api(`/api/applications/${encodeURIComponent(app.id)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    apDetail.application = application;
+    job.application_state = application.state;
+  };
+
+  $('#ap-save')?.addEventListener('click', async () => {
+    try { await saveEdits(); drawApplyPanel(job); renderJobs(); toast(t('ap.savedToast')); }
+    catch (err) { toast(t('toast.error') + err.message); }
+  });
+  $('#ap-approve')?.addEventListener('click', async () => {
+    if (!confirm(t('ap.approveConfirm'))) return;
+    try {
+      await saveEdits();
+      const { application } = await api(`/api/applications/${encodeURIComponent(app.id)}/approve`, { method: 'POST' });
+      apDetail.application = application;
+      job.application_state = application.state;
+      drawApplyPanel(job); renderJobs();
+      toast(t('ap.approvedToast'));
+    } catch (err) { toast(t('toast.error') + err.message); }
+  });
+  $('#ap-retry')?.addEventListener('click', async () => {
+    try {
+      const { application } = await api(`/api/applications/${encodeURIComponent(app.id)}/retry`, { method: 'POST' });
+      apDetail.application = application;
+      job.application_state = application.state;
+      drawApplyPanel(job); renderJobs();
+    } catch (err) { toast(t('toast.error') + err.message); }
+  });
+  $('#ap-discard')?.addEventListener('click', async () => {
+    if (!confirm(t('ap.discardConfirm'))) return;
+    try {
+      const { application } = await api(`/api/applications/${encodeURIComponent(app.id)}/discard`, { method: 'POST' });
+      apDetail.application = application;
+      job.application_state = application.state;
+      drawApplyPanel(job); renderJobs();
+    } catch (err) { toast(t('toast.error') + err.message); }
+  });
 }
 
 // Reflect the job's current status on the header "Applied" button.
@@ -577,16 +762,49 @@ async function loadSources() {
   } catch (err) { toast(t('toast.error') + err.message); }
 }
 
-function sourceRow(s = { name: '', url: '' }) {
+const SOURCE_TYPES = ['careers-page', 'linkedin', 'stepstone', 'indeed'];
+const isPlatformType = (t) => ['linkedin', 'stepstone', 'indeed'].includes(t);
+
+// The config part of a row differs by type: career pages take a URL, platform
+// sources take a keyword/location/radius search.
+function sourceConfigHtml(type, s = {}) {
+  if (isPlatformType(type)) {
+    const search = s.search || {};
+    return `<div class="src-config src-platform">
+      <input class="kw" placeholder="${esc(t('sources.kwPh'))}" value="${esc(search.keywords || '')}">
+      <input class="loc" placeholder="${esc(t('sources.locPh'))}" value="${esc(search.location || '')}">
+      <input class="radius" type="number" min="0" placeholder="${esc(t('sources.radiusPh'))}" value="${esc(search.radiusKm ?? '')}">
+    </div>`;
+  }
+  return `<div class="src-config">
+    <input class="url" placeholder="${esc(t('sources.urlPh'))}" value="${esc(s.url || '')}">
+  </div>`;
+}
+
+function sourceRow(s = { name: '', url: '', type: 'careers-page' }) {
   const div = document.createElement('div');
   div.className = 'source-row';
+  const type = s.type || 'careers-page';
+  const typeOpts = SOURCE_TYPES.map(v =>
+    `<option value="${v}"${v === type ? ' selected' : ''}>${esc(t('sources.type.' + v))}</option>`).join('');
   div.innerHTML = `
     <input class="name" placeholder="${esc(t('sources.namePh'))}" value="${esc(s.name)}">
-    <input class="url" placeholder="${esc(t('sources.urlPh'))}" value="${esc(s.url)}">
+    <select class="stype">${typeOpts}</select>
+    ${sourceConfigHtml(type, s)}
     <button class="btn btn-ghost btn-danger js-del" title="${esc(t('sources.delTitle'))}">✕</button>`;
   div.querySelector('.js-del').addEventListener('click', () => { div.remove(); updateSourceCount(); });
-  // preserve any extra config fields (paginationParam, extraWait, …) on the element
-  div._extra = Object.fromEntries(Object.entries(s).filter(([k]) => k !== 'name' && k !== 'url'));
+  // Swapping the type re-renders only the config part; the rest of the row stays.
+  div.querySelector('.stype').addEventListener('change', (e) => {
+    const cfg = div.querySelector('.src-config');
+    cfg.outerHTML = sourceConfigHtml(e.target.value, {});
+  });
+  // Preserve config we don't surface in the UI so a save doesn't drop it:
+  // career-page knobs (paginationParam, extraWait, …) and extra search fields
+  // (maxResults, maxPages, postedWithinDays).
+  div._extra = Object.fromEntries(
+    Object.entries(s).filter(([k]) => !['name', 'url', 'type', 'search'].includes(k))
+  );
+  div._search = s.search || {};
   return div;
 }
 
@@ -599,7 +817,7 @@ function renderSources(sources) {
 
 function updateSourceCount() {
   const n = $$('#source-list .source-row').length;
-  $('#sources-count').textContent = careerPagesN(n);
+  $('#sources-count').textContent = `${n} ${t('tab.sources')}`;
 }
 
 $('#add-source').addEventListener('click', () => {
@@ -614,12 +832,24 @@ $('#save-sources').addEventListener('click', async () => {
   const sources = [];
   for (const row of rows) {
     const name = row.querySelector('.name').value.trim();
-    const url = row.querySelector('.url').value.trim();
-    if (!name || !url) {
-      showSourcesMsg(t('sources.needNameUrl'), 'err');
-      return;
+    const type = row.querySelector('.stype').value;
+    if (!name) { showSourcesMsg(t('sources.needName'), 'err'); return; }
+
+    if (isPlatformType(type)) {
+      const keywords = row.querySelector('.kw').value.trim();
+      if (!keywords) { showSourcesMsg(t('sources.needKeywords').replace('{name}', name), 'err'); return; }
+      const location = row.querySelector('.loc').value.trim();
+      const radius = row.querySelector('.radius').value.trim();
+      // Keep any hidden search fields (maxResults, maxPages, postedWithinDays).
+      const search = { ...row._search, keywords };
+      if (location) search.location = location; else delete search.location;
+      if (radius !== '') search.radiusKm = Number(radius); else delete search.radiusKm;
+      sources.push({ name, type, search });
+    } else {
+      const url = row.querySelector('.url').value.trim();
+      if (!url) { showSourcesMsg(t('sources.needNameUrl'), 'err'); return; }
+      sources.push({ name, url, type: 'careers-page', ...row._extra });
     }
-    sources.push({ name, url, type: row._extra?.type || 'careers-page', ...row._extra });
   }
   try {
     const r = await api('/api/sources', {
@@ -1027,6 +1257,7 @@ async function loadProfile() {
     renderProfile();
     profileLoaded = true;
   } catch (err) { toast(t('toast.error') + err.message); }
+  loadCredentials();   // Plattform-Zugänge card lives on the same tab
 }
 
 function profileField(f) {
@@ -1086,6 +1317,142 @@ $('#save-profile').addEventListener('click', async () => {
 });
 
 $('#profile-reset').addEventListener('click', loadProfile);
+
+// ── PLATTFORM-ZUGÄNGE (credentials + CV + auto-apply toggle) ──────────────────
+const LOGIN_STATE_META = {
+  ok:        { icon: '🟢', key: 'creds.state.ok' },
+  challenge: { icon: '🟠', key: 'creds.state.challenge' },
+  invalid:   { icon: '🔴', key: 'creds.state.invalid' },
+  unknown:   { icon: '⚪', key: 'creds.state.unknown' },
+};
+
+function credsMsg(msg, kind) {
+  const el = $('#creds-msg');
+  el.textContent = msg; el.className = 'save-hint ' + (kind || '');
+  if (kind === 'ok') setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 5000);
+}
+
+async function loadCredentials() {
+  const list = $('#credentials-list');
+  if (!list) return;
+  try {
+    const { keySet, credentials } = await api('/api/credentials');
+    if (!keySet) {
+      list.innerHTML = `<p class="muted">${esc(t('creds.noKey'))}</p>`;
+    } else {
+      list.innerHTML = credentials.map(c => {
+        const meta = PLATFORM_META[c.platform] || { label: c.platform };
+        const st = LOGIN_STATE_META[c.loginState] || LOGIN_STATE_META.unknown;
+        return `<div class="cred-row" data-platform="${esc(c.platform)}">
+          <span class="platform-badge pf-${esc(c.platform)}">${esc((PLATFORM_META[c.platform] || {}).short || '?')}</span>
+          <span class="cred-name">${esc(meta.label)}</span>
+          <input class="set-input cred-email" type="email" placeholder="E-Mail" value="${esc(c.email)}" autocomplete="off">
+          <input class="set-input cred-pass" type="password" placeholder="${esc(c.isSet ? t('creds.passSet') : t('creds.passUnset'))}" autocomplete="new-password">
+          <span class="cred-state" title="${esc(t(st.key))}">${st.icon} ${esc(t(st.key))}</span>
+          <button class="btn cred-test" ${c.isSet ? '' : 'hidden'}>${esc(t('creds.test'))}</button>
+          <button class="btn cred-save">${esc(t('btn.save'))}</button>
+          <button class="btn btn-ghost btn-danger cred-del" title="${esc(t('creds.delete'))}" ${c.isSet ? '' : 'hidden'}>✕</button>
+        </div>`;
+      }).join('');
+    }
+    renderCvSection();
+    renderAutoApplySection();
+  } catch (err) { credsMsg(t('toast.error') + err.message, 'err'); }
+}
+
+async function renderCvSection() {
+  const el = $('#cv-section');
+  if (!el) return;
+  let exists = false;
+  try { ({ exists } = await api('/api/cv')); } catch { /* ignore */ }
+  el.innerHTML = `<div class="cred-row cv-row">
+    <span class="cred-name">📄 ${esc(t('creds.cv'))}</span>
+    <span class="muted">${esc(exists ? t('creds.cvSet') : t('creds.cvUnset'))}</span>
+    <button class="btn" id="cv-upload-btn">⬆ ${esc(t('creds.cvUpload'))}</button>
+    <input type="file" id="cv-upload-input" accept="application/pdf" hidden>
+    ${exists ? `<button class="btn btn-ghost btn-danger" id="cv-del-btn">✕</button>` : ''}
+  </div>`;
+  $('#cv-upload-btn')?.addEventListener('click', () => $('#cv-upload-input').click());
+  $('#cv-upload-input')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      await api('/api/cv', { method: 'POST', body: file });
+      credsMsg(t('creds.cvUploaded'), 'ok');
+      renderCvSection();
+    } catch (err) { credsMsg(t('toast.error') + err.message, 'err'); }
+  });
+  $('#cv-del-btn')?.addEventListener('click', async () => {
+    try { await api('/api/cv', { method: 'DELETE' }); renderCvSection(); }
+    catch (err) { credsMsg(t('toast.error') + err.message, 'err'); }
+  });
+}
+
+function renderAutoApplySection() {
+  const el = $('#auto-apply-section');
+  if (!el) return;
+  const client = clientsList.find(c => c.id === currentClientId);
+  if (!client) { el.innerHTML = ''; return; }
+  const on = client.auto_apply === 'queue';
+  el.innerHTML = `<div class="cred-row">
+    <label class="set-switch" title="${esc(t('creds.autoApplyHelp'))}">
+      <input type="checkbox" class="set-bool" id="auto-apply-toggle" ${on ? 'checked' : ''}>
+      <span class="set-switch-track"></span>
+    </label>
+    <span class="cred-name">${esc(t('creds.autoApply'))}</span>
+    <span class="muted">${esc(t('creds.autoApplyHelp'))}</span>
+  </div>`;
+  $('#auto-apply-toggle')?.addEventListener('change', async (e) => {
+    try {
+      const { client: updated } = await api(`/api/clients/${encodeURIComponent(currentClientId)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_apply: e.target.checked ? 'queue' : 'off' }),
+      });
+      Object.assign(client, updated);
+      credsMsg(t('creds.saved'), 'ok');
+    } catch (err) { credsMsg(t('toast.error') + err.message, 'err'); }
+  });
+}
+
+$('#credentials-list')?.addEventListener('click', async (e) => {
+  const row = e.target.closest('.cred-row');
+  if (!row) return;
+  const platform = row.dataset.platform;
+  if (e.target.closest('.cred-save')) {
+    const email = row.querySelector('.cred-email').value.trim();
+    const password = row.querySelector('.cred-pass').value;
+    if (!email) { credsMsg(t('creds.needEmail'), 'err'); return; }
+    try {
+      await api(`/api/credentials/${platform}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      credsMsg(t('creds.saved'), 'ok');
+      loadCredentials();
+    } catch (err) { credsMsg(t('toast.error') + err.message, 'err'); }
+  }
+  if (e.target.closest('.cred-del')) {
+    if (!confirm(t('creds.delConfirm'))) return;
+    try {
+      await api(`/api/credentials/${platform}`, { method: 'DELETE' });
+      credsMsg(t('creds.deleted'), 'ok');
+      loadCredentials();
+    } catch (err) { credsMsg(t('toast.error') + err.message, 'err'); }
+  }
+  if (e.target.closest('.cred-test')) {
+    const btn = e.target.closest('.cred-test');
+    btn.disabled = true;
+    credsMsg(t('creds.testing'));
+    try {
+      const r = await api(`/api/credentials/${platform}/test-login`, { method: 'POST' });
+      if (r.ok) credsMsg(t('creds.testOk'), 'ok');
+      else credsMsg(t('creds.testFail') + (r.error || ''), 'err');
+      loadCredentials();
+    } catch (err) { credsMsg(t('toast.error') + err.message, 'err'); }
+    finally { btn.disabled = false; }
+  }
+});
 
 function showProfileMsg(msg, kind) {
   const el = $('#profile-msg');

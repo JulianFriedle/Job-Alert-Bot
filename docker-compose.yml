@@ -25,6 +25,9 @@ services:
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
       ANALYZER_MODEL: "${ANALYZER_MODEL:-claude-haiku-4-5-20251001}"
       COVER_LETTER_MODEL: "${COVER_LETTER_MODEL:-claude-sonnet-4-6}"
+      # Auto-apply: the GUI encrypts credentials on save — the key must match
+      # the scheduler's so both read/write the same rows.
+      CREDENTIALS_KEY: "${CREDENTIALS_KEY}"
     volumes:
       - ./data:/app/data
 
@@ -41,5 +44,11 @@ services:
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
       ANALYZER_MODEL: "${ANALYZER_MODEL:-claude-haiku-4-5-20251001}"
       COVER_LETTER_MODEL: "${COVER_LETTER_MODEL:-claude-sonnet-4-6}"
+      # ── Auto-apply (worker + interactive Telegram bot live in THIS service) ──
+      AUTO_APPLY_ENABLED: "${AUTO_APPLY_ENABLED:-false}"
+      CREDENTIALS_KEY: "${CREDENTIALS_KEY}"
+      APPLY_DRY_RUN: "${APPLY_DRY_RUN:-true}"
+      APPLY_DAILY_CAP: "${APPLY_DAILY_CAP:-10}"
+      APPLY_COOLDOWN_MINUTES: "${APPLY_COOLDOWN_MINUTES:-15}"
     volumes:
       - ./data:/app/data

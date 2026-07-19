@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import http from 'http';
 import { readFile, writeFile, stat } from 'fs/promises';
-import { createReadStream, createWriteStream, readFileSync } from 'fs';
+import { createReadStream, createWriteStream, readFileSync, existsSync, mkdirSync, rmSync } from 'fs';
 import { spawn } from 'child_process';
 import crypto from 'crypto';
 import path from 'path';
@@ -25,6 +25,18 @@ import { sendTelegramTest } from './notifier.js';
 import { handleSetupApi } from './setup.js';
 import { DEFAULT_PROMPTS, PROMPT_FIELDS, minimizePromptOverrides } from './prompts.js';
 import { getProfile, getSources, getFilters, getPrompts } from './client-config.js';
+import { PLATFORM_TYPES } from './scrapers/index.js';
+import {
+  PLATFORMS, isCredentialsKeySet, listCredentialStatus,
+  setPlatformCredentials, deletePlatformCredentials,
+} from './credentials.js';
+import { sessionPath, getAuthenticatedContext } from './platform-login.js';
+import { launchPlatformBrowser } from './scrapers/browser.js';
+import { parseQuestions, applyAnswer, unansweredRequired } from './questions.js';
+import {
+  createApplication, getApplications, getApplicationById, getApplicationEvents,
+  updateApplication, claimApplication, closeTelegramPromptsForApplication,
+} from './database.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -181,6 +193,19 @@ const SETTINGS_SCHEMA = [
 
   { key: 'CLIENTS_ENABLED', group: 'Klienten (Mehrbenutzer)', label: 'Klienten-Verwaltung anzeigen', type: 'bool', default: 'false',
     help: 'Blendet die Mehrbenutzer-Verwaltung ein (Klienten-Tab und Klienten-Auswahl oben rechts). Für die private Nutzung aus lassen. Seite neu laden, damit die Änderung greift.' },
+
+  { key: 'AUTO_APPLY_ENABLED', group: 'Auto-Bewerbung', label: 'Auto-Bewerbung aktiv', type: 'bool', default: 'false',
+    help: 'Globaler Schalter für das automatische Bewerben (Einfach bewerben / Easy Apply). Aus = es wird nie etwas versendet.' },
+  { key: 'CREDENTIALS_KEY', group: 'Auto-Bewerbung', label: 'Verschlüsselungs-Schlüssel', type: 'secret',
+    help: 'Schlüssel (64 Hex-Zeichen) zum Verschlüsseln der Plattform-Zugangsdaten. Erzeugen mit: npm run generate-credentials-key. Achtung: bei Änderung müssen alle Zugangsdaten neu eingegeben werden.' },
+  { key: 'APPLY_DRY_RUN', group: 'Auto-Bewerbung', label: 'Probelauf (Dry-Run)', type: 'bool', default: 'true',
+    help: 'An = Bewerbungen werden vollständig vorbereitet und ausgefüllt, aber NICHT abgesendet (Screenshot statt Klick). Zum Testen anlassen.' },
+  { key: 'APPLY_DAILY_CAP', group: 'Auto-Bewerbung', label: 'Max. Bewerbungen/Tag', type: 'int', default: '10', min: 0, max: 100,
+    help: 'Obergrenze versendeter Bewerbungen pro Klient, Plattform und Tag (LinkedIn/Indeed intern zusätzlich auf 5 begrenzt).' },
+  { key: 'APPLY_COOLDOWN_MINUTES', group: 'Auto-Bewerbung', label: 'Pause zwischen Bewerbungen (Min.)', type: 'int', default: '15', min: 1, max: 720,
+    help: 'Mindestabstand zwischen zwei versendeten Bewerbungen auf derselben Plattform.' },
+  { key: 'APPLY_HEADFUL', group: 'Auto-Bewerbung', label: 'Browser sichtbar', type: 'bool', default: 'false',
+    help: 'An = der Bewerbungs-Browser öffnet sichtbar (für den ersten Login / 2FA nötig). Nur auf einem Rechner mit Bildschirm sinnvoll.' },
 
   { key: 'AUTH_ENABLED', group: 'Sicherheit (SaaS)', label: 'Login aktiv', type: 'text', default: 'false',
     help: "Auf 'true' setzen, um das Betreiber-Login zu aktivieren (SaaS). Privat/localhost: 'false'. Neustart nötig." },
@@ -480,7 +505,7 @@ const server = http.createServer(async (req, res) => {
         if (!getClient(id)) return sendJson(res, 404, { error: 'Klient nicht gefunden' });
         const body = JSON.parse(await readBody(req) || '{}');
         const patch = {};
-        for (const f of ['name', 'enabled', 'telegram_chat_id', 'telegram_notifications', 'expiry_notifications', 'min_relevance_score']) {
+        for (const f of ['name', 'enabled', 'telegram_chat_id', 'telegram_notifications', 'expiry_notifications', 'min_relevance_score', 'auto_apply', 'max_applies_per_day']) {
           if (Object.prototype.hasOwnProperty.call(body, f)) patch[f] = body[f];
         }
         return sendJson(res, 200, { client: updateClient(id, patch) });
@@ -570,6 +595,177 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // ---- Auto-apply: platform credentials ----
+
+      // GET /api/credentials — status per platform (email + isSet, never the password)
+      if (method === 'GET' && pathname === '/api/credentials') {
+        const keySet = isCredentialsKeySet();
+        return sendJson(res, 200, {
+          keySet,
+          credentials: keySet ? listCredentialStatus(clientId) : PLATFORMS.map(p => ({
+            platform: p, email: '', isSet: false, loginState: 'unknown', lastLoginAt: null,
+          })),
+        });
+      }
+
+      // PUT /api/credentials/:platform { email, password } — empty password keeps the stored one
+      m = pathname.match(/^\/api\/credentials\/([a-z]+)$/);
+      if (method === 'PUT' && m) {
+        const platform = m[1];
+        if (!PLATFORMS.includes(platform)) return sendJson(res, 404, { error: 'Unbekannte Plattform' });
+        if (!isCredentialsKeySet())
+          return sendJson(res, 400, { error: 'CREDENTIALS_KEY ist nicht gesetzt (Einstellungen → Auto-Bewerbung).' });
+        const body = JSON.parse(await readBody(req) || '{}');
+        const email = String(body.email || '').trim();
+        const password = String(body.password || '');
+        if (!email) return sendJson(res, 400, { error: 'E-Mail ist erforderlich' });
+        setPlatformCredentials(clientId, platform, email, password || null);
+        return sendJson(res, 200, { ok: true, credentials: listCredentialStatus(clientId) });
+      }
+
+      // DELETE /api/credentials/:platform — removes credentials AND the saved session
+      if (method === 'DELETE' && m) {
+        const platform = m[1];
+        if (!PLATFORMS.includes(platform)) return sendJson(res, 404, { error: 'Unbekannte Plattform' });
+        deletePlatformCredentials(clientId, platform);
+        try { rmSync(sessionPath(clientId, platform), { force: true }); } catch { /* best effort */ }
+        return sendJson(res, 200, { ok: true });
+      }
+
+      // POST /api/credentials/:platform/test-login — attempt a real login now and
+      // report the result (also persists the session on success). Runs Playwright
+      // in the GUI process; set APPLY_HEADFUL=true locally to complete 2FA.
+      m = pathname.match(/^\/api\/credentials\/([a-z]+)\/test-login$/);
+      if (method === 'POST' && m) {
+        const platform = m[1];
+        if (!PLATFORMS.includes(platform)) return sendJson(res, 404, { error: 'Unbekannte Plattform' });
+        if (!isCredentialsKeySet())
+          return sendJson(res, 400, { error: 'CREDENTIALS_KEY ist nicht gesetzt (Einstellungen → Auto-Bewerbung).' });
+        let browser;
+        try {
+          browser = await launchPlatformBrowser();
+          const context = await getAuthenticatedContext(browser, clientId, platform);
+          await context.close();
+          return sendJson(res, 200, { ok: true, loginState: 'ok' });
+        } catch (err) {
+          const loginState = err.code === 'login_challenge' ? 'challenge'
+            : err.code === 'missing_credentials' ? 'unknown' : 'invalid';
+          return sendJson(res, 200, { ok: false, loginState, error: err.message });
+        } finally {
+          if (browser) await browser.close().catch(() => {});
+        }
+      }
+
+      // ---- Auto-apply: per-client CV file (PDF) ----
+      const cvPath = path.join(ROOT, 'data', 'cv', `${clientId}.pdf`);
+
+      // GET /api/cv — does a CV exist?
+      if (method === 'GET' && pathname === '/api/cv') {
+        return sendJson(res, 200, { exists: existsSync(cvPath) });
+      }
+      // POST /api/cv — upload (raw PDF body, max 10 MB)
+      if (method === 'POST' && pathname === '/api/cv') {
+        mkdirSync(path.dirname(cvPath), { recursive: true });
+        try {
+          await streamToFile(req, cvPath, 10_000_000);
+          return sendJson(res, 200, { ok: true });
+        } catch (err) {
+          return sendJson(res, 400, { error: `Upload fehlgeschlagen: ${err.message}` });
+        }
+      }
+      // DELETE /api/cv
+      if (method === 'DELETE' && pathname === '/api/cv') {
+        try { rmSync(cvPath, { force: true }); } catch { /* best effort */ }
+        return sendJson(res, 200, { ok: true });
+      }
+
+      // ---- Auto-apply: application queue ----
+
+      // GET /api/applications?state=… — this client's applications (joined with job info)
+      if (method === 'GET' && pathname === '/api/applications') {
+        const state = url.searchParams.get('state') || undefined;
+        return sendJson(res, 200, { applications: getApplications(clientId, { state }) });
+      }
+
+      // POST /api/applications { jobId } — enqueue a prepared application
+      if (method === 'POST' && pathname === '/api/applications') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const job = getJobById(clientId, String(body.jobId || ''));
+        if (!job) return sendJson(res, 404, { error: 'Job nicht gefunden' });
+        if (!job.platform) return sendJson(res, 400, { error: 'Nur Plattform-Jobs (LinkedIn/StepStone/Indeed) können automatisch beworben werden.' });
+        if (job.easy_apply === 0) return sendJson(res, 400, { error: 'Diese Stelle hat kein "Einfach bewerben" — bitte manuell bewerben.' });
+        const app = createApplication(clientId, job.id, job.platform);
+        return sendJson(res, 201, { application: app });
+      }
+
+      // GET /api/applications/:id — full detail incl. events
+      m = pathname.match(/^\/api\/applications\/([^/]+)$/);
+      if (method === 'GET' && m) {
+        const app = getApplicationById(decodeURIComponent(m[1]));
+        if (!app || app.client_id !== clientId) return sendJson(res, 404, { error: 'not found' });
+        return sendJson(res, 200, { application: app, events: getApplicationEvents(app.id), job: getJobById(clientId, app.job_id) });
+      }
+
+      // PUT /api/applications/:id { cover_letter?, answers? } — edit before approval
+      if (method === 'PUT' && m) {
+        const app = getApplicationById(decodeURIComponent(m[1]));
+        if (!app || app.client_id !== clientId) return sendJson(res, 404, { error: 'not found' });
+        if (!['queued', 'awaiting_answers', 'ready_for_review', 'failed'].includes(app.state))
+          return sendJson(res, 409, { error: `Im Status "${app.state}" nicht mehr änderbar.` });
+        const body = JSON.parse(await readBody(req) || '{}');
+        const patch = {};
+        if (typeof body.cover_letter === 'string') patch.cover_letter = body.cover_letter;
+        if (body.answers && typeof body.answers === 'object') {
+          const questions = parseQuestions(app.questions_json);
+          for (const [qid, value] of Object.entries(body.answers)) {
+            applyAnswer(questions, qid, value, 'gui');
+          }
+          patch.questions_json = JSON.stringify(questions);
+          // All required questions answered → application is ready for review;
+          // stale Telegram prompts are cancelled so late replies are ignored.
+          if (app.state === 'awaiting_answers' && unansweredRequired(questions).length === 0) {
+            closeTelegramPromptsForApplication(app.id);
+            claimApplication(app.id, 'awaiting_answers', 'ready_for_review');
+          }
+        }
+        return sendJson(res, 200, { application: updateApplication(app.id, patch) });
+      }
+
+      // POST /api/applications/:id/approve — the explicit human go-ahead
+      m = pathname.match(/^\/api\/applications\/([^/]+)\/approve$/);
+      if (method === 'POST' && m) {
+        const app = getApplicationById(decodeURIComponent(m[1]));
+        if (!app || app.client_id !== clientId) return sendJson(res, 404, { error: 'not found' });
+        if (!claimApplication(app.id, 'ready_for_review', 'approved'))
+          return sendJson(res, 409, { error: `Nicht freigebbar (Status: ${getApplicationById(app.id).state}).` });
+        updateApplication(app.id, { approved_at: new Date().toISOString() });
+        return sendJson(res, 200, { application: getApplicationById(app.id) });
+      }
+
+      // POST /api/applications/:id/discard — reachable from every pre-submit state
+      m = pathname.match(/^\/api\/applications\/([^/]+)\/discard$/);
+      if (method === 'POST' && m) {
+        const app = getApplicationById(decodeURIComponent(m[1]));
+        if (!app || app.client_id !== clientId) return sendJson(res, 404, { error: 'not found' });
+        const from = ['queued', 'preparing', 'awaiting_answers', 'ready_for_review', 'approved', 'failed'];
+        const ok = from.some(s => claimApplication(app.id, s, 'discarded'));
+        if (!ok) return sendJson(res, 409, { error: `Nicht verwerfbar (Status: ${getApplicationById(app.id).state}).` });
+        closeTelegramPromptsForApplication(app.id);
+        return sendJson(res, 200, { application: getApplicationById(app.id) });
+      }
+
+      // POST /api/applications/:id/retry — failed → queued (max 3 attempts)
+      m = pathname.match(/^\/api\/applications\/([^/]+)\/retry$/);
+      if (method === 'POST' && m) {
+        const app = getApplicationById(decodeURIComponent(m[1]));
+        if (!app || app.client_id !== clientId) return sendJson(res, 404, { error: 'not found' });
+        if ((app.attempts || 0) >= 3) return sendJson(res, 400, { error: 'Maximale Versuche erreicht (3).' });
+        if (!claimApplication(app.id, 'failed', 'queued'))
+          return sendJson(res, 409, { error: `Nur fehlgeschlagene Bewerbungen können wiederholt werden (Status: ${getApplicationById(app.id).state}).` });
+        updateApplication(app.id, { error: null });
+        return sendJson(res, 200, { application: getApplicationById(app.id) });
+      }
+
       // GET /api/stats — everything the stats page needs in one payload
       if (method === 'GET' && pathname === '/api/stats') {
         return sendJson(res, 200, {
@@ -604,8 +800,16 @@ const server = http.createServer(async (req, res) => {
         if (!parsed || !Array.isArray(parsed.sources))
           return sendJson(res, 400, { error: 'Erwarte { "sources": [...] }' });
         for (const s of parsed.sources) {
-          if (!s || typeof s.name !== 'string' || typeof s.url !== 'string')
+          if (!s || typeof s.name !== 'string')
+            return sendJson(res, 400, { error: 'Jede Quelle braucht einen Namen' });
+          // Platform sources (linkedin/stepstone/indeed) use a search object
+          // instead of a fixed URL; career pages need the URL.
+          if (PLATFORM_TYPES.includes(s.type)) {
+            if (!s.search || typeof s.search.keywords !== 'string' || !s.search.keywords.trim())
+              return sendJson(res, 400, { error: `Quelle "${s.name}": Plattform-Quellen brauchen search.keywords` });
+          } else if (typeof s.url !== 'string') {
             return sendJson(res, 400, { error: 'Jede Quelle braucht name und url' });
+          }
         }
         updateClient(clientId, { sources_json: JSON.stringify({ sources: parsed.sources }) });
         return sendJson(res, 200, { ok: true, count: parsed.sources.length });

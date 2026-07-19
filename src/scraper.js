@@ -5,13 +5,16 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
+import { isPlatformSource, scrapePlatform } from './scrapers/index.js';
+import { launchPlatformBrowser, newHardenedContext, humanDelay } from './scrapers/browser.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [scraper] ${msg}`);
 }
 
-function generateId(url, title = '', company = '') {
+export function generateId(url, title = '', company = '') {
   const raw = url || `${title}-${company}`;
   return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
 }
@@ -534,7 +537,7 @@ function inferAllPages(paginationUrls) {
   return expanded;
 }
 
-async function scrapeSource(source) {
+export async function scrapeSource(source) {
   log(`Starting scrape: ${source.name}`);
 
   const allJobs = [];
@@ -882,60 +885,92 @@ async function scrapeSource(source) {
   return { jobs: allJobs, duplicates: duplicateCount, siteTotal: siteTotal ?? null };
 }
 
-// Fetch full job descriptions for an array of jobs (in-place, mutates description field).
-// Called after deduplication so we only visit detail pages for genuinely new jobs.
-export async function fetchDescriptions(jobs, concurrency = Number(process.env.SCRAPE_CONCURRENCY) || 4) {
-  if (jobs.length === 0) return;
-  log(`Fetching descriptions for ${jobs.length} new job(s) with concurrency=${concurrency}...`);
+// Extract the main description text from an already-loaded detail page.
+async function extractDescriptionText(page) {
+  return page.evaluate(() => {
+    const selectors = [
+      // Job-board platforms (LinkedIn guest, StepStone, Indeed)
+      '.show-more-less-html__markup', '.description__text',
+      '[data-at="job-ad-content"]', '#jobDescriptionText',
+      '[class*="job-description"]', '[class*="jobDescription"]',
+      '[class*="job-detail"]',      '[class*="jobDetail"]',
+      '[class*="vacancy-body"]',    '[class*="position-description"]',
+      '[class*="job-content"]',     '[class*="jobContent"]',
+      '[class*="job-body"]',        '[class*="requisition"]',
+      'article', 'main',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      const clone = el.cloneNode(true);
+      for (const tag of clone.querySelectorAll(
+        'nav, header, footer, script, style, noscript, ' +
+        '[class*="apply"], [class*="share"], [class*="social"], ' +
+        'button, iframe, [aria-hidden="true"]'
+      )) tag.remove();
+      const text = clone.textContent?.replace(/\s+/g, ' ').trim();
+      if (text && text.length > 150) return text;
+    }
+    return document.body.textContent?.replace(/\s+/g, ' ').trim() || '';
+  });
+}
 
-  const browser = await chromium.launch({ headless: true });
+// LinkedIn job views authwall fresh sessions; the guest jobPosting endpoint
+// serves the same card (incl. description) without login.
+function descriptionUrl(job) {
+  if (job.platform === 'linkedin') {
+    const m = job.url.match(/\/jobs\/view\/(\d+)/);
+    if (m) return `https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${m[1]}`;
+  }
+  return job.url;
+}
+
+// Fetch descriptions for one batch. `gentle` mode (used for job boards, which
+// rate-limit rapid guest requests → hung connections) paces each request with a
+// jittered delay, fails faster, and uses the hardened context; the career-page
+// path keeps the original fast behavior.
+async function fetchDescriptionBatch(jobs, { gentle, concurrency }) {
+  const browser = gentle
+    ? await launchPlatformBrowser({ headless: true })
+    : await chromium.launch({ headless: true });
   try {
-    const context = await browser.newContext({
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
-        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      locale: 'de-DE',
-    });
+    const context = gentle
+      ? await newHardenedContext(browser)
+      : await browser.newContext({
+          userAgent:
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
+            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          locale: 'de-DE',
+        });
 
     let idx = 0;
     async function worker() {
       while (idx < jobs.length) {
         const i = idx++;
         const job = jobs[i];
+        // Pace job-board requests so LinkedIn/Indeed don't throttle us into hangs.
+        if (gentle && i >= concurrency) await humanDelay(1000, 2500);
         const page = await context.newPage();
         try {
-          await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-          await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
-          await page.waitForTimeout(600);
+          const targetUrl = descriptionUrl(job);
+          const timeout = gentle ? 20000 : 30000;
+          try {
+            await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout });
+          } catch (e) {
+            if (!/Timeout/i.test(e.message)) throw e;
+            // A throttled request hangs — one quick retry via 'commit', else give up.
+            await page.goto(targetUrl, { waitUntil: 'commit', timeout: 8000 });
+          }
+          // Job-board fragments are static after domcontentloaded; skip the costly
+          // networkidle wait there. Career pages still settle their late XHR.
+          if (!gentle) await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+          await page.waitForTimeout(gentle ? 300 : 600);
 
-          const description = await page.evaluate(() => {
-            const selectors = [
-              '[class*="job-description"]', '[class*="jobDescription"]',
-              '[class*="job-detail"]',      '[class*="jobDetail"]',
-              '[class*="vacancy-body"]',    '[class*="position-description"]',
-              '[class*="job-content"]',     '[class*="jobContent"]',
-              '[class*="job-body"]',        '[class*="requisition"]',
-              'article', 'main',
-            ];
-            for (const sel of selectors) {
-              const el = document.querySelector(sel);
-              if (!el) continue;
-              const clone = el.cloneNode(true);
-              for (const tag of clone.querySelectorAll(
-                'nav, header, footer, script, style, noscript, ' +
-                '[class*="apply"], [class*="share"], [class*="social"], ' +
-                'button, iframe, [aria-hidden="true"]'
-              )) tag.remove();
-              const text = clone.textContent?.replace(/\s+/g, ' ').trim();
-              if (text && text.length > 150) return text;
-            }
-            return document.body.textContent?.replace(/\s+/g, ' ').trim() || '';
-          });
-
+          const description = await extractDescriptionText(page);
           job.description = description.slice(0, 4000);
           log(`  [${i + 1}/${jobs.length}] ${job.title} (${job.description.length} chars)`);
         } catch (err) {
-          log(`  [${i + 1}/${jobs.length}] Failed for "${job.title}": ${err.message}`);
+          log(`  [${i + 1}/${jobs.length}] Failed for "${job.title}": ${err.message.split('\n')[0]}`);
         } finally {
           await page.close();
         }
@@ -945,6 +980,24 @@ export async function fetchDescriptions(jobs, concurrency = Number(process.env.S
     await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, worker));
   } finally {
     await browser.close();
+  }
+}
+
+// Fetch full job descriptions for an array of jobs (in-place, mutates description
+// field). Called after deduplication so we only visit detail pages for genuinely
+// new jobs. Job-board jobs are fetched gently (they rate-limit); career pages fast.
+export async function fetchDescriptions(jobs, concurrency = Number(process.env.SCRAPE_CONCURRENCY) || 4) {
+  if (jobs.length === 0) return;
+  const platformJobs = jobs.filter(j => j.platform);
+  const regularJobs  = jobs.filter(j => !j.platform);
+  log(`Fetching descriptions for ${jobs.length} new job(s) (${regularJobs.length} career-page, ${platformJobs.length} job-board)...`);
+
+  if (regularJobs.length) {
+    await fetchDescriptionBatch(regularJobs, { gentle: false, concurrency });
+  }
+  if (platformJobs.length) {
+    const gentleConc = Number(process.env.PLATFORM_DESC_CONCURRENCY) || 2;
+    await fetchDescriptionBatch(platformJobs, { gentle: true, concurrency: gentleConc });
   }
 }
 
@@ -959,7 +1012,11 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
     while (idx < sources.length) {
       const source = sources[idx++];
       try {
-        const { jobs, duplicates, siteTotal } = await scrapeSource(source);
+        // Platform sources (linkedin/stepstone/indeed) have dedicated scrapers;
+        // everything else goes through the generic career-page heuristics.
+        const { jobs, duplicates, siteTotal } = isPlatformSource(source)
+          ? await scrapePlatform(source)
+          : await scrapeSource(source);
         allJobs.push(...jobs);
         stats[source.name] = {
           duplicates: (stats[source.name]?.duplicates || 0) + duplicates,

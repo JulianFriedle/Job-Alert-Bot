@@ -273,16 +273,19 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .panel-actions { display: flex; gap: 8px; align-items: center; }
 .source-list { display: flex; flex-direction: column; gap: 8px; }
 .source-row {
-  display: grid; grid-template-columns: 180px 1fr auto; gap: 8px; align-items: center;
+  display: grid; grid-template-columns: 170px 128px 1fr auto; gap: 8px; align-items: center;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius-sm); padding: 8px 10px;
 }
-.source-row input {
+.source-row input, .source-row select {
   border: 1px solid transparent; background: var(--surface-2); color: var(--text);
   border-radius: 6px; padding: 7px 9px; font-size: .82rem; font-family: inherit; outline: none; width: 100%;
 }
-.source-row input:focus { border-color: var(--accent); background: var(--surface); }
+.source-row input:focus, .source-row select:focus { border-color: var(--accent); background: var(--surface); }
 .source-row input.url { font-family: var(--mono); font-size: .76rem; }
+/* config cell: single URL, or the platform keyword/location/radius triple */
+.src-config { min-width: 0; }
+.src-config.src-platform { display: grid; grid-template-columns: 1.5fr 1fr 62px; gap: 6px; }
 .save-hint { margin-top: 14px; font-size: .82rem; min-height: 1em; }
 .save-hint.ok  { color: var(--accent); }
 .save-hint.err { color: var(--red); }
@@ -587,6 +590,7 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   .job { grid-template-columns: auto 1fr; }
   .job-actions { grid-column: 1 / -1; flex-direction: row; }
   .source-row { grid-template-columns: 1fr; }
+  .src-config.src-platform { grid-template-columns: 1fr 1fr 62px; }
 }
 
 /* ── Setup wizard ───────────────────────────────────────────────────────── */
@@ -660,4 +664,56 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 @media (max-width: 640px) {
   .su-source-row { grid-template-columns: 1fr auto; }
   .su-source-row .su-url { grid-column: 1 / -1; }
+}
+
+/* ── Auto-apply: platform badges, application panel, credentials ───────────── */
+.platform-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 18px; padding: 0 4px; margin-right: 7px;
+  border-radius: 4px; font-size: 11px; font-weight: 700; color: #fff;
+  vertical-align: text-bottom; letter-spacing: .2px;
+}
+.pf-linkedin  { background: #0a66c2; }
+.pf-stepstone { background: #0c2577; }
+.pf-indeed    { background: #2164f3; }
+
+.pill.pill-easy { background: var(--green-bg); border-color: transparent; color: var(--accent-ink); }
+.pill.pill-lib  { background: transparent; border: none; padding: 0; }
+.pill.ap-queued, .pill.ap-preparing, .pill.ap-submitting { background: var(--blue-bg); border-color: transparent; }
+.pill.ap-awaiting_answers { background: #fff3d6; border-color: transparent; color: #92600a; }
+.pill.ap-ready_for_review { background: #efe3ff; border-color: transparent; color: #6b21a8; }
+.pill.ap-approved, .pill.ap-submitted { background: var(--green-bg); border-color: transparent; color: var(--accent-ink); }
+.pill.ap-failed { background: #ffe2e0; border-color: transparent; color: var(--red); }
+.pill.ap-discarded { opacity: .6; }
+
+.job-main { cursor: pointer; }
+
+.ap-panel {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 14px; background: var(--bg);
+}
+.ap-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ap-head .muted { font-size: 12.5px; }
+.ap-questions h3 { font-size: 13px; margin: 12px 0 6px; }
+.ap-q { display: grid; grid-template-columns: minmax(180px, 1.2fr) 1fr; gap: 8px; align-items: center; margin-bottom: 6px; }
+.ap-q label { font-size: 12.5px; }
+.ap-q .req { color: var(--red); }
+.ap-cover { margin-top: 10px; }
+.ap-cover summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.ap-cover textarea { width: 100%; margin-top: 8px; }
+.ap-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.ap-error { color: var(--red); font-size: 12.5px; margin: 8px 0 0; }
+
+.cred-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.cred-row:last-child { border-bottom: none; }
+.cred-name { font-weight: 600; min-width: 110px; }
+.cred-email { flex: 1 1 180px; }
+.cred-pass { flex: 1 1 140px; }
+.cred-state { font-size: 12px; white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .ap-q { grid-template-columns: 1fr; gap: 2px; }
 }
