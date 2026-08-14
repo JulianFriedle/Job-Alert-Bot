@@ -36,14 +36,19 @@
   }
 
   // ── open / close ────────────────────────────────────────────────────────--
-  async function open(debugMode) {
+  // `allSteps` shows every step instead of only the outstanding ones. Opening the
+  // wizard by hand from Settings means "let me go through my answers", so it must
+  // work when nothing is pending — that is the normal case for a configured
+  // install. The automatic open on load stays filtered, so a step added by a later
+  // release still appears on its own rather than replaying the whole flow.
+  async function open(debugMode, { allSteps = false } = {}) {
     debug = !!debugMode;
     el.badge.hidden = !debug;
     try {
       const status = await api('/api/setup/status' + qs());
       firstRun = status.firstRun;
-      const stepPages = status.steps.filter(s => s.pending);
-      if (!debug && stepPages.length === 0) { note(t('wiz.alreadyComplete')); return; }
+      const stepPages = (debug || allSteps) ? status.steps : status.steps.filter(s => s.pending);
+      if (stepPages.length === 0) { note(t('wiz.alreadyComplete')); return; }
       pages = [];
       if (firstRun) pages.push('welcome');
       pages.push(...stepPages);
@@ -350,7 +355,7 @@
   });
 
   // Settings buttons
-  $('#reopen-setup')?.addEventListener('click', () => open(false));
+  $('#reopen-setup')?.addEventListener('click', () => open(false, { allSteps: true }));
   $('#debug-setup')?.addEventListener('click', () => open(true));
 
   // Expose + auto-check on load
