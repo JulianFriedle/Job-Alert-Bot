@@ -1,9 +1,19 @@
 // The title pre-filters are plain substring matches, so a gender marker sitting in the
 // middle of a title silently breaks them. These pin the normalization that fixes it.
+// scheduler.js pulls in database.js, which opens the DB at import time — point it at a
+// throwaway file first so running the suite never touches the real data/jobs.db. Static
+// imports are hoisted above this assignment, so scheduler.js must be pulled in
+// dynamically, after the env var is set (same pattern as db.test.js).
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+process.env.JOBS_DB_PATH = path.join(mkdtempSync(path.join(tmpdir(), 'jobbot-filters-')), 'test.db');
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normalizeTitle } from '../src/scheduler.js';
+const { normalizeTitle } = await import('../src/scheduler.js');
 
 test('normalizeTitle strips a gender marker wherever it sits', () => {
   assert.equal(normalizeTitle('Entwickler (m/w/d) für Embedded Systeme'), 'entwickler für embedded systeme');
