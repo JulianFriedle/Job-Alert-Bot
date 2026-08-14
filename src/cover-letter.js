@@ -5,7 +5,7 @@ import { getJobById, DEFAULT_CLIENT_ID } from './database.js';
 import { getClientConfig } from './client-config.js';
 
 // Read at call time so changes from the GUI settings tab apply without a restart.
-const model = () => process.env.COVER_LETTER_MODEL || 'claude-sonnet-4-6';
+const model = () => process.env.COVER_LETTER_MODEL || 'claude-opus-5';
 
 function buildUserPrompt(profile, job, instructions, notes) {
   const notesBlock = notes
@@ -35,12 +35,16 @@ export async function generateCoverLetter(job, notes = '') {
 
   const response = await client.messages.create({
     model: model(),
-    max_tokens: 1500,
+    // max_tokens caps thinking and response text together, and models that think
+    // by default spend a chunk of it before the letter starts. A letter is well
+    // under 1000 tokens; the rest is headroom so it never truncates mid-sentence.
+    max_tokens: 8000,
     system: prompts.coverLetterSystem,
     messages: [{ role: 'user', content: buildUserPrompt(profile, job, prompts.coverLetterInstructions, notes) }],
   });
 
-  return response.content[0]?.text ?? '';
+  // Never index content[0]: a thinking block can come first (see analyzer.js).
+  return response.content.find(b => b.type === 'text')?.text ?? '';
 }
 
 // ── CLI: npm run cover-letter -- <job_id> ────────────────────────────────────

@@ -164,8 +164,8 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `TELEGRAM_CHAT_ID` | — | Your Telegram chat ID (optional) |
 | `TELEGRAM_NOTIFICATIONS` | `on` | Set to `off` to disable Telegram push notifications entirely |
 | `EXPIRY_NOTIFICATIONS` | `on` | Set to `off` to silence Telegram alerts for expired jobs (new-job alerts still fire) |
-| `ANALYZER_MODEL` | `claude-haiku-4-5-20251001` | Model that scores job relevance |
-| `COVER_LETTER_MODEL` | `claude-sonnet-4-6` | Model that writes cover letters |
+| `ANALYZER_MODEL` | `claude-haiku-4-5` | Model that scores job relevance |
+| `COVER_LETTER_MODEL` | `claude-opus-5` | Model that writes cover letters |
 | `MIN_RELEVANCE_SCORE` | `4` | Min AI score (1–10) for a job to count as relevant |
 | `CRON_SCHEDULE` | `0 * * * *` | Scheduler cadence (node-cron syntax) |
 | `EXPIRY_THRESHOLD_HOURS` | `72` | Hours unseen before a notified job is marked expired |
