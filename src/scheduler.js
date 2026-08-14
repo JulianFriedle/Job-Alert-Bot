@@ -102,6 +102,20 @@ function printOverview(clientName, sources, sourceStats, relevantBySource, expir
   console.log('');
 }
 
+// German postings routinely wedge a gender marker into the middle of the title
+// ("Entwickler (m/w/d) für Embedded Systeme", "Ingenieur*in Fertigungstechnik"),
+// which breaks the plain substring match the filters use — the first would miss a
+// keyword like "entwickler für embedded" entirely. Drop the marker before matching
+// so a keyword list stays a list of role names, not a list of spelling variants.
+export function normalizeTitle(title) {
+  return (title || '')
+    .toLowerCase()
+    .replace(/\(\s*[mwdfx*:/\s-]+\)/g, ' ')  // (m/w/d), (w/m/d), (m/w/x), (d/w/m) …
+    .replace(/[*:]in\b/g, 'in')              // Referent*in / Referent:in → Referentin
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Run the full scrape→analyze→notify→export pipeline for ONE client.
 async function runClientPipeline(client) {
   const clientId = client.id;
@@ -142,8 +156,10 @@ async function runClientPipeline(client) {
   log(`${scrapedJobs.length} scraped, ${newJobs.length} new`);
 
   // 3. Title blocklist — skip structurally irrelevant jobs before touching Claude
-  const isTitleBlocked = (title) =>
-    TITLE_BLOCKLIST.some(kw => (title || '').toLowerCase().includes(kw));
+  const isTitleBlocked = (title) => {
+    const t = normalizeTitle(title);
+    return TITLE_BLOCKLIST.some(kw => t.includes(kw));
+  };
 
   const blockedJobs = newJobs.filter(job => isTitleBlocked(job.title));
   const jobsToProcess = newJobs.filter(job => !isTitleBlocked(job.title));
@@ -208,7 +224,10 @@ async function runClientPipeline(client) {
   const toAnalyze = allUnanalyzed.filter(job => !isTitleBlocked(job.title));
   log(`Analyzing ${toAnalyze.length} unanalyzed job(s)...`);
 
-  const isPriority = (title) => PRIORITY_KEYWORDS.some(kw => (title || '').toLowerCase().includes(kw));
+  const isPriority = (title) => {
+    const t = normalizeTitle(title);
+    return PRIORITY_KEYWORDS.some(kw => t.includes(kw));
+  };
 
   const analysisCache = new Map(); // id → analysis (reused for notifications)
   let analysisIdx = 0;
