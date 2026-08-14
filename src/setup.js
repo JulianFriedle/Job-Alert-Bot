@@ -172,6 +172,42 @@ async function readEnv(debug) {
   }
   return {};
 }
+// ── Template placeholders ────────────────────────────────────────────────────
+// Setup tells users to `cp .env.example .env` and `cp config/profile.example.json
+// config/profile.json`, so a brand-new install starts with every required field
+// already non-empty — filled with the template's own placeholders. Read plainly,
+// that makes every step look complete and the wizard never opens for the one
+// person it exists for. A value byte-identical to what the template ships is not
+// an answer, so treat it as missing.
+//
+// Deriving the placeholders from the template files means there is no second list
+// to keep in sync: edit a placeholder in .env.example and detection follows.
+const TEMPLATES = {
+  env:     path.join(ROOT, '.env.example'),
+  profile: path.join(ROOT, 'config', 'profile.example.json'),
+};
+
+let _templates = null;
+async function templateValues() {
+  if (_templates) return _templates;
+  let env = {};
+  // parseEnv ignores comment lines, so this yields exactly the keys a plain copy
+  // of the template leaves live — the placeholder secrets, not the commented knobs.
+  try { env = parseEnv(await readFile(TEMPLATES.env, 'utf-8')); } catch { /* template absent */ }
+  _templates = { env, profile: (await readJson(TEMPLATES.profile)) || {} };
+  return _templates;
+}
+
+// A field still carrying its template value counts as unanswered. Lists compare
+// element-wise, so editing even one entry makes the field the user's own.
+export function isTemplateValue(value, templateValue) {
+  if (value == null || templateValue == null) return false;
+  if (Array.isArray(value) || Array.isArray(templateValue)) {
+    return JSON.stringify(value) === JSON.stringify(templateValue);
+  }
+  return String(value).trim() === String(templateValue).trim();
+}
+
 async function writeEnv(debug, updates) {
   const { write, realFallback } = pathsFor('env', debug);
   let raw = '';
@@ -242,6 +278,8 @@ async function valuesForStep(step, debug) {
   const filters = step.fields.some(f => f.store === 'filters')
     ? (await readJson(pathsFor('filters', debug).read, pathsFor('filters', debug).realFallback)) || {} : {};
 
+  const templates = await templateValues();
+
   const out = {};
   for (const f of step.fields) {
     if (f.type === 'sources') { out[f.key] = Array.isArray(jobs.sources) ? jobs.sources : []; continue; }
@@ -249,6 +287,16 @@ async function valuesForStep(step, debug) {
     if (f.store === 'env') v = env[f.key];
     else if (f.store === 'profile') v = getPath(profile, f.key);
     else if (f.store === 'filters') v = filters[f.key];
+
+    // Blank anything still holding the template's placeholder. Doing it here — the
+    // single place values are read — means completeness checks, `completeWhen`, and
+    // the prefilled form all agree, and the user gets an empty field to type into
+    // rather than "Your Name" to edit.
+    const fromTemplate = f.store === 'env' ? templates.env[f.key]
+      : f.store === 'profile' ? getPath(templates.profile, f.key)
+      : undefined;
+    if (isTemplateValue(v, fromTemplate)) v = undefined;
+
     out[f.key] = v ?? (f.type === 'list' ? [] : '');
   }
   return out;
@@ -276,12 +324,16 @@ async function buildStatus(debug) {
   const completeById = {};
   for (const step of STEPS) completeById[step.id] = await isComplete(step, debug);
 
-  // A "fresh install" is one where *every* required step is still empty — that's
-  // when we frame the wizard with a welcome/finish. A later release adding one new
-  // step to an already-configured user is NOT a fresh install, so only that step
-  // shows, without the welcome/finish chrome.
+  // A "fresh install" is one where the user has never finished the wizard and
+  // something required is still open — that's when we frame it with a welcome and
+  // a finish page. A later release adding one new step to an already-configured
+  // user is NOT a fresh install, so only that step shows, without the chrome.
+  //
+  // This deliberately does not ask whether *every* required step is empty: the repo
+  // ships config/jobs.json with a populated source list, so the sources step is
+  // complete out of the box and that test could never be true for anyone.
   const requiredSteps = STEPS.filter(s => s.required);
-  const freshInstall = requiredSteps.length > 0 && requiredSteps.every(s => !completeById[s.id]);
+  const freshInstall = !state.completedAt && requiredSteps.some(s => !completeById[s.id]);
   const firstRun = debug ? true : freshInstall;
 
   const steps = [];
