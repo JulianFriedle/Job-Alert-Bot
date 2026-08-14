@@ -166,9 +166,9 @@ const SETTINGS_SCHEMA = [
   { key: 'EXPIRY_NOTIFICATIONS', group: 'Schlüssel & Telegram', label: 'Ablauf-Benachrichtigungen', type: 'text', default: 'on',
     help: "Auf 'off' setzen, um keine Telegram-Nachrichten für ausgelaufene Jobs zu senden – neue Jobs werden weiterhin gemeldet" },
 
-  { key: 'ANALYZER_MODEL', group: 'KI-Modelle', label: 'Analyse-Modell', type: 'text', default: 'claude-haiku-4-5-20251001',
+  { key: 'ANALYZER_MODEL', group: 'KI-Modelle', label: 'Analyse-Modell', type: 'text', default: 'claude-haiku-4-5',
     help: 'Claude-Modell zur Relevanz-Bewertung (günstig/schnell empfohlen)' },
-  { key: 'COVER_LETTER_MODEL', group: 'KI-Modelle', label: 'Anschreiben-Modell', type: 'text', default: 'claude-sonnet-4-6',
+  { key: 'COVER_LETTER_MODEL', group: 'KI-Modelle', label: 'Anschreiben-Modell', type: 'text', default: 'claude-opus-5',
     help: 'Claude-Modell für Anschreiben (stärkeres Modell empfohlen)' },
 
   { key: 'MIN_RELEVANCE_SCORE', group: 'Analyse & Filter', label: 'Min. Relevanz-Score', type: 'int', default: '4', min: 1, max: 10,

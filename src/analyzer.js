@@ -2,7 +2,7 @@ import 'dotenv/config';
 import Anthropic from '@anthropic-ai/sdk';
 import { getClientConfig } from './client-config.js';
 
-const MODEL = () => process.env.ANALYZER_MODEL || 'claude-haiku-4-5-20251001';
+const MODEL = () => process.env.ANALYZER_MODEL || 'claude-haiku-4-5';
 const DEFAULT_MIN_RELEVANCE_SCORE = Number(process.env.MIN_RELEVANCE_SCORE) || 4;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
@@ -74,7 +74,9 @@ export async function analyzeJob(job, cfg) {
         ],
       });
 
-      const text = response.content[0]?.text || '';
+      // Never index content[0]: models with thinking enabled put a thinking block
+      // first, so [0].text is undefined and the parse below fails on every job.
+      const text = response.content.find(b => b.type === 'text')?.text || '';
 
       // Strip markdown code fences if present
       const jsonText = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
