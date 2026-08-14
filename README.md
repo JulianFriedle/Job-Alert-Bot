@@ -149,6 +149,7 @@ cp config/profile.example.json config/profile.json
 | `extraWait` | Extra ms to wait after page load (for slow SPAs) |
 | `jobUrlPattern` | Regex for sites with non-standard job URL patterns |
 | `apiOnly` | Skip DOM extraction, trust only API-intercepted jobs (e.g. Bosch) |
+| `apiUrl` | JSON endpoint to fetch directly, for listings that render only their first page and expose no pagination control. Requested from inside the page, so it inherits origin and cookies. Useful when the site's own XHR asks for a small slice but the endpoint accepts a larger limit. |
 | `paginationParam` | Query param name for URL-based pagination (e.g. `"pageNumber"`) |
 | `paginationMode` | `"index"` = param counts pages (1, 2, 3…); default = row offset |
 | `paginationStep` | Items per page (used with `paginationParam`) |

@@ -98,12 +98,21 @@ async function extractJobsAndPagination(page, source = {}) {
         ''
       ).replace(/\s+/g, ' ').trim();
 
+      // Generic call-to-action labels ("Jetzt bewerben", "Apply now", …) are not
+      // titles — some listings (e.g. ALBA/Umantis) put the only job link on that
+      // button, so treat them like an empty anchor and fall back to the heading.
+      const isCallToAction = /^(jetzt\s+)?(hier\s+)?(bewirb\s+dich(\s+jetzt)?|bewerben(\s+sie\s+sich)?|jetzt\s+bewerben|zur\s+stelle|mehr\s+erfahren|details?(\s+ansehen)?|weiterlesen|apply(\s+now)?|view\s+(job|details?)|learn\s+more|read\s+more)\b/i
+        .test(title);
+
       // Overlay-link pattern: transparent anchor with no text (e.g. Rosswag).
       // The real title is in a heading within the surrounding card.
-      if (!title || title.split(/\s+/).length < 2) {
+      if (!title || isCallToAction || title.split(/\s+/).length < 2) {
         const card2 = el.closest('li, article, [class*="job"], [class*="career"], [class*="position"]') || el.parentElement;
         const heading = card2?.querySelector('h1, h2, h3, h4, h5, h6, [class*="title"], [class*="heading"]');
         if (heading) title = heading.textContent?.replace(/\s+/g, ' ').trim() || '';
+        // No heading to recover: a bare CTA label is worthless as a title (it would
+        // slip past every title-based filter), so drop the entry entirely.
+        else if (isCallToAction) return;
       }
 
       // Require at least 2 words to filter column headers like "Standort"
@@ -188,11 +197,13 @@ async function extractJobsAndPagination(page, source = {}) {
 // Try to click a "Load more" / "Mehr laden" button. Returns true if a button was found and clicked.
 // Uses direct JS element.click() to bypass any overlay that intercepts pointer events.
 async function clickLoadMore(page) {
+  // The " i" flag matters: CSS attribute matching is case-sensitive, so a plain
+  // [class*="loadMore"] misses class="joblist__loadmore" (Drees & Sommer).
   const cssCandidates = [
-    '[class*="load-more"]', '[class*="loadMore"]', '[class*="load_more"]',
-    '[class*="show-more"]', '[class*="showMore"]',
-    '[class*="more-jobs"]', '[class*="moreJobs"]',
-    '[class*="dvinci-pagination"]', // dVinci ATS "Weitere" button (e.g. KIT)
+    '[class*="load-more" i]', '[class*="loadmore" i]', '[class*="load_more" i]',
+    '[class*="show-more" i]', '[class*="showmore" i]',
+    '[class*="more-jobs" i]', '[class*="morejobs" i]',
+    '[class*="dvinci-pagination" i]', // dVinci ATS "Weitere" button (e.g. KIT)
   ];
   const textPatterns = [
     'mehr laden', 'mehr anzeigen', 'weitere stellen', 'weitere jobs',
@@ -201,13 +212,19 @@ async function clickLoadMore(page) {
   ];
 
   return await page.evaluate(({ cssCandidates, textPatterns }) => {
-    // CSS-class candidates
+    // CSS-class candidates. A wrapper often carries the same class stem as the button
+    // it contains ("joblist__loadmore-section" > "joblist__loadmore"); clicking the
+    // wrapper does nothing, so take the innermost match that has no matching descendant.
     for (const sel of cssCandidates) {
-      const el = document.querySelector(sel);
-      if (el && el.offsetParent !== null) { el.click(); return true; }
+      const matches = [...document.querySelectorAll(sel)].filter(el => el.offsetParent !== null);
+      const innermost = matches.filter(el => !matches.some(o => o !== el && el.contains(o)));
+      if (innermost.length > 0) { innermost[0].click(); return true; }
     }
-    // Text-based candidates
-    const interactive = [...document.querySelectorAll('button, a, [role="button"]')];
+    // Text-based candidates. Not every site uses a real button — Drees & Sommer's is a
+    // bare <span> — so accept any element whose *own* text is short enough to be a label
+    // (an unbounded match would hit a container whose textContent swallows the whole page).
+    const interactive = [...document.querySelectorAll('button, a, [role="button"], span, div, li')]
+      .filter(el => (el.textContent || '').trim().length <= 40);
     for (const pattern of textPatterns) {
       const re = new RegExp(pattern, 'i');
       const el = interactive.find(b => re.test((b.textContent || '').trim()));
@@ -389,6 +406,8 @@ async function extractTotalCount(page) {
 // Extract jobs from a plain JSON API response — captures any SPA that fires XHR/fetch with job arrays.
 function extractJobsFromJson(json, sourceUrl, sourceName, jobsMap) {
   const candidates = [
+    // Some APIs return the job list as the bare top-level array (e.g. W&W /api/jobs/v2/…/list)
+    Array.isArray(json) ? json : null,
     json.jobs, json.results, json.hits, json.items,
     json.positions, json.vacancies, json.postings, json.records,
     json.offers, json.listings, json.jobPostings, json.jobList,
@@ -410,7 +429,8 @@ function extractJobsFromJson(json, sourceUrl, sourceName, jobsMap) {
       if (!title || title.split(/\s+/).length < 2) continue;
 
       const rawUrl = item.url || item.link || item.applyUrl || item.applicationUrl || item.jobUrl ||
-                     item.detailUrl || item.canonicalUrl || item.permalink || item.href;
+                     item.detailUrl || item.detaillink || item.detailLink || item.jobLink ||
+                     item.canonicalUrl || item.permalink || item.href;
       if (!rawUrl) continue;
 
       let fullUrl;
@@ -422,7 +442,14 @@ function extractJobsFromJson(json, sourceUrl, sourceName, jobsMap) {
       const locRaw = item.location || item.city || item.cityState || item.locationName || item.place || '';
       const location = Array.isArray(locRaw) ? locRaw.join(', ') : String(locRaw || '');
 
-      jobsMap.set(fullUrl, { title, url: fullUrl, location, company: sourceName, description: '' });
+      // Some APIs ship the full posting text (W&W: `content`). Taking it saves a detail-page
+      // visit per job. Guarded by a length floor so a one-line teaser doesn't suppress the
+      // real description fetch and starve the analyzer.
+      const bodyRaw = item.content || item.jobDescription || item.description || '';
+      const body = String(bodyRaw).replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+      const description = body.length >= 300 ? body.slice(0, 4000) : '';
+
+      jobsMap.set(fullUrl, { title, url: fullUrl, location, company: sourceName, description });
       added++;
     }
     if (added > 0) return added;
@@ -675,6 +702,30 @@ export async function scrapeSource(source) {
     if (generalApiJobs.size > 0) {
       const genAdded = addJobs([...generalApiJobs.values()]);
       log(`  General API: ${generalApiJobs.size} intercepted (${genAdded} new)`);
+    }
+
+    // ── Config-driven API fetch (source.apiUrl) ──────────────────────────────
+    // For sites whose listing is a thin client over a JSON endpoint that serves the
+    // whole catalogue in one call (e.g. W&W: /api/jobs/v2/<id>/list?_page=1&_limit=500).
+    // The page's own XHR only asks for its first 10, so we ask the endpoint directly —
+    // from inside the page, to inherit its origin and cookies.
+    if (source.apiUrl) {
+      try {
+        const json = await page.evaluate(async (u) => {
+          const r = await fetch(u, { credentials: 'include' });
+          return r.ok ? await r.json() : null;
+        }, source.apiUrl);
+        if (json) {
+          const before = generalApiJobs.size;
+          extractJobsFromJson(json, source.url, source.name, generalApiJobs);
+          const added = addJobs([...generalApiJobs.values()]);
+          log(`  Config API (${source.apiUrl.slice(0, 70)}): ${generalApiJobs.size - before} parsed, ${added} new`);
+        } else {
+          log(`  Config API: request failed — falling back to DOM pagination`);
+        }
+      } catch (err) {
+        log(`  Config API: ERROR — ${err.message.split('\n')[0]}`);
+      }
     }
 
     // ── API replay: deterministically fetch remaining pages of a paginated JSON API (e.g. Bosch) ──
