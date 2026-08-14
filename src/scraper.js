@@ -6,7 +6,8 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 
 import { isPlatformSource, scrapePlatform } from './scrapers/index.js';
-import { launchPlatformBrowser, newHardenedContext, humanDelay } from './scrapers/browser.js';
+import { launchPlatformBrowser, newHardenedContext } from './scrapers/browser.js';
+import { runHostLimited, registrableDomain } from './host-limiter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -976,11 +977,22 @@ function descriptionUrl(job) {
   return job.url;
 }
 
-// Fetch descriptions for one batch. `gentle` mode (used for job boards, which
-// rate-limit rapid guest requests → hung connections) paces each request with a
-// jittered delay, fails faster, and uses the hardened context; the career-page
-// path keeps the original fast behavior.
-async function fetchDescriptionBatch(jobs, { gentle, concurrency }) {
+// Detail-page fetches are cheap tabs in one browser, not a browser each like the
+// scrape phase, and the per-host gap — not this number — is what keeps any single
+// site quiet. So it defaults above SCRAPE_CONCURRENCY, while still honouring that
+// setting when it is the only one the user has raised.
+function descriptionConcurrency() {
+  return Number(process.env.DESC_CONCURRENCY) ||
+         Math.max(Number(process.env.SCRAPE_CONCURRENCY) || 0, 8);
+}
+
+// Fetch descriptions for one batch. Requests are spread across hosts by
+// runHostLimited: a host is visited by one page at a time with `minGapMs`
+// between visits, while the worker pool moves on to other hosts in the meantime.
+// `gentle` mode (used for job boards, which rate-limit rapid guest requests →
+// hung connections) waits longer per host, fails faster, and uses the hardened
+// context; the career-page path keeps the faster page handling.
+async function fetchDescriptionBatch(jobs, { gentle, concurrency, minGapMs, jitterMs }) {
   const browser = gentle
     ? await launchPlatformBrowser({ headless: true })
     : await chromium.launch({ headless: true });
@@ -994,41 +1006,46 @@ async function fetchDescriptionBatch(jobs, { gentle, concurrency }) {
           locale: 'de-DE',
         });
 
-    let idx = 0;
-    async function worker() {
-      while (idx < jobs.length) {
-        const i = idx++;
-        const job = jobs[i];
-        // Pace job-board requests so LinkedIn/Indeed don't throttle us into hangs.
-        if (gentle && i >= concurrency) await humanDelay(1000, 2500);
-        const page = await context.newPage();
+    let done = 0;
+    const { hosts, largestHost, errors } = await runHostLimited(jobs, async (job) => {
+      const page = await context.newPage();
+      const progress = `[${++done}/${jobs.length}]`;
+      try {
+        const targetUrl = descriptionUrl(job);
+        const timeout = gentle ? 20000 : 30000;
         try {
-          const targetUrl = descriptionUrl(job);
-          const timeout = gentle ? 20000 : 30000;
-          try {
-            await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout });
-          } catch (e) {
-            if (!/Timeout/i.test(e.message)) throw e;
-            // A throttled request hangs — one quick retry via 'commit', else give up.
-            await page.goto(targetUrl, { waitUntil: 'commit', timeout: 8000 });
-          }
-          // Job-board fragments are static after domcontentloaded; skip the costly
-          // networkidle wait there. Career pages still settle their late XHR.
-          if (!gentle) await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
-          await page.waitForTimeout(gentle ? 300 : 600);
-
-          const description = await extractDescriptionText(page);
-          job.description = description.slice(0, 4000);
-          log(`  [${i + 1}/${jobs.length}] ${job.title} (${job.description.length} chars)`);
-        } catch (err) {
-          log(`  [${i + 1}/${jobs.length}] Failed for "${job.title}": ${err.message.split('\n')[0]}`);
-        } finally {
-          await page.close();
+          await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout });
+        } catch (e) {
+          if (!/Timeout/i.test(e.message)) throw e;
+          // A throttled request hangs — one quick retry via 'commit', else give up.
+          await page.goto(targetUrl, { waitUntil: 'commit', timeout: 8000 });
         }
-      }
-    }
+        // Job-board fragments are static after domcontentloaded; skip the costly
+        // networkidle wait there. Career pages still settle their late XHR.
+        if (!gentle) await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+        await page.waitForTimeout(gentle ? 300 : 600);
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, worker));
+        const description = await extractDescriptionText(page);
+        job.description = description.slice(0, 4000);
+        log(`  ${progress} ${job.title} (${job.description.length} chars)`);
+      } catch (err) {
+        log(`  ${progress} Failed for "${job.title}": ${err.message.split('\n')[0]}`);
+      } finally {
+        await page.close();
+      }
+    }, {
+      keyOf: (job) => registrableDomain(descriptionUrl(job)),
+      concurrency,
+      perHost: 1,
+      minGapMs,
+      jitterMs,
+    });
+
+    log(`  ${jobs.length} job(s) across ${hosts} host(s), busiest host ${largestHost}, ` +
+        `≤${concurrency} in parallel, ≥${(minGapMs / 1000).toFixed(1)}s per host`);
+    // The handler swallows its own failures, so anything here is a bug in the
+    // pacing layer itself rather than a site being unreachable — say so loudly.
+    for (const err of errors) log(`  Description worker error: ${err.message}`);
   } finally {
     await browser.close();
   }
@@ -1037,49 +1054,73 @@ async function fetchDescriptionBatch(jobs, { gentle, concurrency }) {
 // Fetch full job descriptions for an array of jobs (in-place, mutates description
 // field). Called after deduplication so we only visit detail pages for genuinely
 // new jobs. Job-board jobs are fetched gently (they rate-limit); career pages fast.
-export async function fetchDescriptions(jobs, concurrency = Number(process.env.SCRAPE_CONCURRENCY) || 4) {
+//
+// The concurrency here is a *global* worker count, not a per-site one — with the
+// per-host gap doing the throttling, a wider pool spreads over more hosts instead
+// of piling onto one, so it can sit well above the browser-heavy scrape phase.
+export async function fetchDescriptions(jobs, concurrency = descriptionConcurrency()) {
   if (jobs.length === 0) return;
   const platformJobs = jobs.filter(j => j.platform);
   const regularJobs  = jobs.filter(j => !j.platform);
   log(`Fetching descriptions for ${jobs.length} new job(s) (${regularJobs.length} career-page, ${platformJobs.length} job-board)...`);
 
   if (regularJobs.length) {
-    await fetchDescriptionBatch(regularJobs, { gentle: false, concurrency });
+    await fetchDescriptionBatch(regularJobs, {
+      gentle: false,
+      concurrency,
+      minGapMs: Number(process.env.DESC_HOST_GAP_MS) || 1500,
+      jitterMs: 1000,
+    });
   }
   if (platformJobs.length) {
-    const gentleConc = Number(process.env.PLATFORM_DESC_CONCURRENCY) || 2;
-    await fetchDescriptionBatch(platformJobs, { gentle: true, concurrency: gentleConc });
+    // The boards are the strictest hosts we touch, and there are only three of
+    // them, so they get a long per-host gap — but LinkedIn, StepStone and Indeed
+    // now wait in parallel rather than behind each other.
+    const gentleConc = Number(process.env.PLATFORM_DESC_CONCURRENCY) || 3;
+    await fetchDescriptionBatch(platformJobs, {
+      gentle: true,
+      concurrency: gentleConc,
+      minGapMs: Number(process.env.PLATFORM_DESC_HOST_GAP_MS) || 2500,
+      jitterMs: 2500,
+    });
   }
 }
 
 export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE_CONCURRENCY) || 4) {
   const allJobs = [];
   const stats = {};
-  let idx = 0;
 
-  log(`Scraping ${sources.length} source(s) with concurrency=${concurrency}...`);
+  // Two sources can live on one host (several product divisions of the same
+  // employer, or two tenants of the same ATS). Each scrapeSource walks its own
+  // pagination politely, but nothing stopped two of them walking the same host
+  // side by side — the host limiter serialises those without slowing the rest.
+  const hostCount = new Set(sources.map(s => registrableDomain(s.url))).size;
+  log(`Scraping ${sources.length} source(s) across ${hostCount} host(s) with concurrency=${concurrency}...`);
 
-  async function worker() {
-    while (idx < sources.length) {
-      const source = sources[idx++];
-      try {
-        // Platform sources (linkedin/stepstone/indeed) have dedicated scrapers;
-        // everything else goes through the generic career-page heuristics.
-        const { jobs, duplicates, siteTotal } = isPlatformSource(source)
-          ? await scrapePlatform(source)
-          : await scrapeSource(source);
-        allJobs.push(...jobs);
-        stats[source.name] = {
-          duplicates: (stats[source.name]?.duplicates || 0) + duplicates,
-          siteTotal: siteTotal ?? stats[source.name]?.siteTotal ?? null,
-        };
-      } catch (err) {
-        log(`ERROR scraping ${source.name}: ${err.message}`);
-      }
+  const { errors } = await runHostLimited(sources, async (source) => {
+    try {
+      // Platform sources (linkedin/stepstone/indeed) have dedicated scrapers;
+      // everything else goes through the generic career-page heuristics.
+      const { jobs, duplicates, siteTotal } = isPlatformSource(source)
+        ? await scrapePlatform(source)
+        : await scrapeSource(source);
+      allJobs.push(...jobs);
+      stats[source.name] = {
+        duplicates: (stats[source.name]?.duplicates || 0) + duplicates,
+        siteTotal: siteTotal ?? stats[source.name]?.siteTotal ?? null,
+      };
+    } catch (err) {
+      log(`ERROR scraping ${source.name}: ${err.message}`);
     }
-  }
+  }, {
+    keyOf: (source) => registrableDomain(source.url),
+    concurrency,
+    perHost: 1,
+    minGapMs: Number(process.env.SOURCE_HOST_GAP_MS) || 2000,
+    jitterMs: 2000,
+  });
 
-  await Promise.all(Array.from({ length: Math.min(concurrency, sources.length) }, worker));
+  for (const err of errors) log(`ERROR in scrape worker: ${err.message}`);
   log(`Scrape complete: ${allJobs.length} total unique job(s) from ${sources.length} source(s)`);
   return { jobs: allJobs, stats };
 }

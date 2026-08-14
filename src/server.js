@@ -179,7 +179,11 @@ const SETTINGS_SCHEMA = [
   { key: 'ANALYSIS_CONCURRENCY', group: 'Performance', label: 'Analyse-Parallelität', type: 'int', default: '2', min: 1, max: 20,
     help: 'Parallele Claude-Analysen (vorsichtig erhöhen – Rate-Limits)' },
   { key: 'SCRAPE_CONCURRENCY', group: 'Performance', label: 'Scraper-Parallelität', type: 'int', default: '4', min: 1, max: 20,
-    help: 'Parallele Browser-Worker beim Scrapen' },
+    help: 'Parallele Browser-Worker beim Scrapen (je ein eigener Browser)' },
+  { key: 'DESC_CONCURRENCY', group: 'Performance', label: 'Beschreibungs-Parallelität', type: 'int', default: '8', min: 1, max: 40,
+    help: 'Parallele Tabs beim Laden der Stellenbeschreibungen. Die Anfragen werden über die Websites verteilt – egal wie hoch der Wert, jede einzelne Website bekommt immer nur eine Anfrage zur Zeit.' },
+  { key: 'DESC_HOST_GAP_MS', group: 'Performance', label: 'Pause pro Website (ms)', type: 'int', default: '1500', min: 0, max: 60000,
+    help: 'Mindestabstand zwischen zwei Anfragen an dieselbe Website (plus Zufallsanteil). Dieser Wert schützt vor Bot-Erkennung – bei Blockaden diesen erhöhen, nicht die Parallelität senken.' },
 
   { key: 'CRON_SCHEDULE', group: 'Server', label: 'Zeitplan (Cron)', type: 'text', default: '0 * * * *',
     help: 'node-cron Ausdruck. Standard: stündlich zur vollen Stunde' },
