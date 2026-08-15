@@ -72,6 +72,7 @@
           <option value="found-desc" data-i18n="jobs.sortNewest">Neueste zuerst</option>
         </select>
         <span class="count" id="result-count"></span>
+        <button class="btn" id="export-csv" data-i18n-title="jobs.exportCsvTitle" title="Aktuell gefilterte Jobs als CSV exportieren">⬇ <span data-i18n="jobs.exportCsv">CSV</span></button>
       </div>
 
       <div class="job-list" id="job-list"></div>
@@ -189,6 +190,7 @@
         </div>
         <div class="panel-actions">
           <span class="run-indicator" id="run-indicator" data-i18n="run.ready">● bereit</span>
+          <button class="btn btn-danger" id="run-stop-btn" data-i18n="btn.stopRun" hidden>■ Lauf stoppen</button>
           <button class="btn btn-primary" id="run-btn" data-i18n="btn.startRun">▶ Lauf starten</button>
         </div>
       </div>

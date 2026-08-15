@@ -4,6 +4,7 @@
 // apply worker verifies it during prepare. Pagination via ?page=N.
 import { generateId } from '../scraper.js';
 import { launchPlatformBrowser, newHardenedContext, humanDelay, isChallengePage } from './browser.js';
+import { isAborted } from '../run-control.js';
 
 const MAX_PAGES_DEFAULT = 5;
 const MAX_PAGES_CAP = 15;
@@ -98,6 +99,7 @@ export async function scrape(source) {
     const page = await context.newPage();
 
     for (let pageNo = 1; pageNo <= maxPages; pageNo++) {
+      if (isAborted()) { log('  Abbruch angefordert — stoppe Paginierung.'); break; }
       const url = buildSearchUrl(search, pageNo);
       if (pageNo > 1) await humanDelay(2000, 5000);
       log(`${source.name}: Seite ${pageNo} — ${url}`);
@@ -142,12 +144,13 @@ export async function scrape(source) {
         log(`  Seite ${pageNo}: ${cards.length} Karten, +${added} neu (${jobs.length} gesamt)`);
         if (added === 0 && pageNo > 1) break;
       } catch (err) {
-        log(`  Seite ${pageNo}: ERROR — ${err.message}`);
+        // On abort the browser is already gone — expected, not a scrape failure.
+        log(isAborted() ? `  Seite ${pageNo}: abgebrochen` : `  Seite ${pageNo}: ERROR — ${err.message}`);
         break;
       }
     }
   } finally {
-    await browser.close();
+    await browser.close().catch(() => {});
   }
 
   log(`Fertig ${source.name}: ${jobs.length} Job(s)${siteTotal ? ` (Website: ${siteTotal})` : ''}`);

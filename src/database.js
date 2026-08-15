@@ -481,6 +481,22 @@ export function getRelevantJobs(clientId) {
   `).all(clientId);
 }
 
+// Same set of rows (and the same order) as getRelevantJobs, but with every
+// column the CSV export offers — including the full description and the
+// analysis/expiry timestamps the dashboard list doesn't need.
+export function getRelevantJobsDetailed(clientId) {
+  return db.prepare(`
+    SELECT j.id, j.title, j.company, j.location, j.url, j.description, j.score, j.summary,
+           j.source, j.scraped_at, j.analyzed_at, j.last_seen_at, j.expired,
+           j.applied, j.applied_at, j.status, j.platform, j.easy_apply,
+           a.id AS application_id, a.state AS application_state
+    FROM jobs j
+    LEFT JOIN applications a ON a.client_id = j.client_id AND a.job_id = j.id
+    WHERE j.client_id = ? AND j.relevant = 1
+    ORDER BY j.applied DESC, j.score DESC, j.scraped_at DESC
+  `).all(clientId);
+}
+
 export function getJobById(clientId, id) {
   return db.prepare('SELECT * FROM jobs WHERE client_id = ? AND id = ?').get(clientId, id);
 }

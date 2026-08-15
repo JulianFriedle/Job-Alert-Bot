@@ -146,3 +146,54 @@ test('an empty list is a no-op', async () => {
   const result = await runHostLimited([], async () => { throw new Error('must not run'); }, {});
   assert.deepEqual(result, { errors: [], hosts: 0, largestHost: 0 });
 });
+
+// "Lauf stoppen" has to stay responsive through the two longest phases, and the
+// limiter sits in both. Without stopWhen it would keep working the queue after a
+// stop — including sitting out per-host gaps nobody is waiting for any more.
+test('stopWhen drops the queue instead of working it to the end', async () => {
+  const jobs = [
+    'https://a.com/1', 'https://a.com/2', 'https://a.com/3',
+    'https://b.com/1', 'https://b.com/2', 'https://b.com/3',
+  ];
+  const seen = [];
+  let stopped = false;
+
+  await runHostLimited(jobs, async (url) => {
+    seen.push(url);
+    if (seen.length === 2) stopped = true;
+  }, { concurrency: 2, perHost: 1, minGapMs: 5, jitterMs: 0, stopWhen: () => stopped });
+
+  assert.ok(seen.length < jobs.length, `stop was ignored — all ${jobs.length} items ran`);
+  // The two in flight when the stop landed may finish; nothing after them starts.
+  assert.ok(seen.length <= 4, `too much ran after the stop: ${seen.length}`);
+});
+
+test('a stop is noticed during a host gap, not only after it', async () => {
+  // One host, so item 2 can only start after a full gap — and the stop is fired
+  // by a timer *while the worker is already sitting in that gap*, which is the
+  // only way to exercise the interruptible wait rather than the check that runs
+  // before an item is claimed.
+  const GAP_MS = 2000;
+  const jobs = ['https://a.com/1', 'https://a.com/2'];
+  const seen = [];
+  let stopped = false;
+
+  const started = Date.now();
+  await runHostLimited(jobs, async (url) => {
+    seen.push(url);
+    if (seen.length === 1) setTimeout(() => { stopped = true; }, 100);
+  }, { concurrency: 1, perHost: 1, minGapMs: GAP_MS, jitterMs: 0, stopWhen: () => stopped });
+
+  const elapsed = Date.now() - started;
+  assert.deepEqual(seen, ['https://a.com/1'], 'the queued item ran despite the stop');
+  assert.ok(elapsed < GAP_MS / 2,
+    `sat out the full ${GAP_MS}ms gap before noticing the stop (${elapsed}ms)`);
+});
+
+test('without stopWhen the default predicate never stops anything', async () => {
+  const jobs = ['https://a.com/1', 'https://a.com/2', 'https://b.com/1'];
+  const seen = [];
+  await runHostLimited(jobs, async (url) => { seen.push(url); },
+    { concurrency: 2, perHost: 1, minGapMs: 5, jitterMs: 0 });
+  assert.equal(seen.length, 3);
+});

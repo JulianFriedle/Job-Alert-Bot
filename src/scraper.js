@@ -8,6 +8,7 @@ import path from 'path';
 import { isPlatformSource, scrapePlatform } from './scrapers/index.js';
 import { launchPlatformBrowser, newHardenedContext } from './scrapers/browser.js';
 import { runHostLimited, registrableDomain } from './host-limiter.js';
+import { isAborted } from './run-control.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -736,6 +737,7 @@ export async function scrapeSource(source) {
       const pages = Math.ceil(apiQuery.totalHits / apiQuery.perPage);
       log(`  API replay: ${apiQuery.totalHits} total, ${apiQuery.perPage}/page → ${pages} page(s)`);
       for (let pg = 1; pg < Math.min(pages, 40); pg++) {
+        if (isAborted()) break;
         const pageUrl = apiQuery.url.replace(/([?&]page=)\d+/, `$1${pg}`);
         try {
           const json = await page.evaluate(async (u) => {
@@ -763,6 +765,7 @@ export async function scrapeSource(source) {
         const pageSize = parseInt(srcUrl.searchParams.get('pageSize') || '30', 10);
         const totalPages = Math.ceil(apiTotalCount / pageSize);
         for (let pg = 2; pg <= Math.min(totalPages, 20); pg++) {
+          if (isAborted()) break;
           srcUrl.searchParams.set('currentPage', String(pg));
           const pgUrl = srcUrl.toString();
           if (visitedUrls.has(pgUrl)) continue;
@@ -800,6 +803,7 @@ export async function scrapeSource(source) {
         const numPages = Math.ceil(totalCount / step);
         log(`  Config-driven pagination: ${totalCount} total, step=${step}, pages=${numPages}`);
         for (let pg = 1; pg < Math.min(numPages + 1, 50); pg++) {
+          if (isAborted()) break;
           const pgUrl = new URL(source.url);
           // 'index' mode: param is a 0-based page index (page,1,2,…). Default 'offset' mode: param is a row offset (step,2·step,…).
           const value = source.paginationMode === 'index' ? pg : pg * step;
@@ -839,6 +843,7 @@ export async function scrapeSource(source) {
       log(`  Visiting ${remainingPages.length} more page(s)...`);
 
       for (let i = 0; i < remainingPages.length; i++) {
+        if (isAborted()) break;
         const pageUrl = remainingPages[i];
         if (visitedUrls.has(pageUrl)) continue;
         visitedUrls.add(pageUrl);
@@ -854,6 +859,9 @@ export async function scrapeSource(source) {
           if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false);
           log(`  Page ${i + 2}: ${pageJobs.length} job(s) found, ${added} new`);
         } catch (err) {
+          // On abort Playwright tears the browser down under us, so the in-flight
+          // navigation always throws — that's the stop working, not a failure.
+          if (isAborted()) { log(`  Page ${i + 2}: abgebrochen`); break; }
           log(`  Page ${i + 2}: ERROR — ${err.message}`);
         }
       }
@@ -867,6 +875,7 @@ export async function scrapeSource(source) {
       const MAX_ACTIONS = 100;
 
       for (let action = 1; action <= MAX_ACTIONS; action++) {
+        if (isAborted()) break;
         // Try load-more first (infinite scroll), then next-button (paginated SPA)
         const loadMoreClicked = await clickLoadMore(page);
 
@@ -929,8 +938,14 @@ export async function scrapeSource(source) {
       }
     }
 
+  } catch (err) {
+    // An abort closes the browser under whatever step is in flight, so the throw
+    // is expected — keep the pages we already harvested instead of losing the
+    // whole source. Real failures still propagate to scrapeAll.
+    if (!isAborted()) throw err;
+    log(`  Abbruch während des Scrapes — ${allJobs.length} bereits gefundene(r) Job(s) werden behalten.`);
   } finally {
-    await browser.close();
+    await browser.close().catch(() => {});
   }
 
   log(`Finished ${source.name}: ${allJobs.length} unique job(s)${duplicateCount > 0 ? `, ${duplicateCount} duplicate(s) skipped` : ''}${siteTotal ? ` (site announced ${siteTotal})` : ''}`);
@@ -992,7 +1007,14 @@ function descriptionConcurrency() {
 // `gentle` mode (used for job boards, which rate-limit rapid guest requests →
 // hung connections) waits longer per host, fails faster, and uses the hardened
 // context; the career-page path keeps the faster page handling.
-async function fetchDescriptionBatch(jobs, { gentle, concurrency, minGapMs, jitterMs }) {
+//
+// `onJob` is called once per job as soon as its detail visit is over (successful
+// or not), so the caller can persist that job right away instead of waiting for
+// the whole batch. That is what survives an abort: a stopped run keeps every
+// description it already paid a page load for.
+async function fetchDescriptionBatch(jobs, { gentle, concurrency, minGapMs, jitterMs, onJob }) {
+  // Already winding down: don't even start a browser.
+  if (isAborted()) return;
   const browser = gentle
     ? await launchPlatformBrowser({ headless: true })
     : await chromium.launch({ headless: true });
@@ -1008,7 +1030,10 @@ async function fetchDescriptionBatch(jobs, { gentle, concurrency, minGapMs, jitt
 
     let done = 0;
     const { hosts, largestHost, errors } = await runHostLimited(jobs, async (job) => {
-      const page = await context.newPage();
+      // An abort closes the context mid-flight; opening a page then throws and
+      // there is nothing left to fetch anyway.
+      let page;
+      try { page = await context.newPage(); } catch (err) { if (isAborted()) return; throw err; }
       const progress = `[${++done}/${jobs.length}]`;
       try {
         const targetUrl = descriptionUrl(job);
@@ -1029,9 +1054,15 @@ async function fetchDescriptionBatch(jobs, { gentle, concurrency, minGapMs, jitt
         job.description = description.slice(0, 4000);
         log(`  ${progress} ${job.title} (${job.description.length} chars)`);
       } catch (err) {
-        log(`  ${progress} Failed for "${job.title}": ${err.message.split('\n')[0]}`);
+        // See above: an abort closes the browser, so pending fetches throw.
+        if (!isAborted()) log(`  ${progress} Failed for "${job.title}": ${err.message.split('\n')[0]}`);
       } finally {
-        await page.close();
+        await page.close().catch(() => {});
+        // A failing callback must never take the rest of the batch down.
+        if (onJob) {
+          try { onJob(job); }
+          catch (err) { log(`  onJob für "${job.title}" fehlgeschlagen: ${err.message}`); }
+        }
       }
     }, {
       keyOf: (job) => registrableDomain(descriptionUrl(job)),
@@ -1039,13 +1070,16 @@ async function fetchDescriptionBatch(jobs, { gentle, concurrency, minGapMs, jitt
       perHost: 1,
       minGapMs,
       jitterMs,
+      stopWhen: isAborted,
     });
 
-    log(`  ${jobs.length} job(s) across ${hosts} host(s), busiest host ${largestHost}, ` +
+    log(`  ${done}/${jobs.length} job(s) across ${hosts} host(s), busiest host ${largestHost}, ` +
         `≤${concurrency} in parallel, ≥${(minGapMs / 1000).toFixed(1)}s per host`);
     // The handler swallows its own failures, so anything here is a bug in the
     // pacing layer itself rather than a site being unreachable — say so loudly.
-    for (const err of errors) log(`  Description worker error: ${err.message}`);
+    // Except after a stop: the browser closes under the in-flight pages, and
+    // those throws are the abort working, not a defect.
+    if (!isAborted()) for (const err of errors) log(`  Description worker error: ${err.message}`);
   } finally {
     await browser.close();
   }
@@ -1058,7 +1092,15 @@ async function fetchDescriptionBatch(jobs, { gentle, concurrency, minGapMs, jitt
 // The concurrency here is a *global* worker count, not a per-site one — with the
 // per-host gap doing the throttling, a wider pool spreads over more hosts instead
 // of piling onto one, so it can sit well above the browser-heavy scrape phase.
-export async function fetchDescriptions(jobs, concurrency = descriptionConcurrency()) {
+//
+// `options` is either a plain concurrency number (legacy call style) or
+// { concurrency, onJob } — see fetchDescriptionBatch for onJob.
+export async function fetchDescriptions(jobs, options = {}) {
+  const {
+    concurrency = descriptionConcurrency(),
+    onJob = null,
+  } = typeof options === 'number' ? { concurrency: options } : options;
+
   if (jobs.length === 0) return;
   const platformJobs = jobs.filter(j => j.platform);
   const regularJobs  = jobs.filter(j => !j.platform);
@@ -1070,9 +1112,12 @@ export async function fetchDescriptions(jobs, concurrency = descriptionConcurren
       concurrency,
       minGapMs: Number(process.env.DESC_HOST_GAP_MS) || 1500,
       jitterMs: 1000,
+      onJob,
     });
   }
-  if (platformJobs.length) {
+  // Don't launch a second browser for the job-board batch if we're already
+  // winding down.
+  if (platformJobs.length && !isAborted()) {
     // The boards are the strictest hosts we touch, and there are only three of
     // them, so they get a long per-host gap — but LinkedIn, StepStone and Indeed
     // now wait in parallel rather than behind each other.
@@ -1082,6 +1127,7 @@ export async function fetchDescriptions(jobs, concurrency = descriptionConcurren
       concurrency: gentleConc,
       minGapMs: Number(process.env.PLATFORM_DESC_HOST_GAP_MS) || 2500,
       jitterMs: 2500,
+      onJob,
     });
   }
 }
@@ -1097,6 +1143,8 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
   const hostCount = new Set(sources.map(s => registrableDomain(s.url))).size;
   log(`Scraping ${sources.length} source(s) across ${hostCount} host(s) with concurrency=${concurrency}...`);
 
+  // Abort between sources: the source in flight finishes (its browser closes in
+  // its own finally), the queue behind it is dropped.
   const { errors } = await runHostLimited(sources, async (source) => {
     try {
       // Platform sources (linkedin/stepstone/indeed) have dedicated scrapers;
@@ -1110,7 +1158,9 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
         siteTotal: siteTotal ?? stats[source.name]?.siteTotal ?? null,
       };
     } catch (err) {
-      log(`ERROR scraping ${source.name}: ${err.message}`);
+      log(isAborted()
+        ? `${source.name}: abgebrochen — ${err.message.split('\n')[0]}`
+        : `ERROR scraping ${source.name}: ${err.message}`);
     }
   }, {
     keyOf: (source) => registrableDomain(source.url),
@@ -1118,10 +1168,15 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
     perHost: 1,
     minGapMs: Number(process.env.SOURCE_HOST_GAP_MS) || 2000,
     jitterMs: 2000,
+    stopWhen: isAborted,
   });
 
-  for (const err of errors) log(`ERROR in scrape worker: ${err.message}`);
-  log(`Scrape complete: ${allJobs.length} total unique job(s) from ${sources.length} source(s)`);
+  if (isAborted()) {
+    log(`Scrape abgebrochen: ${allJobs.length} Job(s) aus ${Object.keys(stats).length}/${sources.length} Quelle(n) verarbeitet.`);
+  } else {
+    for (const err of errors) log(`ERROR in scrape worker: ${err.message}`);
+    log(`Scrape complete: ${allJobs.length} total unique job(s) from ${sources.length} source(s)`);
+  }
   return { jobs: allJobs, stats };
 }
 

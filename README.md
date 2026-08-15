@@ -35,6 +35,7 @@ index.js                  ← --once [--client <id>] or hourly scheduler
     ├── src/analyzer.js   ← Claude AI relevance scoring
     ├── src/notifier.js   ← Telegram notifications (one bot token, per-client chat id)
     └── src/exporter.js   ← Excel export (data/relevant_jobs[_<client>].xlsx)
+    └── src/csv-export.js ← CSV export of the Jobs tab (GUI download)
 
 src/apply.js              ← CLI for tracking applications (npm run apply)
 src/cover-letter.js       ← CLI for generating a cover letter via Claude (npm run cover-letter)
@@ -296,6 +297,24 @@ npm run test-notify
 npm run refetch-descriptions
 ```
 
+### Stopping a run
+
+`Ctrl+C`, `docker stop` and a systemd restart all send a termination signal, and
+what it does depends on whether a run is in flight:
+
+- **Idle** (scheduler waiting for the next cron tick) — the process quits at once,
+  exactly as it always did.
+- **Mid-run** — the run is *aborted, not killed*: it winds down at its next
+  source/page/job boundary, the jobs already scraped and scored stay in the DB,
+  browsers close and the WAL is checkpointed. Only then does the process exit.
+  Give it a few seconds; a second signal stops waiting and exits immediately.
+  A worker sitting out a per-host pause (`DESC_HOST_GAP_MS` and friends) does not
+  wait it out first — the stop is noticed while it waits, so the gaps can be
+  raised for politeness without making **Lauf stoppen** feel sluggish.
+
+The same mechanism sits behind the GUI's **Lauf stoppen** button, which sends the
+signal to the `--once` child it spawned.
+
 ### Multi-tenant / SaaS
 
 For a single user nothing changes — leave `AUTH_ENABLED` unset and use the app as before
@@ -329,7 +348,7 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 | **Quellen** | Edit the active client's job sources visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. |
 | **Profil** | Edit the active client's CV & preferences in a structured form — this is what the AI matches jobs against and uses for cover letters. |
 | **Prompts** | Edit the prompts sent to Claude for the active client (relevance scoring + cover letters). Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
-| **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. |
+| **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. **Lauf stoppen** aborts a running pipeline: the run winds down at the next source/page boundary, keeps every job found so far, and skips the remaining stages (notifications, expiry check, statistics, export) so a partial pass can't distort them. If it hasn't exited after `RUN_STOP_GRACE_MS` (default 45 s) it is force-killed. Nothing already paid for is thrown away: each job is stored as soon as its description has been fetched, and every AI score written the moment it is scored — a stopped run leaves them in the DB, and the next run picks up where it left off instead of re-scraping. Jobs whose detail page was still loading are *not* stored (an empty description would be scored as a blank posting), so they are simply fetched again next time. |
 | **Klienten** | Create/edit/delete clients (tenants): name, Telegram chat id, active toggle, Telegram & expiry toggles, optional min-score. A **Telegram-Test** button verifies the chat id. Clients receive Telegram alerts only — they have no GUI access. |
 | **Statistik** | Application heatmap, top sources/companies, run history, and a per-run overview table. |
 | **Einstellungen** | Edit every `.env` variable from a form (incl. the SaaS auth vars); switch **theme** and **language** (see below); manage **database backups** (create / upload / download / restore — see [Backups](#backups)); pull the latest version from GitHub (**update button**); restart the GUI; and re-open or test the **setup wizard**. |
@@ -493,6 +512,45 @@ The spreadsheet (`data/relevant_jobs.xlsx`) is regenerated after every run:
 | Status | Beworben / Interview / Angebot / Abgelehnt |
 
 Row colors: 🟦 blue = applied, 🟩 green = score ≥ 8, 🟨 yellow = score ≥ 6, white = score < 6.
+
+## CSV Export
+
+The **Jobs** tab has a **⬇ CSV** button in the toolbar. It downloads exactly the jobs currently
+listed — the search box, source/status/score filters and the sort order are all applied to the
+file, so what you see is what you get. The download covers the active client only.
+
+Unlike the Excel export (a fixed snapshot regenerated after each run), the CSV carries **every**
+field stored for a job, including the full job description:
+
+| Column | Content |
+|---|---|
+| Jobbezeichnung | Job title |
+| Firma | Company name |
+| Ort | Location |
+| Score | Claude relevance score (1–10) |
+| Status | Beworben / Interview / Angebot / Abgelehnt |
+| Beworben | Ja / Nein |
+| Beworben am | Date + time you marked as applied |
+| Quelle | Source name from config |
+| Plattform | linkedin / stepstone / indeed (auto-apply platforms) |
+| Einfach bewerben | Easy-apply available (Ja / Nein) |
+| Auto-Bewerbung | State of the auto-application queue |
+| Gefunden am | When first scraped |
+| Analysiert am | When Claude scored it |
+| Zuletzt gesehen | Last scrape that still listed the posting |
+| Abgelaufen | Posting no longer online (Ja / Nein) |
+| Zusammenfassung | One-sentence Claude summary |
+| URL | Link to the posting |
+| ID | Job ID for `npm run apply` |
+| Beschreibung | Full job description text |
+
+Format notes: UTF-8 **with BOM** and **semicolon**-separated, so a double-click opens it in a
+German/European Excel with umlauts intact. Fields containing separators, quotes or line breaks
+are quoted per RFC 4180; values starting with `=`, `+`, `-` or `@` get a leading tab so Excel
+treats them as text rather than a formula. Headers and labels follow the GUI language (de/en).
+
+The endpoint behind the button is `GET /api/jobs/export.csv`, which accepts the same filters as
+the toolbar: `q`, `source`, `status`, `minScore`, `sort`, plus `clientId` and `lang`.
 
 ## Database
 

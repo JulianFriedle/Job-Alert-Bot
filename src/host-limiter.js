@@ -48,6 +48,15 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 // belongs to a host that is currently busy.
 const IDLE_POLL_MS = 25;
 
+// Wait until `deadline`, but in slices so a stop does not have to sit out a full
+// host cooldown (seconds, for the job boards) before it is noticed.
+async function sleepUntil(deadline, stopWhen) {
+  for (let left = deadline - Date.now(); left > 0; left = deadline - Date.now()) {
+    await sleep(Math.min(left, IDLE_POLL_MS * 4));
+    if (stopWhen()) return;
+  }
+}
+
 /**
  * Run `handler` over `items`, never exceeding `perHost` concurrent calls per
  * host and always leaving at least `minGapMs` (plus up to `jitterMs`) between
@@ -58,6 +67,12 @@ const IDLE_POLL_MS = 25;
  * Handler rejections are collected rather than thrown, so one bad item cannot
  * strand the in-flight slot of its host or kill the pool.
  *
+ * `stopWhen` is polled between items and while waiting out a host gap; once it
+ * turns true no further handler runs and the queue behind it is dropped. Items
+ * already in flight finish on their own — the caller decides what a stop means
+ * for them. It is a plain predicate rather than a direct `isAborted` import so
+ * this stays a generic pacing helper that tests can drive offline.
+ *
  * Returns { errors, hosts, largestHost }.
  */
 export async function runHostLimited(items, handler, {
@@ -66,6 +81,7 @@ export async function runHostLimited(items, handler, {
   perHost = 1,
   minGapMs = 1500,
   jitterMs = 1000,
+  stopWhen = () => false,
 } = {}) {
   const buckets = new Map();
   items.forEach((item, index) => {
@@ -101,6 +117,7 @@ export async function runHostLimited(items, handler, {
 
   async function worker() {
     while (pending > 0) {
+      if (stopWhen()) return;
       const claimed = claim();
       if (!claimed) {
         await sleep(IDLE_POLL_MS);
@@ -109,8 +126,14 @@ export async function runHostLimited(items, handler, {
       const { bucket, item, index } = claimed;
       // Held slot + wait: the bucket is reserved for us while we sit out its
       // cooldown, so no other worker can jump the gap we are honouring.
-      const wait = bucket.readyAt - Date.now();
-      if (wait > 0) await sleep(wait);
+      await sleepUntil(bucket.readyAt, stopWhen);
+      // Stopped while waiting: hand the slot back untouched. The item is dropped
+      // rather than half-processed, which is what makes it safe to retry later.
+      if (stopWhen()) {
+        bucket.inFlight--;
+        pending--;
+        return;
+      }
       try {
         await handler(item, index, bucket.key);
       } catch (err) {

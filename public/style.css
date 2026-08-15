@@ -294,6 +294,8 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .run-indicator { font-size: .82rem; color: var(--muted); font-weight: 600; }
 .run-indicator.live { color: var(--accent); }
 .run-indicator.live::before { content: ''; }
+/* Wind-down between "stop pressed" and the child process actually exiting. */
+.run-indicator.stopping { color: var(--red); }
 .console {
   background: #0d1117; color: #c9d1d9; border-radius: var(--radius);
   padding: 16px; margin: 0; height: 60vh; overflow-y: auto;
