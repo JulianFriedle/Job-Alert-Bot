@@ -467,6 +467,25 @@ $('#cl-copy').addEventListener('click', async () => {
 ['#filter-source', '#filter-status', '#filter-score', '#sort'].forEach(s =>
   $(s).addEventListener('change', renderJobs));
 
+// CSV export — hands the current toolbar state to the server, which re-applies
+// the identical filter/sort so the file matches the visible list exactly.
+// A plain navigation (not fetch) so the browser handles the download; the
+// session cookie rides along.
+$('#export-csv')?.addEventListener('click', () => {
+  if (!filteredJobs().length) return toast(t('jobs.exportEmpty'));
+  const params = new URLSearchParams({
+    q:        $('#search').value.trim(),
+    source:   $('#filter-source').value,
+    status:   $('#filter-status').value,
+    minScore: $('#filter-score').value,
+    sort:     $('#sort')?.value || 'default',
+    lang,
+  });
+  if (currentClientId) params.set('clientId', currentClientId);
+  window.location.href = '/api/jobs/export.csv?' + params.toString();
+  toast(t('jobs.exportStarted'));
+});
+
 // ── STATS ─────────────────────────────────────────────────────────────────--
 let statsLoaded = false;
 

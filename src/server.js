@@ -8,7 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import {
-  getRelevantJobs, getJobById, setApplicationStatus,
+  getRelevantJobs, getRelevantJobsDetailed, getJobById, setApplicationStatus,
   clearApplicationStatus, markIrrelevant,
   getCombinedRunOverview, getAllTimeBySource, getApplicationActivity,
   getAppliedByCompany, getStatusBreakdown, getRunHistory, getRecentRuns, getTotals,
@@ -21,6 +21,7 @@ import {
 } from './backup.js';
 import { restoreFromBackup } from './database.js';
 import { generateCoverLetter } from './cover-letter.js';
+import { buildJobsCsv, filterJobs, csvFileName } from './csv-export.js';
 import { sendTelegramTest } from './notifier.js';
 import { handleSetupApi } from './setup.js';
 import { DEFAULT_PROMPTS, PROMPT_FIELDS, minimizePromptOverrides } from './prompts.js';
@@ -548,6 +549,29 @@ const server = http.createServer(async (req, res) => {
       // GET /api/jobs — all relevant jobs (the dashboard list)
       if (method === 'GET' && pathname === '/api/jobs') {
         return sendJson(res, 200, getRelevantJobs(clientId));
+      }
+
+      // GET /api/jobs/export.csv — the Jobs tab as a CSV download.
+      // Must stay ABOVE the /api/jobs/:id route, which would otherwise swallow it.
+      // The filter/sort query params mirror the toolbar, so the file contains
+      // exactly the rows the operator currently sees.
+      if (method === 'GET' && pathname === '/api/jobs/export.csv') {
+        const jobs = filterJobs(getRelevantJobsDetailed(clientId), {
+          q:        url.searchParams.get('q') || '',
+          source:   url.searchParams.get('source') || '',
+          status:   url.searchParams.get('status') || '',
+          minScore: url.searchParams.get('minScore') || 0,
+          sort:     url.searchParams.get('sort') || 'default',
+        });
+        const csv = buildJobsCsv(jobs, { lang: url.searchParams.get('lang') || 'de' });
+        const fileName = csvFileName(clientId, DEFAULT_CLIENT_ID);
+        res.writeHead(200, {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${fileName}"`,
+          'Content-Length': Buffer.byteLength(csv),
+        });
+        log(`CSV export: ${jobs.length} job(s) → ${fileName}`);
+        return res.end(csv);
       }
 
       // GET /api/jobs/:id — single job with full description
