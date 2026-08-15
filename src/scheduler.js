@@ -19,7 +19,7 @@ import { maybeRunDailyBackup } from './backup.js';
 import { startApplyWorker } from './apply-worker.js';
 import { startTelegramBot } from './telegram-bot.js';
 import { isTruthy } from './scrapers/browser.js';
-import { isAborted } from './run-control.js';
+import { isAborted, beginRun, endRun, exitRequested } from './run-control.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -423,6 +423,10 @@ export async function runAll({ onlyClientId } = {}) {
     logStream.write(line + '\n');
   };
 
+  // From here on a termination signal means "abort and save" instead of "die
+  // now" — see installAbortSignals(). Cleared again in the finally below, so the
+  // idle scheduler keeps exiting instantly between runs.
+  beginRun();
   try {
     let clients = onlyClientId ? [getClient(onlyClientId)].filter(Boolean) : getEnabledClients();
     if (onlyClientId && !clients.length) {
@@ -453,6 +457,7 @@ export async function runAll({ onlyClientId } = {}) {
     checkpointWal();
     console.log = _origLog;
     await new Promise(resolve => logStream.end(resolve));
+    endRun();
   }
 }
 
@@ -467,6 +472,13 @@ export const runOnce = runAll;
 async function backupThenRun(label) {
   await maybeRunDailyBackup().catch(err => log(`Daily backup check failed: ${err.message}`));
   await runAll().catch(err => log(`Unhandled error in ${label} run: ${err.message}`));
+  // A signal-triggered abort means the operator (or Docker/systemd) asked this
+  // process to stop. The run has saved its work by now, so honour that instead of
+  // waiting around for the next cron tick. Exit 0: the shutdown itself succeeded.
+  if (exitRequested()) {
+    log('Beendigungs-Signal — Scheduler fährt herunter.');
+    process.exit(0);
+  }
 }
 
 export function startScheduler() {
