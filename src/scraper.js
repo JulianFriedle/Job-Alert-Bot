@@ -995,7 +995,14 @@ function descriptionUrl(job) {
 // rate-limit rapid guest requests → hung connections) paces each request with a
 // jittered delay, fails faster, and uses the hardened context; the career-page
 // path keeps the original fast behavior.
-async function fetchDescriptionBatch(jobs, { gentle, concurrency }) {
+//
+// `onJob` is called once per job as soon as its detail visit is over (successful
+// or not), so the caller can persist that job right away instead of waiting for
+// the whole batch. That is what survives an abort: a stopped run keeps every
+// description it already paid a page load for.
+async function fetchDescriptionBatch(jobs, { gentle, concurrency, onJob }) {
+  // Already winding down: don't even start a browser.
+  if (isAborted()) return;
   const browser = gentle
     ? await launchPlatformBrowser({ headless: true })
     : await chromium.launch({ headless: true });
@@ -1044,6 +1051,11 @@ async function fetchDescriptionBatch(jobs, { gentle, concurrency }) {
           if (!isAborted()) log(`  [${i + 1}/${jobs.length}] Failed for "${job.title}": ${err.message.split('\n')[0]}`);
         } finally {
           await page.close().catch(() => {});
+          // A failing callback must never take the rest of the batch down.
+          if (onJob) {
+            try { onJob(job); }
+            catch (err) { log(`  onJob für "${job.title}" fehlgeschlagen: ${err.message}`); }
+          }
         }
       }
     }
@@ -1057,20 +1069,27 @@ async function fetchDescriptionBatch(jobs, { gentle, concurrency }) {
 // Fetch full job descriptions for an array of jobs (in-place, mutates description
 // field). Called after deduplication so we only visit detail pages for genuinely
 // new jobs. Job-board jobs are fetched gently (they rate-limit); career pages fast.
-export async function fetchDescriptions(jobs, concurrency = Number(process.env.SCRAPE_CONCURRENCY) || 4) {
+// `options` is either a plain concurrency number (legacy call style) or
+// { concurrency, onJob } — see fetchDescriptionBatch for onJob.
+export async function fetchDescriptions(jobs, options = {}) {
+  const {
+    concurrency = Number(process.env.SCRAPE_CONCURRENCY) || 4,
+    onJob = null,
+  } = typeof options === 'number' ? { concurrency: options } : options;
+
   if (jobs.length === 0) return;
   const platformJobs = jobs.filter(j => j.platform);
   const regularJobs  = jobs.filter(j => !j.platform);
   log(`Fetching descriptions for ${jobs.length} new job(s) (${regularJobs.length} career-page, ${platformJobs.length} job-board)...`);
 
   if (regularJobs.length) {
-    await fetchDescriptionBatch(regularJobs, { gentle: false, concurrency });
+    await fetchDescriptionBatch(regularJobs, { gentle: false, concurrency, onJob });
   }
   // Don't launch a second browser for the job-board batch if we're already
   // winding down.
   if (platformJobs.length && !isAborted()) {
     const gentleConc = Number(process.env.PLATFORM_DESC_CONCURRENCY) || 2;
-    await fetchDescriptionBatch(platformJobs, { gentle: true, concurrency: gentleConc });
+    await fetchDescriptionBatch(platformJobs, { gentle: true, concurrency: gentleConc, onJob });
   }
 }
 
