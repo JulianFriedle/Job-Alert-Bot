@@ -292,6 +292,21 @@ npm run test-notify
 npm run refetch-descriptions
 ```
 
+### Stopping a run
+
+`Ctrl+C`, `docker stop` and a systemd restart all send a termination signal, and
+what it does depends on whether a run is in flight:
+
+- **Idle** (scheduler waiting for the next cron tick) — the process quits at once,
+  exactly as it always did.
+- **Mid-run** — the run is *aborted, not killed*: it winds down at its next
+  source/page/job boundary, the jobs already scraped and scored stay in the DB,
+  browsers close and the WAL is checkpointed. Only then does the process exit.
+  Give it a few seconds; a second signal stops waiting and exits immediately.
+
+The same mechanism sits behind the GUI's **Lauf stoppen** button, which sends the
+signal to the `--once` child it spawned.
+
 ### Multi-tenant / SaaS
 
 For a single user nothing changes — leave `AUTH_ENABLED` unset and use the app as before
