@@ -12,6 +12,7 @@ const I18N = {
     'tab.profile': 'Profil', 'tab.prompts': 'Prompts', 'tab.run': 'Lauf', 'tab.settings': 'Einstellungen',
     'tab.clients': 'Klienten',
     'btn.startRun': '▶ Lauf starten', 'btn.save': 'Speichern', 'btn.reset': 'Zurücksetzen',
+    'btn.stopRun': '■ Lauf stoppen', 'btn.stoppingRun': '■ wird gestoppt…',
 
     // ── Auth / clients (multi-tenant) ──
     'auth.title': 'Anmeldung', 'auth.subtitle': 'Bitte mit den Betreiber-Zugangsdaten anmelden.',
@@ -124,8 +125,11 @@ const I18N = {
     'prompts.defaultBtn': '↺ Standard', 'prompts.defaultTitle': 'Standard einsetzen',
     'toast.promptsSaved': 'Prompts gespeichert',
 
-    'run.ready': '● bereit', 'run.running': '● läuft…',
+    'run.ready': '● bereit', 'run.running': '● läuft…', 'run.stopping': '● wird gestoppt…',
     'run.alreadyRunning': 'Lauf läuft bereits', 'run.doneToast': 'Lauf fertig – Jobs aktualisiert',
+    'run.stopConfirm': 'Laufenden Lauf wirklich abbrechen? Bereits gefundene Jobs bleiben gespeichert, der Rest wird übersprungen.',
+    'run.stopRequested': 'Abbruch angefordert – der Lauf wird sauber beendet…',
+    'run.stoppedToast': 'Lauf abgebrochen – bereits gefundene Jobs sind gespeichert',
 
     'settings.savedMsg': '✓ Gespeichert. Änderungen greifen beim nächsten Lauf (GUI-Port erst nach Neustart).',
     'toast.settingsSaved': 'Einstellungen gespeichert',
@@ -247,6 +251,7 @@ const I18N = {
     'tab.profile': 'Profile', 'tab.prompts': 'Prompts', 'tab.run': 'Run', 'tab.settings': 'Settings',
     'tab.clients': 'Clients',
     'btn.startRun': '▶ Start run', 'btn.save': 'Save', 'btn.reset': 'Reset',
+    'btn.stopRun': '■ Stop run', 'btn.stoppingRun': '■ stopping…',
 
     // ── Auth / clients (multi-tenant) ──
     'auth.title': 'Sign in', 'auth.subtitle': 'Please sign in with the operator credentials.',
@@ -358,8 +363,11 @@ const I18N = {
     'prompts.defaultBtn': '↺ Default', 'prompts.defaultTitle': 'Insert default',
     'toast.promptsSaved': 'Prompts saved',
 
-    'run.ready': '● ready', 'run.running': '● running…',
+    'run.ready': '● ready', 'run.running': '● running…', 'run.stopping': '● stopping…',
     'run.alreadyRunning': 'Run already in progress', 'run.doneToast': 'Run finished – jobs updated',
+    'run.stopConfirm': 'Really abort the running pipeline? Jobs found so far stay saved, the rest is skipped.',
+    'run.stopRequested': 'Stop requested – winding the run down cleanly…',
+    'run.stoppedToast': 'Run aborted – jobs found so far are saved',
 
     'settings.savedMsg': '✓ Saved. Changes apply on the next run (GUI port only after a restart).',
     'toast.settingsSaved': 'Settings saved',

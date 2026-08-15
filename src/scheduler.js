@@ -19,6 +19,7 @@ import { maybeRunDailyBackup } from './backup.js';
 import { startApplyWorker } from './apply-worker.js';
 import { startTelegramBot } from './telegram-bot.js';
 import { isTruthy } from './scrapers/browser.js';
+import { isAborted } from './run-control.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -235,6 +236,7 @@ async function runClientPipeline(client) {
   tick('analysis');
   async function analysisWorker() {
     while (analysisIdx < toAnalyze.length) {
+      if (isAborted()) return;
       const i = analysisIdx++;
       const job = toAnalyze[i];
       const progress = `[${i + 1}/${toAnalyze.length}]`;
@@ -268,6 +270,19 @@ async function runClientPipeline(client) {
     analysisWorker
   ));
   log(`⏱  Analysis (${toAnalyze.length} jobs): ${tock('analysis')}`);
+
+  // Abort cut-off. Everything scraped and analyzed so far is already committed to
+  // the DB, but the remaining stages must NOT run on a partial pass:
+  //   • expiry detection compares last_seen against sources we never visited, so
+  //     it would declare live jobs expired;
+  //   • the run snapshot would record 0 for every unscraped source and skew the
+  //     stats charts;
+  //   • notifications and auto-apply are side effects the user just asked to stop.
+  // Relevant-but-unnotified jobs stay queued and go out with the next run.
+  if (isAborted()) {
+    log(`⏹  Lauf abgebrochen für "${client.name}" — Benachrichtigungen, Ablauf-Prüfung, Statistik und Export übersprungen. Bereits gefundene Jobs sind gespeichert.`);
+    return;
+  }
 
   // 8. Send notifications — use cached analysis, only re-call Claude if truly missing.
   tick('notifications');
@@ -398,6 +413,10 @@ export async function runAll({ onlyClientId } = {}) {
     }
     log(`Run startet für ${clients.length} Klient(en)…`);
     for (const client of clients) {
+      if (isAborted()) {
+        log(`Abbruch — verbleibende Klienten werden nicht mehr ausgeführt.`);
+        break;
+      }
       try {
         await runClientPipeline(client);
       } catch (err) {
@@ -406,7 +425,7 @@ export async function runAll({ onlyClientId } = {}) {
     }
   } finally {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    log(`Run finished in ${elapsed}s — log: ${logFile}`);
+    log(`Run ${isAborted() ? 'abgebrochen' : 'finished'} in ${elapsed}s — log: ${logFile}`);
     // Fold this run's writes out of the WAL so it can't grow without bound and the
     // next backup snapshots a fully checkpointed file. Runs in the scheduler process
     // and in the spawned `index.js --once` child alike, so both keep the WAL small.
