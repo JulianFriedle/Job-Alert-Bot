@@ -178,22 +178,43 @@ async function runClientPipeline(client) {
 
   const newJobIds = new Set(jobsToProcess.map(j => j.id));
 
-  // 4. Fetch full descriptions only for jobs that passed the title filter and
-  //    don't already carry one (platform scrapers may fill it during scrape)
+  // 4./5. Fetch full descriptions and save each job the moment its description is
+  // in — not in one batch afterwards. The ordering is what makes a stop cheap:
+  // every job whose detail page we already paid for is in the DB, so the next run
+  // goes straight to analysing it instead of scraping and fetching it all again.
+  const savedIds = new Set();
+  const persist = (job) => {
+    if (savedIds.has(job.id)) return;
+    // While winding down, only jobs that actually got their description: saving
+    // an empty one would let the next run score a blank posting and mark it
+    // analysed for good. Unsaved simply means "not seen yet" — it comes back.
+    if (isAborted() && !job.description) return;
+    try { saveJob(clientId, job); savedIds.add(job.id); }
+    catch (err) { log(`ERROR saving "${job.title}": ${err.message}`); }
+  };
+
+  // Platform scrapers may already carry the description — no detail visit needed.
+  for (const job of jobsToProcess) if (job.description) persist(job);
+
   const needsDescription = jobsToProcess.filter(j => !j.description);
   tick('descriptions');
   if (needsDescription.length > 0) {
     try {
-      await fetchDescriptions(needsDescription);
+      await fetchDescriptions(needsDescription, { onJob: persist });
     } catch (err) {
       log(`ERROR fetching descriptions: ${err.message}`);
     }
   }
   log(`⏱  Descriptions (${needsDescription.length} jobs): ${tock('descriptions')}`);
 
-  // 5. Save passing jobs to DB (now with descriptions)
-  for (const job of jobsToProcess) {
-    try { saveJob(clientId, job); } catch (err) { log(`ERROR saving "${job.title}": ${err.message}`); }
+  if (isAborted()) {
+    const skipped = jobsToProcess.length - savedIds.size;
+    log(`⏹  ${savedIds.size} Job(s) mit Beschreibung gespeichert${skipped > 0 ? `, ${skipped} noch nicht abgerufene werden im nächsten Lauf geholt` : ''}.`);
+  } else {
+    // Regular run: anything the fetch loop didn't reach (e.g. an early throw) is
+    // still saved, exactly as before — an empty description stays recoverable
+    // via `npm run refetch-descriptions`.
+    for (const job of jobsToProcess) persist(job);
   }
 
   // 6. Build per-source counters
