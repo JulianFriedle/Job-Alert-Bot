@@ -172,7 +172,11 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `CRON_SCHEDULE` | `0 * * * *` | Scheduler cadence (node-cron syntax) |
 | `EXPIRY_THRESHOLD_HOURS` | `72` | Hours unseen before a notified job is marked expired |
 | `ANALYSIS_CONCURRENCY` | `2` | Parallel Claude analysis requests |
-| `SCRAPE_CONCURRENCY` | `4` | Parallel browser workers when scraping |
+| `SCRAPE_CONCURRENCY` | `4` | Parallel browser workers when scraping sources (one browser each) |
+| `DESC_CONCURRENCY` | `8` | Parallel tabs when fetching descriptions. Requests are spread across hosts, so no site sees more than one at a time no matter how high this goes |
+| `DESC_HOST_GAP_MS` | `1500` | Minimum pause between two requests to the *same* host. Raise this — not the concurrency — if a site starts blocking |
+| `SOURCE_HOST_GAP_MS` | `2000` | Same, between two source scrapes that share a host |
+| `PLATFORM_DESC_HOST_GAP_MS` | `2500` | Same, for the job boards (LinkedIn/StepStone/Indeed) |
 | `GUI_PORT` | `3000` | Port for the web GUI |
 | `JOBS_DB_PATH` | `data/jobs.db` | SQLite DB path (set to a mounted volume in Docker) |
 | `AUTH_ENABLED` | `false` | **SaaS:** `true` requires operator login for the GUI. Private/localhost: `false` |
@@ -304,6 +308,9 @@ what it does depends on whether a run is in flight:
   source/page/job boundary, the jobs already scraped and scored stay in the DB,
   browsers close and the WAL is checkpointed. Only then does the process exit.
   Give it a few seconds; a second signal stops waiting and exits immediately.
+  A worker sitting out a per-host pause (`DESC_HOST_GAP_MS` and friends) does not
+  wait it out first — the stop is noticed while it waits, so the gaps can be
+  raised for politeness without making **Lauf stoppen** feel sluggish.
 
 The same mechanism sits behind the GUI's **Lauf stoppen** button, which sends the
 signal to the `--once` child it spawned.
