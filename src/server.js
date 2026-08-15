@@ -291,8 +291,16 @@ const run = {
   startedAt: null,
   logs: [],            // capped ring buffer of log lines
   clients: new Set(),  // SSE response objects
+  child: null,         // the spawned `node index.js --once` process
+  stopping: false,     // SIGTERM sent, waiting for the graceful wind-down
+  killTimer: null,     // SIGKILL fallback
 };
 const LOG_CAP = 800;
+
+// How long a stopped run may take to wind down before we kill its process group.
+// The pipeline checks for the abort between sources/pages, and the slowest single
+// step is a page load with a 30s Playwright timeout.
+const STOP_GRACE_MS = Number(process.env.RUN_STOP_GRACE_MS) || 45_000;
 
 function pushLog(line) {
   run.logs.push(line);
@@ -308,17 +316,22 @@ function broadcast(event, data) {
 function startRun(clientId) {
   if (run.active) return false;
   run.active = true;
+  run.stopping = false;
   run.startedAt = new Date().toISOString();
   run.logs = [];
-  broadcast('status', { active: true, startedAt: run.startedAt });
+  broadcast('status', { active: true, startedAt: run.startedAt, stopping: false });
 
   // Scope the run to one client when given, otherwise run all enabled clients.
   const args = ['index.js', '--once'];
   if (clientId) args.push('--client', clientId);
+  // detached → the child leads its own process group, so a hard stop can signal
+  // the whole tree (`-pid`) and take Playwright's chromium children with it.
   const child = spawn('node', args, {
     cwd: ROOT,
     env: process.env,
+    detached: true,
   });
+  run.child = child;
 
   const onData = (buf) => {
     for (const line of buf.toString().split('\n')) {
@@ -328,18 +341,68 @@ function startRun(clientId) {
   child.stdout.on('data', onData);
   child.stderr.on('data', onData);
 
-  child.on('close', (code) => {
-    run.active = false;
-    pushLog(`— Lauf beendet (exit code ${code}) —`);
-    broadcast('status', { active: false, exitCode: code });
+  child.on('close', (code, signal) => {
+    const wasStopping = run.stopping;
+    clearRunProcess();
+    pushLog(wasStopping
+      ? `— Lauf abgebrochen (${signal || `exit code ${code}`}) —`
+      : `— Lauf beendet (exit code ${code}) —`);
+    broadcast('status', { active: false, stopping: false, exitCode: code, aborted: wasStopping });
   });
   child.on('error', (err) => {
-    run.active = false;
+    clearRunProcess();
     pushLog(`FEHLER beim Starten: ${err.message}`);
-    broadcast('status', { active: false, error: err.message });
+    broadcast('status', { active: false, stopping: false, error: err.message });
   });
 
   return true;
+}
+
+function clearRunProcess() {
+  clearTimeout(run.killTimer);
+  run.killTimer = null;
+  run.active = false;
+  run.stopping = false;
+  run.child = null;
+}
+
+// Signal the whole process group when possible so chromium children go too.
+// Falls back to the single process if the group is already gone.
+function signalRun(signal) {
+  const child = run.child;
+  if (!child || child.exitCode !== null || child.signalCode !== null) return false;
+  try {
+    process.kill(-child.pid, signal);
+    return true;
+  } catch {
+    try { return child.kill(signal); } catch { return false; }
+  }
+}
+
+// Ask a running pipeline to stop. SIGTERM first: the child flips its abort flag
+// and unwinds at the next loop boundary, closing browsers and checkpointing the
+// DB on the way out. If it hasn't exited within the grace window, SIGKILL the
+// group so nothing is left behind.
+function stopRun() {
+  if (!run.active || !run.child) return { stopped: false, reason: 'idle' };
+  if (run.stopping) return { stopped: true, already: true };
+
+  run.stopping = true;
+  pushLog('— Abbruch angefordert — laufende Schritte werden sauber beendet… —');
+  broadcast('status', { active: true, startedAt: run.startedAt, stopping: true });
+
+  // SIGTERM only the child itself: it has a handler that winds the pipeline down
+  // gracefully, and its chromium children exit with their browser.close().
+  try { run.child.kill('SIGTERM'); } catch { /* already gone */ }
+
+  run.killTimer = setTimeout(() => {
+    if (!run.active || !run.child) return;
+    pushLog(`— Lauf reagiert nicht nach ${Math.round(STOP_GRACE_MS / 1000)}s — erzwinge Abbruch (SIGKILL) —`);
+    signalRun('SIGKILL');
+  }, STOP_GRACE_MS);
+  run.killTimer.unref?.();
+
+  return { stopped: true };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -956,9 +1019,17 @@ const server = http.createServer(async (req, res) => {
           : sendJson(res, 409, { started: false, error: 'Lauf läuft bereits' });
       }
 
+      // POST /api/run/stop — abort the running pipeline (graceful, SIGKILL fallback)
+      if (method === 'POST' && pathname === '/api/run/stop') {
+        const result = stopRun();
+        return result.stopped
+          ? sendJson(res, 202, { stopping: true, already: Boolean(result.already) })
+          : sendJson(res, 409, { stopping: false, error: 'Kein Lauf aktiv' });
+      }
+
       // GET /api/run/status
       if (method === 'GET' && pathname === '/api/run/status') {
-        return sendJson(res, 200, { active: run.active, startedAt: run.startedAt });
+        return sendJson(res, 200, { active: run.active, startedAt: run.startedAt, stopping: run.stopping });
       }
 
       // GET /api/run/stream — Server-Sent Events of live logs
@@ -968,7 +1039,7 @@ const server = http.createServer(async (req, res) => {
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive',
         });
-        res.write(`event: status\ndata: ${JSON.stringify({ active: run.active, startedAt: run.startedAt })}\n\n`);
+        res.write(`event: status\ndata: ${JSON.stringify({ active: run.active, startedAt: run.startedAt, stopping: run.stopping })}\n\n`);
         for (const line of run.logs) res.write(`event: log\ndata: ${JSON.stringify(line)}\n\n`);
         run.clients.add(res);
         req.on('close', () => run.clients.delete(res));
