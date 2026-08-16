@@ -59,19 +59,15 @@ export function humanDelay(min = 800, max = 2500) {
 }
 
 // Type character-by-character with a variable per-key delay — a paste-speed
-// fill into a login form is an instant bot signal.
+// fill into a login form is an instant bot signal. The delay must vary PER
+// KEY: pressSequentially's `delay` option is one constant for the whole
+// string, and a metronome-steady 73 ms is itself a fingerprint.
 export async function humanType(locator, text) {
   await locator.click();
   await locator.fill('');
-  await locator.pressSequentially(String(text), { delay: jitter(40, 120) });
-}
-
-// A couple of small scroll steps so the page registers reading activity.
-export async function humanScroll(page) {
-  const steps = jitter(2, 5);
-  for (let i = 0; i < steps; i++) {
-    await page.mouse.wheel(0, jitter(250, 700));
-    await humanDelay(300, 900);
+  for (const ch of String(text)) {
+    await locator.pressSequentially(ch);
+    await new Promise(resolve => setTimeout(resolve, jitter(40, 120)));
   }
 }
 

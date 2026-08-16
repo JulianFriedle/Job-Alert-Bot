@@ -91,6 +91,7 @@ export async function scrape(source) {
   const seenUrls = new Set();
   let duplicates = 0;
   let siteTotal = null;
+  let blocked = false; // challenge/error → result is incomplete, not "0 jobs exist"
 
   const browser = await launchPlatformBrowser({ headless: true });
   try {
@@ -105,14 +106,24 @@ export async function scrape(source) {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
         if (pageNo === 1) await acceptCookies(page);
-        if (await isChallengePage(page)) { log(`  BLOCKED (challenge/DataDome) — stoppe.`); break; }
+        if (await isChallengePage(page)) { log(`  BLOCKED (challenge/DataDome) — stoppe.`); blocked = true; break; }
         await page.waitForSelector('article[data-at="job-item"], [data-at="job-item"]', { timeout: 8000 }).catch(() => {});
 
         if (pageNo === 1) {
           siteTotal = await page.evaluate(() => {
-            const el = document.querySelector('[data-at="jobs-count"], [data-testid="jobs-count"], h1');
-            const m = (el?.textContent || document.body.innerText || '').match(/([\d.]{1,9})\s+(?:Jobs?|Treffer|Stellen)/i);
-            return m ? parseInt(m[1].replace(/\./g, ''), 10) : null;
+            // Probe selectors in PRIORITY order — a comma list in querySelector
+            // returns the first match in document order, so a generic h1 above
+            // the dedicated count element would win and mask it.
+            const candidates = ['[data-at="jobs-count"]', '[data-testid="jobs-count"]', 'h1']
+              .map(sel => document.querySelector(sel)?.textContent || '');
+            candidates.push(document.body.innerText || '');
+            for (const text of candidates) {
+              const m = text.match(/([\d.]{1,9})\s+(?:Jobs?|Treffer|Stellen)/i);
+              if (!m) continue;
+              const n = parseInt(m[1].replace(/\./g, ''), 10);
+              if (Number.isFinite(n)) return n;
+            }
+            return null;
           }).catch(() => null);
         }
 
@@ -143,6 +154,7 @@ export async function scrape(source) {
         if (added === 0 && pageNo > 1) break;
       } catch (err) {
         log(`  Seite ${pageNo}: ERROR — ${err.message}`);
+        blocked = true;
         break;
       }
     }
@@ -150,6 +162,6 @@ export async function scrape(source) {
     await browser.close();
   }
 
-  log(`Fertig ${source.name}: ${jobs.length} Job(s)${siteTotal ? ` (Website: ${siteTotal})` : ''}`);
-  return { jobs, duplicates, siteTotal };
+  log(`Fertig ${source.name}: ${jobs.length} Job(s)${siteTotal ? ` (Website: ${siteTotal})` : ''}${blocked ? ' [UNVOLLSTÄNDIG]' : ''}`);
+  return { jobs, duplicates, siteTotal, blocked };
 }

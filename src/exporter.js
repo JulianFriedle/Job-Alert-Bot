@@ -4,7 +4,11 @@ import { fileURLToPath } from 'url';
 import { getRelevantJobs, DEFAULT_CLIENT_ID } from './database.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// Follow JOBS_DB_PATH like database.js/backup.js do, so the export lands next
+// to the DB (e.g. inside the Docker data volume) instead of the code directory.
+const DATA_DIR = process.env.JOBS_DB_PATH
+  ? path.dirname(process.env.JOBS_DB_PATH)
+  : path.join(__dirname, '..', 'data');
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [exporter] ${msg}`);
