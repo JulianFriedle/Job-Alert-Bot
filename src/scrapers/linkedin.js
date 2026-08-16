@@ -7,6 +7,7 @@
 // stays null (unknown) — the apply worker verifies it during prepare.
 import { generateId } from '../scraper.js';
 import { launchPlatformBrowser, newHardenedContext, humanDelay, isChallengePage } from './browser.js';
+import { isAborted } from '../run-control.js';
 
 const PAGE_SIZE = 25;
 const MAX_RESULTS_DEFAULT = 100;
@@ -130,6 +131,7 @@ export async function scrape(source) {
     // with the same card logic.
     const startFrom = authwalled ? 0 : PAGE_SIZE;
     for (let start = startFrom; jobs.length < maxResults; start += PAGE_SIZE) {
+      if (isAborted()) { log('  Abbruch angefordert — stoppe Paginierung.'); break; }
       await humanDelay(2000, 5000);
       const apiUrl = `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?${params.toString()}&start=${start}`;
       try {
@@ -148,13 +150,16 @@ export async function scrape(source) {
         log(`  start=${start}: +${added} neu (${jobs.length} gesamt)`);
         if (added === 0) break; // only repeats → done
       } catch (err) {
-        log(`  start=${start}: ERROR — ${err.message}`);
+        // On abort the browser is already gone — expected, not a scrape failure.
+        log(isAborted() ? `  start=${start}: abgebrochen` : `  start=${start}: ERROR — ${err.message}`);
+        // Either way this source's picture is now partial; only a clean run
+        // may be used to decide that a job has expired.
         blocked = true;
         break;
       }
     }
   } finally {
-    await browser.close();
+    await browser.close().catch(() => {});
   }
 
   log(`Fertig ${source.name}: ${jobs.length} Job(s)${siteTotal ? ` (Website: ${siteTotal})` : ''}${blocked ? ' [UNVOLLSTÄNDIG]' : ''}`);

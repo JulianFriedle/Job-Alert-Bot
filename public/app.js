@@ -467,6 +467,25 @@ $('#cl-copy').addEventListener('click', async () => {
 ['#filter-source', '#filter-status', '#filter-score', '#sort'].forEach(s =>
   $(s).addEventListener('change', renderJobs));
 
+// CSV export — hands the current toolbar state to the server, which re-applies
+// the identical filter/sort so the file matches the visible list exactly.
+// A plain navigation (not fetch) so the browser handles the download; the
+// session cookie rides along.
+$('#export-csv')?.addEventListener('click', () => {
+  if (!filteredJobs().length) return toast(t('jobs.exportEmpty'));
+  const params = new URLSearchParams({
+    q:        $('#search').value.trim(),
+    source:   $('#filter-source').value,
+    status:   $('#filter-status').value,
+    minScore: $('#filter-score').value,
+    sort:     $('#sort')?.value || 'default',
+    lang,
+  });
+  if (currentClientId) params.set('clientId', currentClientId);
+  window.location.href = '/api/jobs/export.csv?' + params.toString();
+  toast(t('jobs.exportStarted'));
+});
+
 // ── STATS ─────────────────────────────────────────────────────────────────--
 let statsLoaded = false;
 
@@ -1111,12 +1130,19 @@ function appendConsole(line) {
   c.scrollTop = c.scrollHeight;
 }
 
-function setRunning(active) {
+function setRunning(active, stopping = false) {
   const ind = $('#run-indicator');
-  ind.textContent = active ? t('run.running') : t('run.ready');
-  ind.classList.toggle('live', active);
+  ind.textContent = !active ? t('run.ready') : stopping ? t('run.stopping') : t('run.running');
+  ind.classList.toggle('live', active && !stopping);
+  ind.classList.toggle('stopping', active && stopping);
   $('#run-btn').disabled = active;
   $('#quick-run').disabled = active;
+  // The stop button only exists while something is running; once pressed it stays
+  // visible but disabled, so the wind-down is visible instead of looking ignored.
+  const stopBtn = $('#run-stop-btn');
+  stopBtn.hidden = !active;
+  stopBtn.disabled = stopping;
+  stopBtn.textContent = stopping ? t('btn.stoppingRun') : t('btn.stopRun');
 }
 
 function connectStream() {
@@ -1125,8 +1151,8 @@ function connectStream() {
   evtSource.addEventListener('log', (e) => appendConsole(JSON.parse(e.data)));
   evtSource.addEventListener('status', (e) => {
     const s = JSON.parse(e.data);
-    setRunning(s.active);
-    if (!s.active && s.exitCode != null) refreshAfterRun();
+    setRunning(s.active, s.stopping);
+    if (!s.active && s.exitCode != null) refreshAfterRun(s.aborted);
   });
   evtSource.onerror = () => { /* browser auto-reconnects */ };
 }
@@ -1144,14 +1170,32 @@ async function startRun() {
   }
 }
 
+async function stopRun() {
+  if (!confirm(t('run.stopConfirm'))) return;
+  const btn = $('#run-stop-btn');
+  btn.disabled = true;
+  try {
+    await api('/api/run/stop', { method: 'POST' });
+    toast(t('run.stopRequested'));
+  } catch (err) {
+    btn.disabled = false;
+    toast(t('toast.error') + err.message);
+  }
+}
+
 let refreshTimer;
-function refreshAfterRun() {
+function refreshAfterRun(aborted = false) {
   clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(() => { loadJobs(); loadRecentRuns(); toast(t('run.doneToast')); }, 800);
+  refreshTimer = setTimeout(() => {
+    loadJobs();
+    loadRecentRuns();
+    toast(aborted ? t('run.stoppedToast') : t('run.doneToast'));
+  }, 800);
 }
 
 $('#run-btn').addEventListener('click', startRun);
 $('#quick-run').addEventListener('click', startRun);
+$('#run-stop-btn').addEventListener('click', stopRun);
 
 // ── RUN HISTORY (last N runs, with per-source breakdown) ──────────────────────
 async function loadRecentRuns() {

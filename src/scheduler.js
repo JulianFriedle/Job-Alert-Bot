@@ -19,6 +19,7 @@ import { maybeRunDailyBackup } from './backup.js';
 import { startApplyWorker } from './apply-worker.js';
 import { startTelegramBot } from './telegram-bot.js';
 import { isTruthy } from './scrapers/browser.js';
+import { isAborted, beginRun, endRun, exitRequested } from './run-control.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -102,6 +103,20 @@ function printOverview(clientName, sources, sourceStats, relevantBySource, expir
   console.log('');
 }
 
+// German postings routinely wedge a gender marker into the middle of the title
+// ("Entwickler (m/w/d) für Embedded Systeme", "Ingenieur*in Fertigungstechnik"),
+// which breaks the plain substring match the filters use — the first would miss a
+// keyword like "entwickler für embedded" entirely. Drop the marker before matching
+// so a keyword list stays a list of role names, not a list of spelling variants.
+export function normalizeTitle(title) {
+  return (title || '')
+    .toLowerCase()
+    .replace(/\(\s*[mwdfx*:/\s-]+\)/g, ' ')  // (m/w/d), (w/m/d), (m/w/x), (d/w/m) …
+    .replace(/[*:]in\b/g, 'in')              // Referent*in / Referent:in → Referentin
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Run the full scrape→analyze→notify→export pipeline for ONE client.
 async function runClientPipeline(client) {
   const clientId = client.id;
@@ -144,8 +159,10 @@ async function runClientPipeline(client) {
   log(`${scrapedJobs.length} scraped, ${newJobs.length} new`);
 
   // 3. Title blocklist — skip structurally irrelevant jobs before touching Claude
-  const isTitleBlocked = (title) =>
-    TITLE_BLOCKLIST.some(kw => (title || '').toLowerCase().includes(kw));
+  const isTitleBlocked = (title) => {
+    const t = normalizeTitle(title);
+    return TITLE_BLOCKLIST.some(kw => t.includes(kw));
+  };
 
   const blockedJobs = newJobs.filter(job => isTitleBlocked(job.title));
   const jobsToProcess = newJobs.filter(job => !isTitleBlocked(job.title));
@@ -163,22 +180,43 @@ async function runClientPipeline(client) {
 
   const newJobIds = new Set(jobsToProcess.map(j => j.id));
 
-  // 4. Fetch full descriptions only for jobs that passed the title filter and
-  //    don't already carry one (platform scrapers may fill it during scrape)
+  // 4./5. Fetch full descriptions and save each job the moment its description is
+  // in — not in one batch afterwards. The ordering is what makes a stop cheap:
+  // every job whose detail page we already paid for is in the DB, so the next run
+  // goes straight to analysing it instead of scraping and fetching it all again.
+  const savedIds = new Set();
+  const persist = (job) => {
+    if (savedIds.has(job.id)) return;
+    // While winding down, only jobs that actually got their description: saving
+    // an empty one would let the next run score a blank posting and mark it
+    // analysed for good. Unsaved simply means "not seen yet" — it comes back.
+    if (isAborted() && !job.description) return;
+    try { saveJob(clientId, job); savedIds.add(job.id); }
+    catch (err) { log(`ERROR saving "${job.title}": ${err.message}`); }
+  };
+
+  // Platform scrapers may already carry the description — no detail visit needed.
+  for (const job of jobsToProcess) if (job.description) persist(job);
+
   const needsDescription = jobsToProcess.filter(j => !j.description);
   tick('descriptions');
   if (needsDescription.length > 0) {
     try {
-      await fetchDescriptions(needsDescription);
+      await fetchDescriptions(needsDescription, { onJob: persist });
     } catch (err) {
       log(`ERROR fetching descriptions: ${err.message}`);
     }
   }
   log(`⏱  Descriptions (${needsDescription.length} jobs): ${tock('descriptions')}`);
 
-  // 5. Save passing jobs to DB (now with descriptions)
-  for (const job of jobsToProcess) {
-    try { saveJob(clientId, job); } catch (err) { log(`ERROR saving "${job.title}": ${err.message}`); }
+  if (isAborted()) {
+    const skipped = jobsToProcess.length - savedIds.size;
+    log(`⏹  ${savedIds.size} Job(s) mit Beschreibung gespeichert${skipped > 0 ? `, ${skipped} noch nicht abgerufene werden im nächsten Lauf geholt` : ''}.`);
+  } else {
+    // Regular run: anything the fetch loop didn't reach (e.g. an early throw) is
+    // still saved, exactly as before — an empty description stays recoverable
+    // via `npm run refetch-descriptions`.
+    for (const job of jobsToProcess) persist(job);
   }
 
   // 6. Build per-source counters
@@ -210,7 +248,10 @@ async function runClientPipeline(client) {
   const toAnalyze = allUnanalyzed.filter(job => !isTitleBlocked(job.title));
   log(`Analyzing ${toAnalyze.length} unanalyzed job(s)...`);
 
-  const isPriority = (title) => PRIORITY_KEYWORDS.some(kw => (title || '').toLowerCase().includes(kw));
+  const isPriority = (title) => {
+    const t = normalizeTitle(title);
+    return PRIORITY_KEYWORDS.some(kw => t.includes(kw));
+  };
 
   const analysisCache = new Map(); // id → analysis (reused for notifications)
   let analysisIdx = 0;
@@ -218,6 +259,7 @@ async function runClientPipeline(client) {
   tick('analysis');
   async function analysisWorker() {
     while (analysisIdx < toAnalyze.length) {
+      if (isAborted()) return;
       const i = analysisIdx++;
       const job = toAnalyze[i];
       const progress = `[${i + 1}/${toAnalyze.length}]`;
@@ -253,6 +295,19 @@ async function runClientPipeline(client) {
     analysisWorker
   ));
   log(`⏱  Analysis (${toAnalyze.length} jobs): ${tock('analysis')}`);
+
+  // Abort cut-off. Everything scraped and analyzed so far is already committed to
+  // the DB, but the remaining stages must NOT run on a partial pass:
+  //   • expiry detection compares last_seen against sources we never visited, so
+  //     it would declare live jobs expired;
+  //   • the run snapshot would record 0 for every unscraped source and skew the
+  //     stats charts;
+  //   • notifications and auto-apply are side effects the user just asked to stop.
+  // Relevant-but-unnotified jobs stay queued and go out with the next run.
+  if (isAborted()) {
+    log(`⏹  Lauf abgebrochen für "${client.name}" — Benachrichtigungen, Ablauf-Prüfung, Statistik und Export übersprungen. Bereits gefundene Jobs sind gespeichert.`);
+    return;
+  }
 
   // 8. Send notifications — use cached analysis, only re-call Claude if truly missing.
   tick('notifications');
@@ -389,6 +444,10 @@ export async function runAll({ onlyClientId } = {}) {
     logStream.write(line + '\n');
   };
 
+  // From here on a termination signal means "abort and save" instead of "die
+  // now" — see installAbortSignals(). Cleared again in the finally below, so the
+  // idle scheduler keeps exiting instantly between runs.
+  beginRun();
   try {
     let clients = onlyClientId ? [getClient(onlyClientId)].filter(Boolean) : getEnabledClients();
     if (onlyClientId && !clients.length) {
@@ -400,6 +459,10 @@ export async function runAll({ onlyClientId } = {}) {
     }
     log(`Run startet für ${clients.length} Klient(en)…`);
     for (const client of clients) {
+      if (isAborted()) {
+        log(`Abbruch — verbleibende Klienten werden nicht mehr ausgeführt.`);
+        break;
+      }
       try {
         await runClientPipeline(client);
       } catch (err) {
@@ -408,7 +471,7 @@ export async function runAll({ onlyClientId } = {}) {
     }
   } finally {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    log(`Run finished in ${elapsed}s — log: ${logFile}`);
+    log(`Run ${isAborted() ? 'abgebrochen' : 'finished'} in ${elapsed}s — log: ${logFile}`);
     // Fold this run's writes out of the WAL so it can't grow without bound and the
     // next backup snapshots a fully checkpointed file. Runs in the scheduler process
     // and in the spawned `index.js --once` child alike, so both keep the WAL small.
@@ -416,6 +479,7 @@ export async function runAll({ onlyClientId } = {}) {
     console.log = _origLog;
     await new Promise(resolve => logStream.end(resolve));
     runInProgress = false;
+    endRun();
   }
 }
 
@@ -427,6 +491,13 @@ export async function runAll({ onlyClientId } = {}) {
 async function backupThenRun(label) {
   await maybeRunDailyBackup().catch(err => log(`Daily backup check failed: ${err.message}`));
   await runAll().catch(err => log(`Unhandled error in ${label} run: ${err.message}`));
+  // A signal-triggered abort means the operator (or Docker/systemd) asked this
+  // process to stop. The run has saved its work by now, so honour that instead of
+  // waiting around for the next cron tick. Exit 0: the shutdown itself succeeded.
+  if (exitRequested()) {
+    log('Beendigungs-Signal — Scheduler fährt herunter.');
+    process.exit(0);
+  }
 }
 
 export function startScheduler() {

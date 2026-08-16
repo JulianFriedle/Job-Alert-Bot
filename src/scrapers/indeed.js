@@ -5,6 +5,7 @@
 // blocked (empty) result instead of throwing, so the run continues.
 import { generateId } from '../scraper.js';
 import { launchPlatformBrowser, newHardenedContext, humanDelay, isChallengePage } from './browser.js';
+import { isAborted } from '../run-control.js';
 
 const PAGE_SIZE = 10; // Indeed's `start` param steps in 10s
 const MAX_PAGES_DEFAULT = 5;
@@ -87,6 +88,7 @@ export async function scrape(source) {
     const page = await context.newPage();
 
     for (let pageNo = 0; pageNo < maxPages; pageNo++) {
+      if (isAborted()) { log('  Abbruch angefordert — stoppe Paginierung.'); break; }
       const url = buildSearchUrl(search, pageNo * PAGE_SIZE);
       if (pageNo > 0) await humanDelay(2500, 6000);
       log(`${source.name}: Seite ${pageNo + 1} — ${url}`);
@@ -141,13 +143,16 @@ export async function scrape(source) {
         log(`  Seite ${pageNo + 1}: ${cards.length} Karten, +${added} neu (${jobs.length} gesamt)`);
         if (added === 0 && pageNo > 0) break;
       } catch (err) {
-        log(`  Seite ${pageNo + 1}: ERROR — ${err.message}`);
+        // On abort the browser is already gone — expected, not a scrape failure.
+        log(isAborted() ? `  Seite ${pageNo + 1}: abgebrochen` : `  Seite ${pageNo + 1}: ERROR — ${err.message}`);
+        // Either way this source's picture is now partial; only a clean run
+        // may be used to decide that a job has expired.
         blocked = true;
         break;
       }
     }
   } finally {
-    await browser.close();
+    await browser.close().catch(() => {});
   }
 
   log(`Fertig ${source.name}: ${jobs.length} Job(s)${siteTotal ? ` (Website: ${siteTotal})` : ''}${blocked ? ' [UNVOLLSTÄNDIG]' : ''}`);
