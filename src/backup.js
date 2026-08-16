@@ -82,15 +82,21 @@ export function retentionDays() {
 export async function createBackup(reason = 'manual') {
   const name = fileName(reason);
   const finalPath = path.join(BACKUP_DIR, name);
-  const tmpPath = path.join(BACKUP_DIR, `.${name}.${process.pid}.tmp`);
+  // pid alone is not unique: two same-second requests in one server process
+  // would share tmp AND final name, corrupting each other mid-write.
+  const tmpPath = path.join(BACKUP_DIR, `.${name}.${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}.tmp`);
+  let renamed = false;
   try {
     await backupTo(tmpPath);
     normalizeDbFile(tmpPath);          // → clean single-file DB (no sidecars later)
     renameSync(tmpPath, finalPath);
+    renamed = true;
     chmodSync(finalPath, 0o444);
   } catch (err) {
     rmDbFiles(tmpPath);
-    rmDbFiles(finalPath);   // rename may have already happened (e.g. chmod failed after)
+    // Only remove the final file if THIS invocation put it there — a colliding
+    // second call must not delete the first call's completed backup.
+    if (renamed) rmDbFiles(finalPath);
     throw err;
   }
   log(`Created ${name} (${(statSync(finalPath).size / 1e6).toFixed(1)} MB)`);

@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import http from 'http';
 import { readFile, writeFile, stat } from 'fs/promises';
-import { createReadStream, createWriteStream, readFileSync, existsSync, mkdirSync, rmSync } from 'fs';
+import { createReadStream, createWriteStream, readFileSync, existsSync, mkdirSync, rmSync, renameSync } from 'fs';
 import { spawn } from 'child_process';
 import crypto from 'crypto';
 import path from 'path';
@@ -41,7 +41,9 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const ENV_FILE = path.join(ROOT, '.env');
+// Overridable so a sandbox instance (scripts/operator-sandbox.js) never writes
+// the operator's real .env through PUT /api/settings.
+const ENV_FILE = process.env.ENV_FILE_PATH || path.join(ROOT, '.env');
 const PORT = process.env.GUI_PORT || 3000;
 
 // App version shown in the GUI footer — read once from package.json (maintained
@@ -120,7 +122,10 @@ function parseCookies(req) {
   for (const part of raw.split(';')) {
     const i = part.indexOf('=');
     if (i === -1) continue;
-    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    // decodeURIComponent throws on malformed input (e.g. "junk=%") — a broken
+    // cookie must not turn every request into a 500.
+    try { out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim()); }
+    catch { /* skip malformed cookie */ }
   }
   return out;
 }
@@ -508,6 +513,17 @@ const server = http.createServer(async (req, res) => {
         for (const f of ['name', 'enabled', 'telegram_chat_id', 'telegram_notifications', 'expiry_notifications', 'min_relevance_score', 'auto_apply', 'max_applies_per_day']) {
           if (Object.prototype.hasOwnProperty.call(body, f)) patch[f] = body[f];
         }
+        // Numeric fields: coerce, and reject garbage instead of storing it (the
+        // frontend interpolates these back into markup).
+        for (const f of ['min_relevance_score', 'max_applies_per_day']) {
+          if (patch[f] != null && patch[f] !== '') {
+            const n = Number(patch[f]);
+            if (!Number.isFinite(n)) return sendJson(res, 400, { error: `${f}: Zahl erwartet` });
+            patch[f] = Math.round(n);
+          } else if (Object.prototype.hasOwnProperty.call(patch, f)) {
+            patch[f] = null;
+          }
+        }
         return sendJson(res, 200, { client: updateClient(id, patch) });
       }
       // POST /api/clients/:id/telegram-test — send a test message to a chat id
@@ -663,13 +679,18 @@ const server = http.createServer(async (req, res) => {
       if (method === 'GET' && pathname === '/api/cv') {
         return sendJson(res, 200, { exists: existsSync(cvPath) });
       }
-      // POST /api/cv — upload (raw PDF body, max 10 MB)
+      // POST /api/cv — upload (raw PDF body, max 10 MB). Streams to a temp file
+      // first: writing onto cvPath directly would truncate the stored CV, and a
+      // failed/oversized upload would delete it.
       if (method === 'POST' && pathname === '/api/cv') {
         mkdirSync(path.dirname(cvPath), { recursive: true });
+        const tmpPath = `${cvPath}.upload-${Date.now()}.tmp`;
         try {
-          await streamToFile(req, cvPath, 10_000_000);
+          await streamToFile(req, tmpPath, 10_000_000);
+          renameSync(tmpPath, cvPath);
           return sendJson(res, 200, { ok: true });
         } catch (err) {
+          try { rmSync(tmpPath, { force: true }); } catch { /* ignore */ }
           return sendJson(res, 400, { error: `Upload fehlgeschlagen: ${err.message}` });
         }
       }
@@ -694,7 +715,21 @@ const server = http.createServer(async (req, res) => {
         if (!job) return sendJson(res, 404, { error: 'Job nicht gefunden' });
         if (!job.platform) return sendJson(res, 400, { error: 'Nur Plattform-Jobs (LinkedIn/StepStone/Indeed) können automatisch beworben werden.' });
         if (job.easy_apply === 0) return sendJson(res, 400, { error: 'Diese Stelle hat kein "Einfach bewerben" — bitte manuell bewerben.' });
+        // createApplication is INSERT OR IGNORE on UNIQUE(client_id, job_id):
+        // it returns the EXISTING row when one exists. Answer honestly instead
+        // of claiming "queued" while a terminal row silently blocked the insert.
         const app = createApplication(clientId, job.id, job.platform);
+        if (app.state === 'discarded') {
+          claimApplication(app.id, 'discarded', 'queued');
+          updateApplication(app.id, { error: null });
+          return sendJson(res, 201, { application: getApplicationById(app.id) });
+        }
+        if (app.state === 'submitted') {
+          return sendJson(res, 409, { error: 'Für diesen Job wurde bereits eine Bewerbung gesendet.', application: app });
+        }
+        if (app.state === 'failed') {
+          return sendJson(res, 409, { error: 'Für diesen Job existiert eine fehlgeschlagene Bewerbung — bitte "Wiederholen" nutzen.', application: app });
+        }
         return sendJson(res, 201, { application: app });
       }
 
@@ -876,9 +911,11 @@ const server = http.createServer(async (req, res) => {
       }
 
       // GET /api/settings — schema + current values.
-      // Note: this is a localhost self-host tool; the operator owns these keys and
-      // explicitly wants to view/copy them, so secrets are returned too (hidden
-      // behind a reveal toggle in the UI). The .env is gitignored and never shipped.
+      // Secrets: on a localhost self-host (no auth) the operator owns these keys
+      // and wants to view/copy them, so they're returned (behind the UI's reveal
+      // toggle). In the internet-facing AUTH_ENABLED mode they are NOT returned —
+      // a hijacked session must not yield SESSION_SECRET or the API keys; the
+      // UI's "empty = leave unchanged" save semantics keep editing intact.
       if (method === 'GET' && pathname === '/api/settings') {
         const current = await readEnvMap();
         const settings = SETTINGS_SCHEMA.map(s => {
@@ -889,7 +926,7 @@ const server = http.createServer(async (req, res) => {
             default: s.default ?? '', required: !!s.required, help: s.help,
             min: s.min, max: s.max,
           };
-          if (s.type === 'secret') { out.isSet = hasValue; out.value = hasValue ? raw : ''; }
+          if (s.type === 'secret') { out.isSet = hasValue; out.value = (hasValue && !AUTH_ENABLED) ? raw : ''; }
           else out.value = hasValue ? raw : (s.default ?? '');   // prefill effective value
           return out;
         });
@@ -939,9 +976,16 @@ const server = http.createServer(async (req, res) => {
         await writeFile(ENV_FILE, buildEnvFile(final), 'utf-8');
         // Reflect into the live process so freshly spawned runs (and in-process
         // helpers that read process.env at call time) pick changes up immediately.
-        for (const s of SETTINGS_SCHEMA) {
-          if (final[s.key] != null && final[s.key] !== '') process.env[s.key] = final[s.key];
-          else delete process.env[s.key];
+        // Only keys this request actually touched: values supplied via the real
+        // environment (e.g. Docker secrets that never live in .env) must survive
+        // a save of unrelated settings.
+        for (const key of Object.keys(updates)) {
+          const s = SCHEMA_BY_KEY[key];
+          if (!s) continue;
+          const submitted = updates[key] == null ? '' : String(updates[key]).trim();
+          if (s.type === 'secret' && submitted === '') continue; // empty = leave unchanged
+          if (final[key] != null && final[key] !== '') process.env[key] = final[key];
+          else delete process.env[key];
         }
         return sendJson(res, 200, { ok: true });
       }
