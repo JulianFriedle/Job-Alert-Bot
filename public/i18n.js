@@ -597,10 +597,6 @@ const statusLabel = (s) => t('status.' + s);
 const applicationsN = (n) => lang === 'en'
   ? `${n} application${n === 1 ? '' : 's'}`
   : `${n} Bewerbung${n === 1 ? '' : 'en'}`;
-const careerPagesN = (n) => lang === 'en'
-  ? `${n} career page${n === 1 ? '' : 's'}`
-  : `${n} Karriereseite${n === 1 ? '' : 'n'}`;
-
 // Settings / wizard localizers: English override when present, else the German
 // text the backend already sent.
 const tSetGroup = (g) => (lang === 'en' ? (SETTINGS_GROUPS_EN[g] || g) : g);

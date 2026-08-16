@@ -13,6 +13,15 @@ import assert from 'node:assert/strict';
 const db = await import('../src/database.js');
 const creds = await import('../src/credentials.js');
 
+test('saveJob sets last_seen_at on insert (expiry depends on it)', () => {
+  // Regression: updateLastSeenBatch runs BEFORE saveJob and only matches
+  // existing rows — first-time jobs stayed NULL and could never expire.
+  db.saveJob('default', { id: 'job-seen', title: 'T', company: 'C', url: 'http://x', location: '', description: '', source: 's' });
+  const row = db.getJobById('default', 'job-seen');
+  assert.ok(row.last_seen_at, 'last_seen_at populated on first insert');
+  assert.equal(row.last_seen_at, row.scraped_at);
+});
+
 test('claimApplication: two claimants, exactly one wins', () => {
   const app = db.createApplication('default', 'job-race', 'stepstone');
   const gui = db.claimApplication(app.id, 'ready_for_review', 'approved'); // wrong from-state

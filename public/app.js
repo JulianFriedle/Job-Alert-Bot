@@ -518,7 +518,10 @@ function renderHeatmap(activity = {}) {
   const start = new Date(today);
   start.setDate(start.getDate() - start.getDay() - (WEEKS - 1) * 7);
 
-  const counts = Object.values(activity);
+  // Normalize the colour scale against the DRAWN window only — all-time counts
+  // include years outside the 53 weeks and would flatten the visible range.
+  const startKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+  const counts = Object.entries(activity).filter(([day]) => day >= startKey).map(([, c]) => c);
   const max = counts.length ? Math.max(...counts) : 0;
   const level = (c) => {
     if (!c) return 0;
@@ -563,23 +566,6 @@ function renderHeatmap(activity = {}) {
       `<div class="hm-months">${monthLabels}</div><div class="hm-grid">${cols.join('')}</div>` +
     `</div>`;
   $('#activity-total').textContent = applicationsN(total) + t('stats.inLastYear');
-}
-
-// Minimal dependency-free SVG bar chart (vertical).
-function barChartV(data, { color = 'var(--accent)', height = 160 } = {}) {
-  const entries = Object.entries(data);
-  if (!entries.length) return `<p class="muted" style="padding:24px 4px">${esc(t('stats.noData'))}</p>`;
-  const max = Math.max(...entries.map(([, v]) => v));
-  const bw = 100 / entries.length;
-  const bars = entries.map(([k, v], i) => {
-    const h = max ? (v / max) * 78 : 0;
-    const x = i * bw + bw * 0.15;
-    const w = bw * 0.7;
-    return `<rect x="${x}" y="${88 - h}" width="${w}" height="${h}" rx="1.2" fill="${color}"></rect>
-            <text x="${x + w / 2}" y="${86 - h - 1}" class="bar-val" text-anchor="middle">${v}</text>
-            <text x="${x + w / 2}" y="98" class="bar-lbl" text-anchor="middle">${esc(k)}</text>`;
-  }).join('');
-  return `<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:${height}px">${bars}</svg>`;
 }
 
 // Horizontal bars: companies you applied to most.
@@ -1638,7 +1624,7 @@ function clientCard(c) {
       <label><input type="checkbox" class="cc-exp" ${c.expiry_notifications !== 'off' ? 'checked' : ''}> <span data-i18n="clients.expiry">Ablauf-Hinweise</span></label>
     </div>
     <label data-i18n="clients.minScore">Min. Relevanz-Score (leer = global)</label>
-    <input class="set-input set-num cc-min" type="number" min="1" max="10" value="${c.min_relevance_score ?? ''}">
+    <input class="set-input set-num cc-min" type="number" min="1" max="10" value="${esc(String(c.min_relevance_score ?? ''))}">
 
     <label class="cc-edit-label" data-i18n="clients.editContent">Inhalte dieses Klienten bearbeiten</label>
     <div class="cc-edit">

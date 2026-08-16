@@ -7,13 +7,6 @@
 // NOTE: the analyzer's strict JSON output contract is intentionally NOT editable
 // (it would break parsing). Only the system prompt and the scoring guidance are.
 
-import { readFileSync } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const PROMPTS_PATH = path.join(__dirname, '..', 'config', 'prompts.json');
-
 export const DEFAULT_PROMPTS = {
   // ── Analyzer (relevance scoring) ──
   analyzerSystem:
@@ -70,14 +63,4 @@ export function minimizePromptOverrides(incoming) {
     }
   }
   return overrides;
-}
-
-// Merge defaults with config/prompts.json. Read fresh each call so GUI edits
-// take effect without restarting (legacy single-user fallback for the default client).
-export function loadPrompts() {
-  try {
-    return mergePrompts(JSON.parse(readFileSync(PROMPTS_PATH, 'utf-8')));
-  } catch {
-    return { ...DEFAULT_PROMPTS };
-  }
 }

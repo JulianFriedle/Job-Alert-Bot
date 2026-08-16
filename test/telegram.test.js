@@ -119,12 +119,12 @@ test('question reply flow: answer lands on the application, last answer → read
   assert.equal(qs[1].answer, null);
   assert.ok(bot.sent.length > beforeCount, 'hint with valid options sent');
 
-  // The prompt was consumed by the invalid reply — the app answers via the
-  // single-open-prompt fallback path or a re-sent prompt; simulate a fresh one.
-  db.recordTelegramPrompt(CHAT, 8002, app.id, 'q2');
+  // The invalid reply must NOT consume the prompt: it stays open, and replying
+  // to the SAME prompt with a valid option works without any re-send.
+  assert.equal(db.getOpenTelegramPrompts(CHAT).length, 1, 'prompt still open after invalid answer');
   await _test.handleMessage(bot, {
     chat: { id: Number(CHAT) }, text: 'sofort',
-    reply_to_message: { message_id: 8002 },
+    reply_to_message: { message_id: q2Prompt.message_id },
   });
   row = db.getApplicationById(app.id);
   qs = JSON.parse(row.questions_json);

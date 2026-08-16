@@ -50,13 +50,16 @@ function formatMessage(job, analysis) {
   const reasons = bullet(analysis.reasons, 200, '• N/A');
   const concerns = bullet(analysis.concerns, 200, '• None');
 
-  const message = [
+  // The AI fields (reasons/concerns/summary) live in `head`; the Apply link and
+  // job ID live in `tail` and survive clamping — they are the most actionable
+  // lines and used to be exactly what the old end-trimming clamp deleted first.
+  const head = [
     `🆕 *New Job Match\\!*`,
     ``,
     `💼 ${escapeMarkdown(truncate(job.title || 'N/A', 200))}`,
     `🏢 ${escapeMarkdown(truncate(job.company || 'N/A', 120))}`,
     `📍 ${escapeMarkdown(truncate(job.location || 'N/A', 120))}`,
-    `⭐ Match Score: *${analysis.score}/10*`,
+    `⭐ Match Score: *${escapeMarkdown(String(analysis.score ?? '?'))}/10*`,
     ``,
     `✅ *Why it fits:*`,
     reasons,
@@ -65,23 +68,26 @@ function formatMessage(job, analysis) {
     concerns,
     ``,
     `💬 ${escapeMarkdown(truncate(analysis.summary || '', 600))}`,
+  ];
+  const tail = [
     ``,
     `🔗 [Apply here](${escapeMarkdownUrl(job.url)})`,
     ``,
     `🆔 ID: \`${job.id}\``,
-  ].join('\n');
+  ];
 
-  return clampToTelegramLimit(message);
+  return clampToTelegramLimit(head, tail);
 }
 
 // Last-resort guard: if a message is still over the limit, drop whole trailing
-// lines (each line is self-contained markdown, so this can't break a span) until
-// it fits. Keeps the structural header intact even in pathological cases.
-function clampToTelegramLimit(message) {
-  if (message.length <= TELEGRAM_MAX_LEN) return message;
-  const lines = message.split('\n');
-  while (lines.length > 1 && lines.join('\n').length > TELEGRAM_MAX_LEN) lines.pop();
-  return lines.join('\n');
+// HEAD lines (each line is self-contained markdown, so this can't break a span)
+// until it fits — the tail (link + id) is always kept.
+function clampToTelegramLimit(headLines, tailLines = []) {
+  const joined = () => [...headLines, ...tailLines].join('\n');
+  if (joined().length <= TELEGRAM_MAX_LEN) return joined();
+  log('Nachricht überschritt 4096 Zeichen — Detailzeilen wurden gekürzt.');
+  while (headLines.length > 1 && joined().length > TELEGRAM_MAX_LEN) headLines.pop();
+  return joined();
 }
 
 // Escape special MarkdownV2 characters
@@ -136,7 +142,7 @@ export async function notifyExpired(job, client) {
     `💼 ${escapeMarkdown(job.title || 'N/A')}`,
     `🏢 ${escapeMarkdown(job.source || 'N/A')}`,
     `📍 ${escapeMarkdown(job.location || '')}`,
-    `⭐ Score war: *${job.score ?? '?'}/10*`,
+    `⭐ Score war: *${escapeMarkdown(String(job.score ?? '?'))}/10*`,
     ``,
     `🔗 [Zum Stellenangebot](${escapeMarkdownUrl(job.url)})`,
   ].join('\n');
