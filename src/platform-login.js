@@ -8,7 +8,7 @@
 // flips to 'challenge' and the caller alerts the user instead.
 //
 // Only the scheduler process calls this module, so session files never race.
-import { mkdirSync, existsSync } from 'fs';
+import { mkdirSync, existsSync, rmSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -163,11 +163,14 @@ export async function getAuthenticatedContext(browser, clientId, platform) {
 
   const statePath = sessionPath(clientId, platform);
 
-  // 1. Saved session
+  // 1. Saved session. A corrupt/truncated session file (Playwright rejects
+  // malformed storageState JSON) must fall through to auto-login, not fail the
+  // application — and the broken file is removed so retries don't hit it again.
   if (existsSync(statePath)) {
-    const context = await newHardenedContext(browser, { storageState: statePath });
-    const page = await context.newPage();
+    let context = null;
     try {
+      context = await newHardenedContext(browser, { storageState: statePath });
+      const page = await context.newPage();
       if (await flow.probe(page)) {
         log(`${platform}/${clientId}: gespeicherte Session gültig.`);
         await page.close();
@@ -175,9 +178,10 @@ export async function getAuthenticatedContext(browser, clientId, platform) {
       }
       log(`${platform}/${clientId}: Session abgelaufen — neuer Login nötig.`);
     } catch (err) {
-      log(`${platform}/${clientId}: Session-Probe fehlgeschlagen (${err.message}) — neuer Login.`);
+      log(`${platform}/${clientId}: Session unbrauchbar (${err.message}) — Datei wird entfernt, neuer Login.`);
+      try { rmSync(statePath, { force: true }); } catch { /* best effort */ }
     }
-    await context.close();
+    if (context) await context.close().catch(() => {});
   }
 
   // 2. Auto-login with stored credentials
@@ -207,7 +211,10 @@ export async function getAuthenticatedContext(browser, clientId, platform) {
     return context;
   } catch (err) {
     await context.close();
-    if (!(err instanceof LoginChallengeError)) setLoginState(clientId, platform, 'invalid');
+    // login_state was already set for the definitive outcomes (invalid /
+    // challenge) above. Anything else here is a transient failure (navigation
+    // timeout, selector miss) — labelling it 'invalid' would tell the user
+    // their correct password was rejected.
     throw err;
   }
 }

@@ -152,6 +152,7 @@ export async function submit(page, application, job, { questions, dryRun, screen
   }).catch(() => null);
   if (screenshot) await screenshot(confirmation ? 'submitted' : 'submit-unconfirmed');
 
-  if (!confirmation) return { ok: false, error: 'Keine Sende-Bestätigung gefunden' };
+  // clicked:true = the real send button WAS pressed; the worker must block retries.
+  if (!confirmation) return { ok: false, clicked: true, error: 'Keine Sende-Bestätigung gefunden — Bewerbung wurde evtl. trotzdem gesendet, bitte auf der Plattform prüfen.' };
   return { ok: true, confirmation };
 }

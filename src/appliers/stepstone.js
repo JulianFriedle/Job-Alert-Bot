@@ -100,8 +100,15 @@ export async function submit(page, application, job, { questions, coverLetter, c
     }
   }
 
+  // Contract (common.js): a miss is a failed application with a screenshot,
+  // never a reason to guess and submit anyway. StepStone is a single form, so
+  // every question must find its field here.
   const misses = await fillAnswers(page, questions);
-  if (misses.length) log(`Nicht zuordenbare Felder: ${misses.join(' | ')}`);
+  if (misses.length) {
+    log(`Nicht zuordenbare Felder: ${misses.join(' | ')}`);
+    if (screenshot) await screenshot('fill-missing');
+    return { ok: false, error: `Felder nicht zuordenbar: ${misses.join(' | ')}` };
+  }
 
   await humanDelay(800, 1500);
   if (dryRun) {
@@ -121,6 +128,8 @@ export async function submit(page, application, job, { questions, coverLetter, c
   }).catch(() => null);
   if (screenshot) await screenshot(confirmation ? 'submitted' : 'submit-unconfirmed');
 
-  if (!confirmation) return { ok: false, error: 'Keine Bestätigung nach dem Absenden gefunden' };
+  // clicked:true = the real send button WAS pressed; the application may have
+  // gone out despite the missing confirmation. The worker must block retries.
+  if (!confirmation) return { ok: false, clicked: true, error: 'Keine Bestätigung nach dem Absenden gefunden — Bewerbung wurde evtl. trotzdem gesendet, bitte auf der Plattform prüfen.' };
   return { ok: true, confirmation };
 }
