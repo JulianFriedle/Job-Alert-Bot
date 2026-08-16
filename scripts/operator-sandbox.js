@@ -67,6 +67,10 @@ const USER = process.env.OPERATOR_USER || 'admin';
 const PASSWORD = process.env.OPERATOR_PASSWORD || 'operator';
 
 process.env.JOBS_DB_PATH = SANDBOX_DB;
+// Settings saves and wizard writes stay inside the sandbox too — without these
+// the sandbox GUI would rewrite the operator's real .env and config/*.json.
+process.env.ENV_FILE_PATH = path.join(SANDBOX_DIR, '.env');
+process.env.SETUP_CONFIG_DIR = path.join(SANDBOX_DIR, 'config');
 process.env.GUI_PORT = PORT;
 process.env.AUTH_ENABLED = 'true';
 process.env.OPERATOR_USER = USER;
@@ -77,7 +81,7 @@ process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'operator-sandbox-sec
 
 log('──────────────────────────────────────────────');
 log(`Operator GUI  →  http://localhost:${PORT}`);
-log(`Login         →  user: ${USER}   password: ${PASSWORD}`);
+log(`Login         →  user: ${USER}   password: ${PASSWORD === 'operator' ? PASSWORD : '(aus OPERATOR_PASSWORD übernommen)'}`);
 log(`Sandbox DB    →  ${path.relative(ROOT, SANDBOX_DB)}`);
 log('Your private GUI on :3000 and real data are unaffected.');
 log('──────────────────────────────────────────────');

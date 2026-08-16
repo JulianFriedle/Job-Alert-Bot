@@ -13,15 +13,20 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+import { getClient, updateClient, DEFAULT_CLIENT_ID } from './database.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 
+// Both overridable so a sandbox instance (scripts/operator-sandbox.js) can
+// redirect every wizard write away from the operator's real files.
+const CONFIG_DIR = process.env.SETUP_CONFIG_DIR || path.join(ROOT, 'config');
 const REAL = {
-  env:     path.join(ROOT, '.env'),
-  profile: path.join(ROOT, 'config', 'profile.json'),
-  jobs:    path.join(ROOT, 'config', 'jobs.json'),
-  filters: path.join(ROOT, 'config', 'filters.json'),
-  state:   path.join(ROOT, 'config', 'setup-state.json'),
+  env:     process.env.ENV_FILE_PATH || path.join(ROOT, '.env'),
+  profile: path.join(CONFIG_DIR, 'profile.json'),
+  jobs:    path.join(CONFIG_DIR, 'jobs.json'),
+  filters: path.join(CONFIG_DIR, 'filters.json'),
+  state:   path.join(CONFIG_DIR, 'setup-state.json'),
 };
 const SANDBOX_DIR = path.join(ROOT, 'data', 'setup-debug');
 const SANDBOX = {
@@ -150,6 +155,37 @@ async function writeJson(file, obj) {
   await writeFile(file, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
 }
 
+// ── DB-backed config (source of truth once the GUI has saved) ───────────────
+// The pipeline reads profile/sources/filters from the default client's DB
+// columns (client-config.js) and falls back to config/*.json only while the
+// column is NULL. The wizard must follow the same precedence, or its reads go
+// stale and its writes become no-ops the moment anything was saved in the GUI.
+const DB_COLUMN = { profile: 'profile_json', jobs: 'sources_json', filters: 'filters_json' };
+
+function readDbStore(store) {
+  const col = DB_COLUMN[store];
+  if (!col) return null;
+  let client;
+  try { client = getClient(DEFAULT_CLIENT_ID); } catch { return null; }
+  if (!client || client[col] == null) return null;
+  try {
+    const parsed = JSON.parse(client[col]);
+    if (store === 'jobs') return { sources: Array.isArray(parsed?.sources) ? parsed.sources : [] };
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch { return null; }
+}
+
+// Read one store with wizard precedence: sandbox (debug) → DB → legacy file.
+async function readStore(store, debug) {
+  if (debug) {
+    const sandboxed = await readJson(SANDBOX[store]);
+    if (sandboxed) return sandboxed;
+  }
+  const fromDb = readDbStore(store);
+  if (fromDb) return fromDb;
+  return (await readJson(REAL[store])) || null;
+}
+
 // ── .env helpers (line-based upsert; preserves comments + unrelated keys) ─────
 function envQuote(v) {
   return /[\s#"'=]/.test(v) ? `"${String(v).replace(/"/g, '\\"')}"` : v;
@@ -271,12 +307,9 @@ async function writeState(debug, patch) {
 // ── Current values for a step's fields ───────────────────────────────────────
 async function valuesForStep(step, debug) {
   const env = step.fields.some(f => f.store === 'env') ? await readEnv(debug) : {};
-  const profile = step.fields.some(f => f.store === 'profile')
-    ? (await readJson(pathsFor('profile', debug).read, pathsFor('profile', debug).realFallback)) || {} : {};
-  const jobs = step.fields.some(f => f.store === 'jobs')
-    ? (await readJson(pathsFor('jobs', debug).read, pathsFor('jobs', debug).realFallback)) || {} : {};
-  const filters = step.fields.some(f => f.store === 'filters')
-    ? (await readJson(pathsFor('filters', debug).read, pathsFor('filters', debug).realFallback)) || {} : {};
+  const profile = step.fields.some(f => f.store === 'profile') ? (await readStore('profile', debug)) || {} : {};
+  const jobs = step.fields.some(f => f.store === 'jobs') ? (await readStore('jobs', debug)) || {} : {};
+  const filters = step.fields.some(f => f.store === 'filters') ? (await readStore('filters', debug)) || {} : {};
 
   const templates = await templateValues();
 
@@ -375,9 +408,14 @@ async function saveStep(step, incoming, debug) {
       for (const s of arr) {
         const name = (s?.name || '').trim();
         const url = (s?.url || '').trim();
-        if (!name && !url) continue;
-        if (!name || !url) { errors.push('Jede Quelle braucht Name und URL'); continue; }
-        clean.push({ name, url, type: s.type || 'careers-page', ...Object.fromEntries(Object.entries(s).filter(([k]) => !['name', 'url', 'type'].includes(k))) });
+        const type = (s?.type || 'careers-page').trim();
+        // Platform sources (linkedin/stepstone/indeed) carry a search config
+        // instead of a URL — requiring one would make the step impossible to pass.
+        const isPlatform = ['linkedin', 'stepstone', 'indeed'].includes(type);
+        if (!name && !url && !isPlatform) continue;
+        if (!name) { errors.push('Jede Quelle braucht einen Namen'); continue; }
+        if (!isPlatform && !url) { errors.push('Jede Karriereseiten-Quelle braucht eine URL'); continue; }
+        clean.push({ name, ...(url ? { url } : {}), type, ...Object.fromEntries(Object.entries(s).filter(([k]) => !['name', 'url', 'type'].includes(k))) });
       }
       if (f.required && clean.length === 0) errors.push('Mindestens eine Quelle wird benötigt');
       jobs = jobs || {};
@@ -431,20 +469,25 @@ async function saveStep(step, incoming, debug) {
 
   if (errors.length) return { ok: false, error: errors.join(' · ') };
 
-  // Apply writes, merging into existing files so untouched fields survive.
+  // Apply writes, merging into the CURRENT values (DB-first, same precedence
+  // the pipeline uses) so untouched fields survive. Non-debug writes go to the
+  // default client's DB columns — the store the pipeline actually reads — and
+  // to the legacy file, keeping both in sync.
   if (Object.keys(envUpdates).length) await writeEnv(debug, envUpdates);
 
   if (profile) {
-    const cur = (await readJson(pathsFor('profile', debug).read, pathsFor('profile', debug).realFallback)) || {};
-    const merged = mergeDeep(cur, profile);
+    const merged = mergeDeep((await readStore('profile', debug)) || {}, profile);
     await writeJson(pathsFor('profile', debug).write, merged);
+    if (!debug) updateClient(DEFAULT_CLIENT_ID, { profile_json: JSON.stringify(merged) });
   }
   if (jobs) {
     await writeJson(pathsFor('jobs', debug).write, jobs);
+    if (!debug) updateClient(DEFAULT_CLIENT_ID, { sources_json: JSON.stringify({ sources: jobs.sources }) });
   }
   if (filters) {
-    const cur = (await readJson(pathsFor('filters', debug).read, pathsFor('filters', debug).realFallback)) || {};
-    await writeJson(pathsFor('filters', debug).write, { ...cur, ...filters });
+    const merged = { ...((await readStore('filters', debug)) || {}), ...filters };
+    await writeJson(pathsFor('filters', debug).write, merged);
+    if (!debug) updateClient(DEFAULT_CLIENT_ID, { filters_json: JSON.stringify(merged) });
   }
 
   await writeState(debug, { acknowledged: [step.id] });

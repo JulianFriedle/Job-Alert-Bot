@@ -21,11 +21,6 @@ export function generateId(url, title = '', company = '') {
   return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
 }
 
-const JOB_LINK_SELECTOR =
-  'a[href*="/job/"], a[href*="/jobs/"], a[href*="/career/"], ' +
-  'a[href*="/careers/"], a[href*="/position/"], a[href*="/vacancy/"], ' +
-  'a[href*="/stellenangebote/"], a[href*="/stellen/"]';
-
 async function extractJobsAndPagination(page, source = {}) {
   const currentUrl = page.url();
 
@@ -802,7 +797,10 @@ export async function scrapeSource(source) {
       if (totalCount && totalCount > allJobs.length) {
         const numPages = Math.ceil(totalCount / step);
         log(`  Config-driven pagination: ${totalCount} total, step=${step}, pages=${numPages}`);
-        for (let pg = 1; pg < Math.min(numPages + 1, 50); pg++) {
+        // Page 1 (offset 0) was already scraped; the remaining pages are
+        // 1..numPages-1 — `pg < numPages`, not numPages+1, or the last request
+        // points one full page past the end.
+        for (let pg = 1; pg < Math.min(numPages, 50); pg++) {
           if (isAborted()) break;
           const pgUrl = new URL(source.url);
           // 'index' mode: param is a 0-based page index (page,1,2,…). Default 'offset' mode: param is a row offset (step,2·step,…).
@@ -1149,18 +1147,22 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
     try {
       // Platform sources (linkedin/stepstone/indeed) have dedicated scrapers;
       // everything else goes through the generic career-page heuristics.
-      const { jobs, duplicates, siteTotal } = isPlatformSource(source)
+      const { jobs, duplicates, siteTotal, blocked } = isPlatformSource(source)
         ? await scrapePlatform(source)
         : await scrapeSource(source);
       allJobs.push(...jobs);
       stats[source.name] = {
         duplicates: (stats[source.name]?.duplicates || 0) + duplicates,
         siteTotal: siteTotal ?? stats[source.name]?.siteTotal ?? null,
+        // A challenge/refusal means this source's result is incomplete, not
+        // that it legitimately has no jobs.
+        failed: Boolean(blocked) || Boolean(stats[source.name]?.failed),
       };
     } catch (err) {
       log(isAborted()
         ? `${source.name}: abgebrochen — ${err.message.split('\n')[0]}`
         : `ERROR scraping ${source.name}: ${err.message}`);
+      stats[source.name] = { ...(stats[source.name] || { duplicates: 0, siteTotal: null }), failed: true };
     }
   }, {
     keyOf: (source) => registrableDomain(source.url),
@@ -1171,13 +1173,21 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
     stopWhen: isAborted,
   });
 
+  // The run's "seen" picture is incomplete when a source was blocked or crashed,
+  // when the queue was dropped by an abort, or when a source never reported at
+  // all — callers must not treat missing jobs as expired listings.
+  const incomplete = isAborted()
+    || errors.length > 0
+    || Object.keys(stats).length < sources.length
+    || Object.values(stats).some(s => s.failed);
+
   if (isAborted()) {
     log(`Scrape abgebrochen: ${allJobs.length} Job(s) aus ${Object.keys(stats).length}/${sources.length} Quelle(n) verarbeitet.`);
   } else {
     for (const err of errors) log(`ERROR in scrape worker: ${err.message}`);
-    log(`Scrape complete: ${allJobs.length} total unique job(s) from ${sources.length} source(s)`);
+    log(`Scrape complete: ${allJobs.length} total unique job(s) from ${sources.length} source(s)${incomplete ? ' — WARNUNG: mindestens eine Quelle unvollständig/blockiert' : ''}`);
   }
-  return { jobs: allJobs, stats };
+  return { jobs: allJobs, stats, incomplete };
 }
 
 // Allow direct execution: npm run test-scraper

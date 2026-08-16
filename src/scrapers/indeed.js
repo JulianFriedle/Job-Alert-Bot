@@ -41,7 +41,11 @@ export function extractJobcards(mosaic) {
       title: String(r.displayTitle || r.title).replace(/\s+/g, ' ').trim(),
       company: String(r.company || r.truncatedCompany || '').replace(/\s+/g, ' ').trim(),
       location: String(r.formattedLocation || '').replace(/\s+/g, ' ').trim(),
-      easyApply: Boolean(r.indeedApplyEnabled ?? r.indeedApplyable),
+      // Tri-state: explicit flag → certain, flag absent (schema drift) → unknown.
+      // A hard false/0 would permanently lock the job out of applying downstream.
+      easyApply: (r.indeedApplyEnabled ?? r.indeedApplyable) == null
+        ? null
+        : Boolean(r.indeedApplyEnabled ?? r.indeedApplyable),
       snippet: String(r.snippet || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
     }));
 }
@@ -57,7 +61,8 @@ function parseCardsInDom() {
     if (!title) continue;
     const company = (card.querySelector('[data-testid="company-name"]')?.textContent || '').trim();
     const location = (card.querySelector('[data-testid="text-location"]')?.textContent || '').trim();
-    const easyApply = /einfach bewerben|easily apply/i.test(card.textContent || '');
+    // Badge present → certain; absent proves nothing in the DOM fallback.
+    const easyApply = /einfach bewerben|easily apply/i.test(card.textContent || '') ? true : null;
     out.push({ jobkey: jk, title, company, location, easyApply, snippet: '' });
   }
   return out;
@@ -75,6 +80,7 @@ export async function scrape(source) {
   const seenKeys = new Set();
   let duplicates = 0;
   let siteTotal = null;
+  let blocked = false; // challenge/error → result is incomplete, not "0 jobs exist"
 
   const browser = await launchPlatformBrowser({ headless: true });
   try {
@@ -92,6 +98,7 @@ export async function scrape(source) {
 
         if (await isChallengePage(page)) {
           log(`  BLOCKED — Cloudflare-Challenge erkannt. Lauf wird übersprungen (kein CAPTCHA-Lösen).`);
+          blocked = true;
           break;
         }
 
@@ -104,9 +111,14 @@ export async function scrape(source) {
 
         if (pageNo === 0) {
           siteTotal = await page.evaluate(() => {
-            const el = document.querySelector('.jobsearch-JobCountAndSortPane-jobCount, [data-testid="searchCount"]');
-            const m = (el?.textContent || '').match(/([\d.]{1,9})/);
-            return m ? parseInt(m[1].replace(/\./g, ''), 10) : null;
+            const text = (document.querySelector('.jobsearch-JobCountAndSortPane-jobCount, [data-testid="searchCount"]')?.textContent || '');
+            // German Indeed shows a range ("Jobs 1 bis 15 von 302") — an
+            // unanchored first-number match would return 1. Prefer the total
+            // after "von/of", else a number directly before "Jobs/Stellen".
+            const m = text.match(/(?:von|of)\s+([\d.]{1,9})/i) || text.match(/([\d.]{1,9})\s*\+?\s*(?:Jobs?|Stellen|Ergebnisse|results)/i);
+            if (!m) return null;
+            const n = parseInt(m[1].replace(/\./g, ''), 10);
+            return Number.isFinite(n) ? n : null;
           }).catch(() => null);
         }
 
@@ -124,7 +136,7 @@ export async function scrape(source) {
             description: '', // detail page text is fetched later (fetchDescriptions)
             source: source.name,
             platform: 'indeed',
-            easyApply: c.easyApply ? 1 : 0,
+            easyApply: c.easyApply == null ? null : (c.easyApply ? 1 : 0),
           });
           added++;
         }
@@ -133,6 +145,9 @@ export async function scrape(source) {
       } catch (err) {
         // On abort the browser is already gone — expected, not a scrape failure.
         log(isAborted() ? `  Seite ${pageNo + 1}: abgebrochen` : `  Seite ${pageNo + 1}: ERROR — ${err.message}`);
+        // Either way this source's picture is now partial; only a clean run
+        // may be used to decide that a job has expired.
+        blocked = true;
         break;
       }
     }
@@ -140,6 +155,6 @@ export async function scrape(source) {
     await browser.close().catch(() => {});
   }
 
-  log(`Fertig ${source.name}: ${jobs.length} Job(s)${siteTotal ? ` (Website: ${siteTotal})` : ''}`);
-  return { jobs, duplicates, siteTotal };
+  log(`Fertig ${source.name}: ${jobs.length} Job(s)${siteTotal ? ` (Website: ${siteTotal})` : ''}${blocked ? ' [UNVOLLSTÄNDIG]' : ''}`);
+  return { jobs, duplicates, siteTotal, blocked };
 }

@@ -11,7 +11,10 @@ const PLATFORMS = { linkedin, stepstone, indeed };
 export const PLATFORM_TYPES = Object.keys(PLATFORMS);
 
 export function isPlatformSource(source) {
-  return Boolean(source && PLATFORMS[source.type]);
+  // hasOwn, not a bare property probe: `type: "constructor"` would hit
+  // Object.prototype and route the source into scrapePlatform, where
+  // .scrape is undefined — the same predicate the server validation uses.
+  return Boolean(source && Object.hasOwn(PLATFORMS, source.type));
 }
 
 // Same contract as scrapeSource: resolves { jobs, duplicates, siteTotal }.

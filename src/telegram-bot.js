@@ -50,10 +50,6 @@ const STATUS_LABELS = { applied: 'Beworben ✅', interview: 'Interview 🤝', of
 
 let bot = null;
 
-export function isBotRunning() {
-  return Boolean(bot);
-}
-
 function getSendBot() {
   // Falls back to a send-only instance when polling isn't started (e.g. a
   // one-off `--once` run) so review/question messages still go out.
@@ -98,11 +94,12 @@ export async function sendNextQuestion(applicationId, botOverride = null) {
   const header = `❓ *Frage zur Bewerbung*\n💼 ${esc(job?.title || '')}\n\n${esc(q.label)}`;
   const opts = { parse_mode: 'MarkdownV2' };
   if ((q.type === 'select' || q.type === 'radio') && Array.isArray(q.options) && q.options.length) {
+    // Note: force_reply is not a ReplyKeyboardMarkup field — a keyboard tap
+    // arrives as plain text and is routed via the open-prompt fallback.
     opts.reply_markup = {
       keyboard: q.options.map(o => [{ text: String(o) }]),
       one_time_keyboard: true,
       resize_keyboard: true,
-      force_reply: true,
       input_field_placeholder: 'Antwort wählen…',
     };
   } else {
@@ -139,12 +136,18 @@ export async function sendReviewSummary(applicationId, botOverride = null) {
     lines.push(``, `*Antworten:*`);
     for (const q of answered.slice(0, 10)) {
       const via = q.answeredVia === 'library' ? ' \\(gemerkt\\)' : '';
-      lines.push(`• ${esc(q.label)}: *${esc(q.answer)}*${via}`);
+      const answer = String(q.answer).length > 150 ? String(q.answer).slice(0, 149) + '…' : String(q.answer);
+      lines.push(`• ${esc(String(q.label).slice(0, 200))}: *${esc(answer)}*${via}`);
     }
   }
   if (app.cover_letter) {
     lines.push(``, `📝 *Anschreiben \\(Auszug\\):*`, esc(String(app.cover_letter).slice(0, 400) + '…'));
   }
+
+  // Telegram rejects messages over 4096 chars — and the call site swallows the
+  // error, so an oversized summary would silently cost the approval keyboard.
+  // Each line is self-contained MarkdownV2; drop trailing lines until it fits.
+  while (lines.length > 1 && lines.join('\n').length > 4096) lines.pop();
 
   const sent = await b.sendMessage(client.telegram_chat_id, lines.join('\n'), {
     parse_mode: 'MarkdownV2',
@@ -162,6 +165,9 @@ export async function sendReviewSummary(applicationId, botOverride = null) {
 
 // ── Inbound handling ─────────────────────────────────────────────────────────
 
+// Returns true when the answer was accepted — only then may the caller mark
+// the prompt answered. Marking on an invalid answer would consume the prompt
+// and strand the application in `awaiting_answers` with no Telegram recovery.
 async function handleAnswer(b, client, app, questionId, text, replyChatId) {
   const questions = parseQuestions(app.questions_json);
   const ok = applyAnswer(questions, questionId, text, 'telegram');
@@ -171,7 +177,7 @@ async function handleAnswer(b, client, app, questionId, text, replyChatId) {
       ? `Bitte eine der Optionen wählen: ${q.options.join(' | ')}`
       : 'Antwort konnte nicht übernommen werden.';
     await b.sendMessage(replyChatId, esc(`⚠️ ${hint}`), { parse_mode: 'MarkdownV2' });
-    return;
+    return false;
   }
   updateApplication(app.id, { questions_json: JSON.stringify(questions) });
   logApplicationEvent(app.id, 'answer_received', `${questionId} via telegram`);
@@ -179,7 +185,7 @@ async function handleAnswer(b, client, app, questionId, text, replyChatId) {
   const remaining = unansweredRequired(questions);
   if (remaining.length > 0 && app.state === 'awaiting_answers') {
     await sendNextQuestion(app.id, b);
-    return;
+    return true;
   }
   await b.sendMessage(replyChatId, esc('✔️ Antwort gespeichert.'), {
     parse_mode: 'MarkdownV2',
@@ -194,6 +200,7 @@ async function handleAnswer(b, client, app, questionId, text, replyChatId) {
     // Edit round: show the refreshed summary after each change.
     await sendReviewSummary(app.id, b);
   }
+  return true;
 }
 
 async function handleMessage(b, msg) {
@@ -218,6 +225,12 @@ async function handleMessage(b, msg) {
     return;
   }
   if (/^\/skip\b/i.test(text)) {
+    // Close the Telegram prompts (the question itself stays unanswered and can
+    // be answered in the GUI) — otherwise the user's NEXT unrelated message
+    // would be silently consumed as the answer via the single-open-prompt path.
+    for (const p of getOpenTelegramPrompts(chatId)) {
+      markTelegramPromptAnswered(chatId, p.message_id);
+    }
     await b.sendMessage(chatId, esc('⏭ Übersprungen — die Frage bleibt offen und kann im GUI beantwortet werden.'), { parse_mode: 'MarkdownV2', reply_markup: { remove_keyboard: true } });
     return;
   }
@@ -228,8 +241,8 @@ async function handleMessage(b, msg) {
     if (prompt && !prompt.answered) {
       const app = getApplicationById(prompt.application_id);
       if (app) {
-        markTelegramPromptAnswered(chatId, msg.reply_to_message.message_id);
-        await handleAnswer(b, client, app, prompt.question_id, text, chatId);
+        const ok = await handleAnswer(b, client, app, prompt.question_id, text, chatId);
+        if (ok) markTelegramPromptAnswered(chatId, msg.reply_to_message.message_id);
       }
       return;
     }
@@ -255,12 +268,30 @@ async function handleMessage(b, msg) {
   if (open.length === 1) {
     const app = getApplicationById(open[0].application_id);
     if (app) {
-      markTelegramPromptAnswered(chatId, open[0].message_id);
-      await handleAnswer(b, client, app, open[0].question_id, text, chatId);
+      const ok = await handleAnswer(b, client, app, open[0].question_id, text, chatId);
+      if (ok) markTelegramPromptAnswered(chatId, open[0].message_id);
     }
     return;
   }
   if (open.length > 1) {
+    // A reply-keyboard tap arrives as plain text with no reply context (the
+    // edit flow opens several prompts at once). Route it to the one open
+    // select/radio prompt whose option list contains exactly this text.
+    const matches = [];
+    for (const p of open) {
+      const app = getApplicationById(p.application_id);
+      if (!app) continue;
+      const q = parseQuestions(app.questions_json).find(x => x.id === p.question_id);
+      if (q && Array.isArray(q.options) && q.options.some(o => String(o) === text)) {
+        matches.push({ prompt: p, app });
+      }
+    }
+    if (matches.length === 1) {
+      const { prompt: p, app } = matches[0];
+      const ok = await handleAnswer(b, client, app, p.question_id, text, chatId);
+      if (ok) markTelegramPromptAnswered(chatId, p.message_id);
+      return;
+    }
     await b.sendMessage(chatId, esc('Bitte direkt auf die jeweilige Frage antworten (Reply), es sind mehrere offen.'), { parse_mode: 'MarkdownV2' });
   }
 }
@@ -272,9 +303,15 @@ async function handleReaction(b, reaction) {
   const ref = getTelegramMessage(chatId, messageId);
   if (!ref) return;
 
+  // new_reaction is the COMPLETE current list, not a delta — subtract the old
+  // list, or adding a second emoji would re-apply the first one's status.
+  const prev = new Set((reaction.old_reaction || [])
+    .filter(r => r.type === 'emoji')
+    .map(r => r.emoji));
   const added = (reaction.new_reaction || [])
     .filter(r => r.type === 'emoji')
-    .map(r => r.emoji);
+    .map(r => r.emoji)
+    .filter(e => !prev.has(e));
   for (const emoji of added) {
     const status = REACTION_STATUS[emoji];
     if (!status) continue;
@@ -306,7 +343,7 @@ async function handleCallback(b, query) {
       await b.answerCallbackQuery(query.id, { text: 'Freigegeben ✅' }).catch(() => {});
       await b.sendMessage(chatId, esc('✅ Freigegeben — die Bewerbung wird in Kürze versendet.'), { parse_mode: 'MarkdownV2' });
     } else {
-      await b.answerCallbackQuery(query.id, { text: `Bereits erledigt (${getApplicationById(app.id).state}).` }).catch(() => {});
+      await b.answerCallbackQuery(query.id, { text: `Bereits erledigt (${getApplicationById(app.id)?.state ?? 'gelöscht'}).` }).catch(() => {});
     }
   } else if (action === 'no') {
     const ok = ['ready_for_review', 'approved', 'awaiting_answers', 'queued', 'failed'].some(s => claimApplication(app.id, s, 'discarded'));
@@ -359,7 +396,15 @@ export function startTelegramBot() {
   bot.on('message', (msg) => handleMessage(bot, msg).catch(err => log(`message-Handler: ${err.message}`)));
   bot.on('message_reaction', (r) => handleReaction(bot, r).catch(err => log(`reaction-Handler: ${err.message}`)));
   bot.on('callback_query', (q) => handleCallback(bot, q).catch(err => log(`callback-Handler: ${err.message}`)));
-  bot.on('polling_error', (err) => log(`polling_error: ${err.message}`));
+  bot.on('polling_error', (err) => {
+    log(`polling_error: ${err.message}`);
+    // 401 (Token ungültig/widerrufen) und 409 (zweiter getUpdates-Consumer auf
+    // demselben Token) heilen sich nie selbst — deutlich machen statt endlos
+    // wie ein Netzwerk-Blip zu loggen.
+    if (/\b(401|409)\b/.test(err.message)) {
+      log('ACHTUNG: Dieser Fehler ist dauerhaft (401 = Token prüfen, 409 = doppelter Poller) — der interaktive Bot ist bis zur Behebung funktionslos.');
+    }
+  });
 
   log('Interaktiver Telegram-Bot gestartet (polling).');
   return bot;

@@ -3,6 +3,8 @@
 //
 //   prepare: queued → preparing → (awaiting_answers | ready_for_review)
 //   submit:  approved → submitting → (submitted | failed)
+//   dry-run: approved → submitting → ready_for_review (form filled, NOT sent;
+//            re-approving runs another rehearsal until APPLY_DRY_RUN=false)
 //
 // Every state change goes through claimApplication (atomic compare-and-set),
 // so the GUI or Telegram acting on the same row at the same moment can never
@@ -14,12 +16,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import {
-  getNextApplicationByState, getApplicationById, claimApplication, updateApplication,
-  logApplicationEvent, getJobById, getClient, setJobEasyApply, setApplicationStatus,
-  countSubmittedToday, getLastSubmittedAt, getLibraryAnswers, upsertLibraryAnswer,
+  getNextApplicationByState, getApplicationsByState, getApplicationById, claimApplication,
+  updateApplication, logApplicationEvent, getJobById, getClient, setJobEasyApply,
+  setApplicationStatus, countSubmittedToday, getLastSubmittedAt, getLibraryAnswers,
+  upsertLibraryAnswer,
 } from './database.js';
 import { generateCoverLetter } from './cover-letter.js';
-import { getAuthenticatedContext, LoginChallengeError, MissingCredentialsError } from './platform-login.js';
+import { getAuthenticatedContext, LoginChallengeError, MissingCredentialsError, InvalidCredentialsError } from './platform-login.js';
 import { launchPlatformBrowser, isTruthy, jitter } from './scrapers/browser.js';
 import { parseQuestions, prefillFromLibrary, unansweredRequired, libraryRowsFromQuestions } from './questions.js';
 import { sendNextQuestion, sendReviewSummary, sendInfoToClient } from './telegram-bot.js';
@@ -100,10 +103,12 @@ async function preparePass() {
     }
   }
 
-  const browser = await launchPlatformBrowser();
-  let context = null;
+  // The browser launch lives INSIDE the try: a launch failure must run the
+  // same claim-based error handling below, or the row is stranded in `preparing`.
+  let browser = null;
   try {
-    context = await getAuthenticatedContext(browser, app.client_id, app.platform);
+    browser = await launchPlatformBrowser();
+    const context = await getAuthenticatedContext(browser, app.client_id, app.platform);
     const page = await context.newPage();
     const screenshot = screenshotFn(app.id, page);
 
@@ -151,7 +156,9 @@ async function preparePass() {
       logApplicationEvent(app.id, 'login_challenge', err.message);
       await sendInfoToClient(client, `⚠️ ${err.message}`).catch(() => {});
       log(`  Login-Challenge: ${err.message}`);
-    } else if (err instanceof MissingCredentialsError) {
+    } else if (err instanceof MissingCredentialsError || err instanceof InvalidCredentialsError) {
+      // Terminal: retrying with the same missing/wrong credentials would only
+      // hammer the platform's login. attempts is pinned so Retry stays blocked.
       claimApplication(app.id, 'preparing', 'failed');
       updateApplication(app.id, { error: err.message, attempts: MAX_ATTEMPTS });
       logApplicationEvent(app.id, 'failed', err.message);
@@ -164,46 +171,64 @@ async function preparePass() {
     }
     return true;
   } finally {
-    await browser.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
   }
 }
 
 // ── Submit pass ──────────────────────────────────────────────────────────────
 
 async function submitPass() {
-  const app = getNextApplicationByState('approved');
-  if (!app) return false;
-  const job = getJobById(app.client_id, app.job_id);
-  const client = getClient(app.client_id);
-  if (!job || !client) {
-    claimApplication(app.id, 'approved', 'failed');
-    updateApplication(app.id, { error: 'Job oder Klient nicht mehr vorhanden' });
-    return true;
-  }
-
-  // Safety rails BEFORE any browser work. A blocked rail leaves the row in
-  // `approved` — it is picked up again on a later tick.
-  const cap = effectiveDailyCap(client, app.platform);
-  if (countSubmittedToday(app.client_id, app.platform) >= cap) {
-    log(`Cap erreicht (${cap}/Tag, ${app.platform}) — "${job.title}" wartet bis morgen.`);
-    return false;
-  }
-  const last = getLastSubmittedAt(app.platform);
-  if (last) {
-    const ageMin = (Date.now() - Date.parse(last)) / 60000;
-    const needed = cooldownMinutes() + jitter(0, 5);
-    if (ageMin < needed) {
-      log(`Cooldown (${ageMin.toFixed(1)} < ${needed} Min, ${app.platform}) — später.`);
-      return false;
+  // Walk ALL approved rows (oldest first) and take the first whose platform is
+  // neither capped nor cooling down — a blocked LinkedIn row must not
+  // head-of-line-block StepStone/Indeed submissions. A skipped row stays in
+  // `approved` and is reconsidered on a later tick.
+  const blockedKeys = new Set(); // avoids duplicate log lines per platform
+  let app = null, job = null, client = null;
+  for (const cand of getApplicationsByState('approved')) {
+    const candJob = getJobById(cand.client_id, cand.job_id);
+    const candClient = getClient(cand.client_id);
+    if (!candJob || !candClient) {
+      claimApplication(cand.id, 'approved', 'failed');
+      updateApplication(cand.id, { error: 'Job oder Klient nicht mehr vorhanden' });
+      return true;
     }
+
+    // Safety rails BEFORE any browser work.
+    const cap = effectiveDailyCap(candClient, cand.platform);
+    if (countSubmittedToday(cand.client_id, cand.platform) >= cap) {
+      if (!blockedKeys.has(`cap:${cand.client_id}:${cand.platform}`)) {
+        blockedKeys.add(`cap:${cand.client_id}:${cand.platform}`);
+        log(`Cap erreicht (${cap}/Tag, ${cand.platform}) — "${candJob.title}" wartet bis morgen.`);
+      }
+      continue;
+    }
+    const last = getLastSubmittedAt(cand.platform);
+    if (last) {
+      const ageMin = (Date.now() - Date.parse(last)) / 60000;
+      const needed = cooldownMinutes() + jitter(0, 5);
+      if (ageMin < needed) {
+        if (!blockedKeys.has(`cooldown:${cand.platform}`)) {
+          blockedKeys.add(`cooldown:${cand.platform}`);
+          log(`Cooldown (${ageMin.toFixed(1)} < ${needed} Min, ${cand.platform}) — später.`);
+        }
+        continue;
+      }
+    }
+    app = cand; job = candJob; client = candClient;
+    break;
   }
+  if (!app) return false;
 
   if (!claimApplication(app.id, 'approved', 'submitting')) return false;
   log(`Submit: "${job.title}" (${app.platform}) für ${client.name}${dryRun() ? ' [DRY-RUN]' : ''}`);
   logApplicationEvent(app.id, 'submit_start', dryRun() ? 'dry-run' : null);
 
-  const browser = await launchPlatformBrowser();
+  // Browser launch INSIDE the try — a launch failure must hit the claim-based
+  // error handling below, or the row is stranded in `submitting`, the one
+  // state no GUI/Telegram path can leave.
+  let browser = null;
   try {
+    browser = await launchPlatformBrowser();
     const context = await getAuthenticatedContext(browser, app.client_id, app.platform);
     const page = await context.newPage();
     const screenshot = screenshotFn(app.id, page);
@@ -240,8 +265,14 @@ async function submitPass() {
     }
 
     claimApplication(app.id, 'submitting', 'failed');
-    updateApplication(app.id, { error: result.error || 'Unbekannter Fehler', attempts: (app.attempts || 0) + 1 });
-    logApplicationEvent(app.id, 'failed', `submit: ${result.error}`);
+    updateApplication(app.id, {
+      error: result.error || 'Unbekannter Fehler',
+      // clicked = the send button was pressed but no confirmation was found;
+      // the outcome is unknown, so attempts is pinned — a blind retry could
+      // submit the same application to the employer a second time.
+      attempts: result.clicked ? MAX_ATTEMPTS : (app.attempts || 0) + 1,
+    });
+    logApplicationEvent(app.id, 'failed', `submit: ${result.error}${result.clicked ? ' (nach Klick — Ergebnis unbekannt, Retry gesperrt)' : ''}`);
     log(`  ✗ ${result.error}`);
     return true;
   } catch (err) {
@@ -249,6 +280,10 @@ async function submitPass() {
       claimApplication(app.id, 'submitting', 'approved'); // retry after manual login
       logApplicationEvent(app.id, 'login_challenge', err.message);
       await sendInfoToClient(client, `⚠️ ${err.message}`).catch(() => {});
+    } else if (err instanceof MissingCredentialsError || err instanceof InvalidCredentialsError) {
+      claimApplication(app.id, 'submitting', 'failed');
+      updateApplication(app.id, { error: err.message, attempts: MAX_ATTEMPTS });
+      logApplicationEvent(app.id, 'failed', err.message);
     } else {
       claimApplication(app.id, 'submitting', 'failed');
       updateApplication(app.id, { error: err.message, attempts: (app.attempts || 0) + 1 });
@@ -257,7 +292,7 @@ async function submitPass() {
     log(`  Submit-Fehler: ${err.message}`);
     return true;
   } finally {
-    await browser.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
   }
 }
 
@@ -279,7 +314,31 @@ async function tick() {
   }
 }
 
+// Crash recovery: `preparing`/`submitting` are transient worker states; rows
+// still in them at startup were stranded by a previous process death. Prepare
+// is idempotent → back to `queued`. A submit may or may not have gone through,
+// so those rows become `failed` with attempts pinned — never blindly resent.
+function reapStrandedApplications() {
+  for (const app of getApplicationsByState('preparing')) {
+    if (claimApplication(app.id, 'preparing', 'queued')) {
+      logApplicationEvent(app.id, 'requeued', 'Prozessneustart während prepare');
+      log(`Requeued (Neustart während prepare): App ${app.id.slice(0, 8)}`);
+    }
+  }
+  for (const app of getApplicationsByState('submitting')) {
+    if (claimApplication(app.id, 'submitting', 'failed')) {
+      updateApplication(app.id, {
+        error: 'Prozess wurde während des Versands beendet — Ergebnis unbekannt, bitte auf der Plattform prüfen.',
+        attempts: MAX_ATTEMPTS,
+      });
+      logApplicationEvent(app.id, 'failed', 'Prozessneustart während submit — Ergebnis unbekannt');
+      log(`Als fehlgeschlagen markiert (Neustart während submit): App ${app.id.slice(0, 8)}`);
+    }
+  }
+}
+
 export function startApplyWorker() {
+  reapStrandedApplications();
   if (!autoApplyEnabled()) {
     log('AUTO_APPLY_ENABLED ist aus — Worker bleibt inaktiv (Schalter wird pro Tick geprüft).');
   } else {

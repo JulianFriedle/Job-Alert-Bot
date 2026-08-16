@@ -51,6 +51,25 @@ test('indeed: jobcards extracted from the mosaic provider JSON incl. easy-apply 
   assert.equal(indeedUrl('abc123'), 'https://de.indeed.com/viewjob?jk=abc123');
 });
 
+test('indeed: absent easy-apply flag is unknown (null), never a hard false', () => {
+  // Regression: mapping "flag missing" (schema drift) to 0 permanently locked
+  // every Indeed job out of auto-apply AND manual apply downstream.
+  const mosaic = {
+    providerData: {
+      'mosaic-provider-jobcards': {
+        metaData: {
+          mosaicProviderJobCardsModel: {
+            results: [{ jobkey: 'ghi789', title: 'Ohne Flag', company: 'Gamma SE' }],
+          },
+        },
+      },
+    },
+  };
+  const cards = extractJobcards(mosaic);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].easyApply, null);
+});
+
 test('indeed: broken mosaic shapes yield an empty list', () => {
   assert.deepEqual(extractJobcards(null), []);
   assert.deepEqual(extractJobcards({}), []);

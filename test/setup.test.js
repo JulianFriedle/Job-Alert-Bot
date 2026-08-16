@@ -1,10 +1,20 @@
 // Setup tells users to copy .env.example and profile.example.json into place, so a
 // fresh install arrives with every required field non-empty. If those template
 // values counted as answers, the wizard would never open for a new user.
+// setup.js reads the client's config columns, so it pulls in database.js, which
+// opens the DB at import time — point it at a throwaway file first so running the
+// suite never touches the real data/jobs.db. Static imports are hoisted above this
+// assignment, so setup.js must be pulled in dynamically (same pattern as db.test.js).
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+process.env.JOBS_DB_PATH = path.join(mkdtempSync(path.join(tmpdir(), 'jobbot-setup-')), 'test.db');
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isTemplateValue } from '../src/setup.js';
+const { isTemplateValue } = await import('../src/setup.js');
 
 test('a value still equal to the template counts as unanswered', () => {
   assert.equal(isTemplateValue('sk-ant-...', 'sk-ant-...'), true);

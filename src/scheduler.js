@@ -140,11 +140,13 @@ async function runClientPipeline(client) {
   // 1. Scrape all sources
   let scrapedJobs = [];
   let scrapeStats = {};
+  let scrapeIncomplete = false;
   tick('scrape');
   try {
     const result = await scrapeAll(sources);
     scrapedJobs = result.jobs;
     scrapeStats = result.stats;
+    scrapeIncomplete = Boolean(result.incomplete);
   } catch (err) {
     log(`ERROR during scraping for "${client.name}": ${err.message}`);
     return;
@@ -268,7 +270,9 @@ async function runClientPipeline(client) {
         if (isPriority(job.title)) {
           // Floor priority jobs at 7 — `!(score >= 7)` also covers a missing/NaN score.
           if (!(analysis.score >= 7)) analysis.score = 7;
-          analysis.relevant = analysis.relevant || analysis.score >= 4;
+          // Relevance still honors the client's own threshold: a client with
+          // minRelevanceScore 8+ must not be notified about a floored 7.
+          analysis.relevant = analysis.relevant || analysis.score >= cfg.minRelevanceScore;
         }
 
         markAnalyzed(clientId, job.id, analysis.relevant, analysis.score ?? null, analysis.summary ?? null);
@@ -359,7 +363,13 @@ async function runClientPipeline(client) {
   }
 
   // 9. Detect and notify expired jobs (notified but not seen for 3+ days).
-  const expiryOn = isTelegramEnabled(client)
+  // Skipped entirely when any source was blocked or crashed this run: an
+  // incomplete scrape makes "not seen" meaningless and would mass-expire jobs.
+  if (scrapeIncomplete) {
+    log('Mindestens eine Quelle blockiert/unvollständig — Ablauf-Prüfung wird für diesen Lauf übersprungen.');
+  }
+  const expiryOn = !scrapeIncomplete
+    && isTelegramEnabled(client)
     && EXPIRY_NOTIFICATIONS_GLOBAL
     && String(client.expiry_notifications || 'on').trim().toLowerCase() !== 'off';
   const expiredJobs = expiryOn ? getJobsToExpire(clientId, EXPIRY_THRESHOLD_HOURS) : [];
@@ -409,11 +419,22 @@ async function runClientPipeline(client) {
 
 // Orchestrate a run across all enabled clients (or a single client when given).
 // Sets up one shared log file + console redirect so the GUI "Lauf" tab sees it all.
+let runInProgress = false;
+
 export async function runAll({ onlyClientId } = {}) {
+  // Overlap guard: a cron tick during a still-running pass would double-notify,
+  // double-pay for analysis, and corrupt the console.log redirect chain below.
+  if (runInProgress) {
+    console.log(`[${new Date().toISOString()}] [scheduler] Lauf läuft bereits — dieser Trigger wird übersprungen.`);
+    return;
+  }
+  runInProgress = true;
   const startTime = Date.now();
   const logsDir = path.join(__dirname, '..', 'logs');
   mkdirSync(logsDir, { recursive: true });
-  const ts = new Date().toISOString().replace(/T/, '_').replace(/:/g, '-').slice(0, 19);
+  // Millisecond precision: two runs starting in the same second must not
+  // truncate each other's log file.
+  const ts = new Date().toISOString().replace(/T/, '_').replace(/:/g, '-').replace(/\./g, '-').slice(0, 23);
   const logFile = path.join(logsDir, `${ts}.log`);
   const logStream = createWriteStream(logFile);
   const _origLog = console.log;
@@ -457,12 +478,10 @@ export async function runAll({ onlyClientId } = {}) {
     checkpointWal();
     console.log = _origLog;
     await new Promise(resolve => logStream.end(resolve));
+    runInProgress = false;
     endRun();
   }
 }
-
-// Back-compat alias: a single-arg "run everything once".
-export const runOnce = runAll;
 
 // Take the daily backup BEFORE the run and wait for it to finish: the snapshot must
 // be made against a quiescent DB, never while runAll is writing. (A backup fired

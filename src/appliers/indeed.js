@@ -76,6 +76,9 @@ export async function prepare(page, job) {
 
   if (outcome === 'challenge') return { unsupported: 'Cloudflare-Challenge im Bewerbungs-Wizard' };
   if (outcome === 'too-many-steps') return { unsupported: `Mehr als ${MAX_STEPS} Schritte` };
+  // Wizard never rendered → zero fields harvested. Without this guard the
+  // application would be promoted to ready_for_review with no questions.
+  if (outcome === 'stuck' && allFields.length === 0) return { unsupported: 'Wizard-Navigation nicht gefunden' };
 
   const seen = new Set();
   const questions = fieldsToQuestions(allFields.filter(f => !seen.has(f.label) && seen.add(f.label)));
@@ -131,6 +134,7 @@ export async function submit(page, application, job, { questions, cvPath, dryRun
   if (screenshot) await screenshot(confirmation ? 'submitted' : 'submit-unconfirmed', wizard);
   if (wizard !== page) await wizard.close().catch(() => {});
 
-  if (!confirmation) return { ok: false, error: 'Keine Sende-Bestätigung gefunden' };
+  // clicked:true = the real send button WAS pressed; the worker must block retries.
+  if (!confirmation) return { ok: false, clicked: true, error: 'Keine Sende-Bestätigung gefunden — Bewerbung wurde evtl. trotzdem gesendet, bitte auf der Plattform prüfen.' };
   return { ok: true, confirmation };
 }

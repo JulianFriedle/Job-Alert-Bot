@@ -36,7 +36,14 @@ export function harvestFieldsInPage(containerSelector) {
     return el.getAttribute('placeholder') || el.name || '';
   };
 
-  const visible = (el) => el.offsetParent !== null && !el.disabled && el.type !== 'hidden';
+  // Page chrome (site-wide search bar, nav, cookie banner) must never become a
+  // "screening question": StepStone/Indeed harvest without a container selector,
+  // and a harvested search bar would be filled at submit time and even pollute
+  // the cross-application answer library.
+  const inChrome = (el) => Boolean(el.closest(
+    'header, nav, footer, [role="search"], [role="banner"], [role="navigation"], [class*="cookie" i], [id*="cookie" i]'
+  ));
+  const visible = (el) => el.offsetParent !== null && !el.disabled && el.type !== 'hidden' && !inChrome(el);
 
   // Radio groups: one question per name with the option labels.
   const radios = [...root.querySelectorAll('input[type="radio"]')].filter(visible);
@@ -92,10 +99,17 @@ export function harvestFieldsInPage(containerSelector) {
 
   for (const el of root.querySelectorAll('input[type="file"]')) {
     if (el.offsetParent === null && !el.closest('[class*="upload"]')) continue;
+    if (inChrome(el)) continue;
     const label = (labelFor(el) || 'Datei-Upload').replace(/\s+/g, ' ').trim();
     if (seenLabels.has(label)) continue;
     seenLabels.add(label);
-    out.push({ kind: 'file', label, options: null, required: el.required, answered: Boolean(el.files?.length) });
+    out.push({
+      kind: 'file', label, options: null,
+      // Custom upload widgets (LinkedIn) mark requirement via aria-required,
+      // not the native attribute — same rule as every other field kind.
+      required: el.required || el.getAttribute('aria-required') === 'true',
+      answered: Boolean(el.files?.length),
+    });
   }
 
   return out;

@@ -95,6 +95,8 @@ function createSchema(db) {
       applied     INTEGER DEFAULT 0,
       applied_at  TEXT,
       status      TEXT,
+      easy_apply  INTEGER,
+      platform    TEXT,
       PRIMARY KEY (client_id, id)
     );
   `);
@@ -248,6 +250,7 @@ function migrateSchema(db) {
   // Legacy per-column adds (older single-user DBs that predate these columns)
   if (!jobCols.includes('score'))        db.exec('ALTER TABLE jobs ADD COLUMN score        INTEGER');
   if (!jobCols.includes('summary'))      db.exec('ALTER TABLE jobs ADD COLUMN summary      TEXT');
+  if (!jobCols.includes('analyzed_at'))  db.exec('ALTER TABLE jobs ADD COLUMN analyzed_at  TEXT');
   if (!jobCols.includes('last_seen_at')) {
     db.exec('ALTER TABLE jobs ADD COLUMN last_seen_at TEXT');
     db.exec("UPDATE jobs SET last_seen_at = scraped_at WHERE last_seen_at IS NULL");
@@ -284,16 +287,19 @@ function migrateSchema(db) {
           scraped_at  TEXT, analyzed_at TEXT, last_seen_at TEXT,
           expired     INTEGER DEFAULT 0,
           applied     INTEGER DEFAULT 0, applied_at TEXT, status TEXT,
+          easy_apply  INTEGER, platform TEXT,
           PRIMARY KEY (client_id, id)
         );
       `);
+      // easy_apply/platform exist on the legacy table at this point — the
+      // guarded ALTERs above run before the rebuild.
       db.exec(`
         INSERT INTO jobs (client_id, id, title, company, url, location, description, source,
                           relevant, score, summary, notified, scraped_at, analyzed_at, last_seen_at,
-                          expired, applied, applied_at, status)
+                          expired, applied, applied_at, status, easy_apply, platform)
         SELECT '${DEFAULT_CLIENT_ID}', id, title, company, url, location, description, source,
                relevant, score, summary, notified, scraped_at, analyzed_at, last_seen_at,
-               expired, applied, applied_at, status
+               expired, applied, applied_at, status, easy_apply, platform
         FROM jobs_legacy;
       `);
       db.exec('DROP TABLE jobs_legacy;');
@@ -434,13 +440,15 @@ export function isNewJob(clientId, id) {
 }
 
 export function saveJob(clientId, job) {
+  // last_seen_at is set on insert: updateLastSeenBatch runs BEFORE new jobs are
+  // saved (it only matches existing rows), and expiry requires a non-NULL value.
   db.prepare(`
     INSERT OR IGNORE INTO jobs
       (client_id, id, title, company, url, location, description, source, relevant, notified, scraped_at,
-       easy_apply, platform)
+       last_seen_at, easy_apply, platform)
     VALUES
       (@client_id, @id, @title, @company, @url, @location, @description, @source, NULL, 0, @scraped_at,
-       @easy_apply, @platform)
+       @scraped_at, @easy_apply, @platform)
   `).run({
     client_id: clientId,
     id: job.id,
@@ -528,28 +536,6 @@ export function clearApplicationStatus(clientId, id) {
   db.prepare('DELETE FROM status_history WHERE client_id = ? AND job_id = ?').run(clientId, id);
 }
 
-// Full status-change trail for a client (oldest first), used for timeline charts.
-export function getStatusHistory(clientId) {
-  return db.prepare(`
-    SELECT job_id, status, changed_at
-    FROM status_history WHERE client_id = ?
-    ORDER BY changed_at ASC
-  `).all(clientId);
-}
-
-// Count of status changes per calendar day, grouped by status — feeds a
-// per-status activity view (e.g. "when did I get rejections"). Mirrors the
-// localtime-day bucketing used by getApplicationActivity.
-export function getStatusActivity(clientId) {
-  const rows = db.prepare(`
-    SELECT date(changed_at, 'localtime') AS day, status, COUNT(*) AS count
-    FROM status_history WHERE client_id = ?
-    GROUP BY day, status
-  `).all(clientId);
-  const byStatus = {};
-  for (const r of rows) (byStatus[r.status] ||= {})[r.day] = r.count;
-  return byStatus;
-}
 
 export function getAppliedJobs(clientId) {
   return db.prepare(`
@@ -623,23 +609,26 @@ export function updateJobDescription(clientId, id, description) {
 //   { source, found, siteTotal, newDb, blocked, analyzed, newRelevant, totalRelevant, notified }
 export function saveRunSnapshot(clientId, rows) {
   const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
-  const info = db.prepare(`
+  const runStmt = db.prepare(`
     INSERT INTO runs
       (client_id, ran_at, total_found, total_new, total_blocked, total_analyzed, total_new_relevant, total_relevant, total_notified)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    clientId,
-    new Date().toISOString(),
-    sum('found'), sum('newDb'), sum('blocked'), sum('analyzed'),
-    sum('newRelevant'), sum('totalRelevant'), sum('notified')
-  );
-  const runId = info.lastInsertRowid;
+  `);
   const stmt = db.prepare(`
     INSERT INTO run_stats
       (run_id, source, found, site_total, new_db, blocked, analyzed, new_relevant, total_relevant, notified)
     VALUES (@run_id, @source, @found, @site_total, @new_db, @blocked, @analyzed, @new_relevant, @total_relevant, @notified)
   `);
-  db.transaction(() => {
+  // Parent + children in ONE transaction — a failing child insert must not
+  // leave an orphan runs row behind.
+  return db.transaction(() => {
+    const info = runStmt.run(
+      clientId,
+      new Date().toISOString(),
+      sum('found'), sum('newDb'), sum('blocked'), sum('analyzed'),
+      sum('newRelevant'), sum('totalRelevant'), sum('notified')
+    );
+    const runId = info.lastInsertRowid;
     for (const r of rows) stmt.run({
       run_id: runId,
       source: r.source,
@@ -652,21 +641,10 @@ export function saveRunSnapshot(clientId, rows) {
       total_relevant: r.totalRelevant ?? 0,
       notified: r.notified ?? 0,
     });
+    return runId;
   })();
-  return runId;
 }
 
-// The per-source overview from the most recent recorded run (exact LAUF-ÜBERSICHT columns).
-export function getLatestRunOverview(clientId) {
-  const run = db.prepare('SELECT * FROM runs WHERE client_id = ? ORDER BY id DESC LIMIT 1').get(clientId);
-  if (!run) return null;
-  const rows = db.prepare(`
-    SELECT source, found, site_total AS siteTotal, new_db AS newDb, blocked,
-           analyzed, new_relevant AS newRelevant, total_relevant AS totalRelevant, notified
-    FROM run_stats WHERE run_id = ? ORDER BY total_relevant DESC, found DESC
-  `).all(run.id);
-  return { ranAt: run.ran_at, rows };
-}
 
 // All recorded runs aggregated per source. Flow counters (found, new, blocked,
 // analyzed, new-relevant, notified) are summed across every run; snapshot
@@ -750,15 +728,6 @@ export function getApplicationActivity(clientId) {
   return Object.fromEntries(rows.map(r => [r.day, r.count]));
 }
 
-export function getScoreDistribution(clientId) {
-  const rows = db.prepare(`
-    SELECT score, COUNT(*) AS count
-    FROM jobs WHERE client_id = ? AND relevant = 1 AND score IS NOT NULL
-    GROUP BY score ORDER BY score
-  `).all(clientId);
-  return Object.fromEntries(rows.map(r => [r.score, r.count]));
-}
-
 // Companies you applied to most (falls back to source name when company is empty).
 export function getAppliedByCompany(clientId) {
   return db.prepare(`
@@ -769,9 +738,13 @@ export function getAppliedByCompany(clientId) {
 }
 
 export function getStatusBreakdown(clientId) {
+  // GROUP BY must repeat the COALESCE: a bare `GROUP BY status` resolves to the
+  // raw column (SQLite prefers source columns over result aliases), yielding two
+  // 'applied' rows that Object.fromEntries would collapse — dropping legacy
+  // NULL-status applications from the funnel.
   const rows = db.prepare(`
     SELECT COALESCE(status, 'applied') AS status, COUNT(*) AS count
-    FROM jobs WHERE client_id = ? AND applied = 1 GROUP BY status
+    FROM jobs WHERE client_id = ? AND applied = 1 GROUP BY COALESCE(status, 'applied')
   `).all(clientId);
   return Object.fromEntries(rows.map(r => [r.status, r.count]));
 }
@@ -1000,10 +973,6 @@ export function upsertLibraryAnswer(clientId, { question_key, label, type, optio
            options_json: options_json ?? null, answer: answer ?? null, now });
 }
 
-export function close() {
-  db.close();
-}
-
 // ── Backup & restore ─────────────────────────────────────────────────────────
 
 // Remove a SQLite DB file together with any WAL/SHM/journal sidecars. Used to tidy
@@ -1048,7 +1017,14 @@ export function validateBackup(srcPath) {
     throw new Error(`Datei ist keine lesbare SQLite-Datenbank: ${err.message}`);
   }
   try {
-    const integ = probe.pragma('integrity_check', { simple: true });
+    // better-sqlite3 opens files lazily — a non-DB file only fails HERE, at the
+    // first pragma, so the friendly message must wrap this call too.
+    let integ;
+    try {
+      integ = probe.pragma('integrity_check', { simple: true });
+    } catch (err) {
+      throw new Error(`Datei ist keine lesbare SQLite-Datenbank: ${err.message}`);
+    }
     if (integ !== 'ok') throw new Error(`Integritätsprüfung fehlgeschlagen (${integ}).`);
     const tables = new Set(
       probe.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name)
@@ -1086,6 +1062,12 @@ export function restoreFromBackup(srcPath) {
     staged.pragma('wal_checkpoint(TRUNCATE)');
     staged.pragma('journal_mode = DELETE');
     staged.close();
+
+    // Bring the LIVE schema up to date too, BEFORE computing the column
+    // intersection below — otherwise a column present in the backup but still
+    // missing live would be silently dropped instead of restored.
+    createSchema(db);
+    migrateSchema(db);
 
     db.exec(`ATTACH DATABASE '${tmp.replace(/'/g, "''")}' AS restore`);
     try {

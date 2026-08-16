@@ -61,7 +61,7 @@ export async function analyzeJob(job, cfg) {
     try {
       const response = await client.messages.create({
         model: MODEL(),
-        max_tokens: 800,
+        max_tokens: 1500,
         system: [{ type: 'text', text: prompts.analyzerSystem, cache_control: { type: 'ephemeral' } }],
         messages: [
           {
@@ -74,6 +74,11 @@ export async function analyzeJob(job, cfg) {
         ],
       });
 
+      // A truncated response can never parse — retrying (this run or the next)
+      // fails identically forever and burns 3 API calls per run per job.
+      if (response.stop_reason === 'max_tokens') {
+        throw new Error('Antwort bei max_tokens abgeschnitten — JSON unvollständig');
+      }
       // Never index content[0]: models with thinking enabled put a thinking block
       // first, so [0].text is undefined and the parse below fails on every job.
       const text = response.content.find(b => b.type === 'text')?.text || '';
@@ -82,9 +87,15 @@ export async function analyzeJob(job, cfg) {
       const jsonText = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
       const result = JSON.parse(jsonText);
 
+      // Normalize the score: the model may emit a float or garbage, and raw
+      // values flow into SQL, the GUI and MarkdownV2 messages downstream.
+      const score = Number.isFinite(Number(result.score))
+        ? Math.min(10, Math.max(0, Math.round(Number(result.score))))
+        : null;
+
       return {
-        relevant: result.relevant === true && Number(result.score) >= minScore,
-        score: result.score,
+        relevant: result.relevant === true && score != null && score >= minScore,
+        score,
         reasons: result.reasons || [],
         concerns: result.concerns || [],
         summary: result.summary || '',
@@ -103,16 +114,4 @@ export async function analyzeJob(job, cfg) {
       }
     }
   }
-}
-
-export async function analyzeJobs(jobs) {
-  const results = [];
-  for (const job of jobs) {
-    log(`Analyzing: ${job.title} @ ${job.company || 'unknown'}`);
-    const analysis = await analyzeJob(job);
-    results.push({ job, analysis });
-    // Small delay to avoid API rate limits
-    await sleep(500);
-  }
-  return results;
 }

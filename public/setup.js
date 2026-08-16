@@ -288,9 +288,16 @@
     advance();
   }
 
-  function advance() {
-    if (idx < pages.length - 1) { idx++; render(); }
-    else next(); // last real step with no finish page → complete
+  async function advance() {
+    if (idx < pages.length - 1) { idx++; render(); return; }
+    // Last page is the 'finish' sentinel (first run): let next() run its
+    // completion branch. Otherwise (reopened wizard, real step last) complete
+    // directly — recursing into next() would re-save the same step forever.
+    if (pages[idx] === 'finish') { next(); return; }
+    try { await api('/api/setup/complete' + qs(), { method: 'POST' }); } catch { /* non-fatal */ }
+    close();
+    note(debug ? t('wiz.debugDone') : t('wiz.setupDone'));
+    if (!debug) setTimeout(() => location.reload(), 400);
   }
 
   function syncFromStatus(status) {

@@ -73,6 +73,7 @@ export async function scrape(source) {
   const seenUrls = new Set();
   let duplicates = 0;
   let siteTotal = null;
+  let blocked = false; // challenge/refusal → result is incomplete, not "0 jobs exist"
 
   const addCards = (cards) => {
     let added = 0;
@@ -111,7 +112,7 @@ export async function scrape(source) {
     if (!authwalled) {
       if (await isChallengePage(page)) {
         log(`${source.name}: BLOCKED (challenge page) — 0 Jobs.`);
-        return { jobs: [], duplicates: 0, siteTotal: null };
+        return { jobs: [], duplicates: 0, siteTotal: null, blocked: true };
       }
       siteTotal = await page.evaluate(() => {
         const el = document.querySelector('.results-context-header__job-count');
@@ -135,8 +136,14 @@ export async function scrape(source) {
       const apiUrl = `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?${params.toString()}&start=${start}`;
       try {
         const res = await page.goto(apiUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        if (res && res.status() === 429) { log(`  Guest-API rate-limited (429) — stoppe.`); break; }
-        if (await isChallengePage(page)) { log(`  BLOCKED (challenge) — stoppe.`); break; }
+        // Any non-2xx here is a refusal (429 rate limit, LinkedIn's 999 bot
+        // block, 403), never a legitimate "end of results".
+        if (res && res.status() >= 400) {
+          log(`  Guest-API abgelehnt (HTTP ${res.status()}) — stoppe.`);
+          blocked = true;
+          break;
+        }
+        if (await isChallengePage(page)) { log(`  BLOCKED (challenge) — stoppe.`); blocked = true; break; }
         const cards = await page.evaluate(parseCardsInPage);
         if (cards.length === 0) { log(`  start=${start}: leer — Ende der Ergebnisse.`); break; }
         const added = addCards(cards);
@@ -145,6 +152,9 @@ export async function scrape(source) {
       } catch (err) {
         // On abort the browser is already gone — expected, not a scrape failure.
         log(isAborted() ? `  start=${start}: abgebrochen` : `  start=${start}: ERROR — ${err.message}`);
+        // Either way this source's picture is now partial; only a clean run
+        // may be used to decide that a job has expired.
+        blocked = true;
         break;
       }
     }
@@ -152,6 +162,6 @@ export async function scrape(source) {
     await browser.close().catch(() => {});
   }
 
-  log(`Fertig ${source.name}: ${jobs.length} Job(s)${siteTotal ? ` (Website: ${siteTotal})` : ''}`);
-  return { jobs: jobs.slice(0, maxResults), duplicates, siteTotal };
+  log(`Fertig ${source.name}: ${jobs.length} Job(s)${siteTotal ? ` (Website: ${siteTotal})` : ''}${blocked ? ' [UNVOLLSTÄNDIG]' : ''}`);
+  return { jobs: jobs.slice(0, maxResults), duplicates, siteTotal, blocked };
 }
