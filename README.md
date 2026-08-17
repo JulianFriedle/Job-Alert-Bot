@@ -30,25 +30,40 @@ The web GUI (`npm run gui`) — browse matches, track applications, edit sources
 index.js                  ← --once [--client <id>] or hourly scheduler
 └── src/scheduler.js      ← runAll(): loops enabled clients, runs the pipeline per client
     ├── src/scraper.js    ← Playwright scraper (DOM + API interception, 3 pagination strategies)
+    │   └── src/scrapers/ ← Job-board scrapers (linkedin, stepstone, indeed) + shared browser setup
+    ├── src/host-limiter.js ← Per-host request spacing shared by all scraping stages
     ├── src/database.js   ← SQLite — clients table + per-client jobs (client_id), dedup, tracking
     ├── src/client-config.js ← resolves a client's profile/sources/filters/prompts (DB, legacy fallback)
     ├── src/analyzer.js   ← Claude AI relevance scoring
+    ├── src/prompts.js    ← Built-in prompt defaults + the editable prompt fields
     ├── src/notifier.js   ← Telegram notifications (one bot token, per-client chat id)
+    ├── src/run-control.js ← Cooperative abort flag behind "Lauf stoppen" / SIGTERM
     └── src/exporter.js   ← Excel export (data/relevant_jobs[_<client>].xlsx)
     └── src/csv-export.js ← CSV export of the Jobs tab (GUI download)
 
+src/apply-worker.js       ← Auto-apply queue: prepare → approve → submit (scheduler process only)
+└── src/appliers/         ← Per-platform apply flows (linkedin, stepstone, indeed) + shared helpers
+src/platform-login.js     ← Platform logins & persisted browser sessions for auto-apply
+src/credentials.js        ← AES-256-GCM encryption of stored platform logins (CREDENTIALS_KEY)
+src/questions.js          ← Answer library for the apply forms' screening questions
+src/telegram-bot.js       ← Interactive Telegram bot (status reactions, apply approval, answers)
 src/apply.js              ← CLI for tracking applications (npm run apply)
 src/cover-letter.js       ← CLI for generating a cover letter via Claude (npm run cover-letter)
 src/server.js             ← Web GUI server (npm run gui) — built-in http, operator login + client CRUD
+src/setup.js              ← Guided setup wizard (steps, validation, debug sandbox)
 src/backup.js             ← Database backups (daily/manual/upload snapshots, retention)
 public/                   ← Dashboard frontend (index.html, app.js, i18n.js, setup.js, style.css)
 scripts/migrate-to-multitenant.js ← One-time migration to the clients model (npm run migrate)
 scripts/hash-password.js  ← Generate OPERATOR_PASSWORD_HASH for SaaS login (npm run hash-password)
+scripts/generate-credentials-key.js ← Generate CREDENTIALS_KEY (npm run generate-credentials-key)
+scripts/operator-sandbox.js ← Throwaway operator GUI on :3001 (npm run gui:operator)
 scripts/refetch-descriptions.js  ← Re-fetch & re-analyze jobs saved with empty descriptions
 config/*.json             ← Default-client fallback (profile/jobs/filters/prompts); per-client config lives in the DB
 logs/                     ← Timestamped log file from each run (gitignored)
 data/jobs.db              ← SQLite database — clients, jobs, runs (gitignored)
 data/backups/             ← Database backup snapshots (gitignored)
+data/sessions/            ← Persisted platform browser sessions for auto-apply (gitignored)
+data/apply-artifacts/     ← Dry-run screenshots of filled apply forms (gitignored)
 data/relevant_jobs.xlsx   ← Latest export (gitignored)
 ```
 
@@ -178,7 +193,9 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `SOURCE_HOST_GAP_MS` | `2000` | Same, between two source scrapes that share a host |
 | `PLATFORM_DESC_HOST_GAP_MS` | `2500` | Same, for the job boards (LinkedIn/StepStone/Indeed) |
 | `GUI_PORT` | `3000` | Port for the web GUI |
+| `RUN_STOP_GRACE_MS` | `45000` | How long **Lauf stoppen** waits for the run to wind down before force-killing it |
 | `JOBS_DB_PATH` | `data/jobs.db` | SQLite DB path (set to a mounted volume in Docker) |
+| `CLIENTS_ENABLED` | `false` | Show the multi-client UI (**Klienten** tab + client selector). Off = private single-user view |
 | `AUTH_ENABLED` | `false` | **SaaS:** `true` requires operator login for the GUI. Private/localhost: `false` |
 | `OPERATOR_USER` | `admin` | Login username when `AUTH_ENABLED=true` |
 | `OPERATOR_PASSWORD_HASH` | — | scrypt hash of the operator password — generate with `npm run hash-password -- "<pw>"` |
@@ -261,6 +278,13 @@ Setup:
 3. Set `AUTO_APPLY_ENABLED=true`. Keep `APPLY_DRY_RUN=true` for the first runs — forms are filled and screenshotted (`data/apply-artifacts/`) but never submitted.
 4. First login per platform may require 2FA — run once with `APPLY_HEADFUL=true` and complete it in the window; the session (`data/sessions/`) is then reused for weeks.
 
+**Telegram commands while an application is being prepared:**
+
+| Command | Effect |
+|---|---|
+| `/skip` | Closes the open question prompts. The question stays unanswered and can be filled in in the GUI; your next message is no longer read as an answer |
+| `/abbrechen` | Discards the application the open prompts belong to |
+
 **Status per Telegram:** react to a job notification with 👍 (beworben), 👎 (Absage),
 🤝 (Interview) or 🎉 (Angebot), or reply to it with one of those words — the status is
 updated like in the GUI.
@@ -295,6 +319,9 @@ npm run test-notify
 # Re-fetch descriptions and re-analyze all DB entries saved with empty descriptions
 # (useful after fixing the networkidle bug, or when a source was returning 0 chars)
 npm run refetch-descriptions
+
+# Run the test suite (node:test, offline — no network, no real DB, no API calls)
+npm test
 ```
 
 ### Stopping a run
@@ -320,11 +347,13 @@ signal to the `--once` child it spawned.
 For a single user nothing changes — leave `AUTH_ENABLED` unset and use the app as before
 (you are the one default client). To offer it to an operator who manages several clients:
 
-1. Set `AUTH_ENABLED=true` and create login credentials with `npm run hash-password -- "<pw>"`
+1. Set `CLIENTS_ENABLED=true` so the **Klienten** tab and the client selector appear at all —
+   they are hidden by default (see [Web GUI](#web-gui)).
+2. Set `AUTH_ENABLED=true` and create login credentials with `npm run hash-password -- "<pw>"`
    (→ `OPERATOR_PASSWORD_HASH`), plus a stable `SESSION_SECRET`.
-2. Run with Docker: `docker compose up -d --build` (a **gui** + a **scheduler** container sharing
+3. Run with Docker: `docker compose up -d --build` (a **gui** + a **scheduler** container sharing
    the `./data` SQLite volume), and put **NGINX + Authelia** in front of the GUI for SSO.
-3. In the GUI's **Klienten** tab, create clients and set each one's Telegram chat id; switch the
+4. In the GUI's **Klienten** tab, create clients and set each one's Telegram chat id; switch the
    active client (top-right) to edit its profile/sources/filters/prompts.
 
 > **Try the operator experience first.** `npm run gui:operator` starts a second, fully isolated
@@ -349,11 +378,16 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 | **Profil** | Edit the active client's CV & preferences in a structured form — this is what the AI matches jobs against and uses for cover letters. |
 | **Prompts** | Edit the prompts sent to Claude for the active client (relevance scoring + cover letters). Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
 | **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. **Lauf stoppen** aborts a running pipeline: the run winds down at the next source/page boundary, keeps every job found so far, and skips the remaining stages (notifications, expiry check, statistics, export) so a partial pass can't distort them. If it hasn't exited after `RUN_STOP_GRACE_MS` (default 45 s) it is force-killed. Nothing already paid for is thrown away: each job is stored as soon as its description has been fetched, and every AI score written the moment it is scored — a stopped run leaves them in the DB, and the next run picks up where it left off instead of re-scraping. Jobs whose detail page was still loading are *not* stored (an empty description would be scored as a blank posting), so they are simply fetched again next time. |
-| **Klienten** | Create/edit/delete clients (tenants): name, Telegram chat id, active toggle, Telegram & expiry toggles, optional min-score. A **Telegram-Test** button verifies the chat id. Clients receive Telegram alerts only — they have no GUI access. |
+| **Klienten** | *Hidden unless `CLIENTS_ENABLED=true`.* Create/edit/delete clients (tenants): name, Telegram chat id, active toggle, Telegram & expiry toggles, optional min-score. A **Telegram-Test** button verifies the chat id. Clients receive Telegram alerts only — they have no GUI access. |
 | **Statistik** | Application heatmap, top sources/companies, run history, and a per-run overview table. |
 | **Einstellungen** | Edit every `.env` variable from a form (incl. the SaaS auth vars); switch **theme** and **language** (see below); manage **database backups** (create / upload / download / restore — see [Backups](#backups)); pull the latest version from GitHub (**update button**); restart the GUI; and re-open or test the **setup wizard**. |
 
-All tabs operate on the **active client**, chosen via the selector in the top-right of the header.
+All tabs operate on the **active client**. Out of the box the multi-client UI is off
+(`CLIENTS_ENABLED=false`): there is no **Klienten** tab and no client selector, and everything
+silently operates on the single default client — which is all a private install needs. Switch
+**Einstellungen → Klienten (Mehrbenutzer) → Klienten-Verwaltung anzeigen** on (or set
+`CLIENTS_ENABLED=true`) to get the tab plus the client selector in the top-right of the header.
+
 The GUI reuses the same SQLite database as the CLI — changes are reflected everywhere. When
 `AUTH_ENABLED=true`, the GUI shows a login screen first (operator credentials).
 
