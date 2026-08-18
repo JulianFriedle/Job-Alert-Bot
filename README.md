@@ -12,11 +12,11 @@ The web GUI (`npm run gui`) — browse matches, track applications, edit sources
 |---|---|
 | [![Jobs tab](docs/screenshots/jobs.png)](docs/screenshots/jobs.png) | [![Statistics tab](docs/screenshots/stats.png)](docs/screenshots/stats.png) |
 
-| Run — live pipeline log & run history | Clients — multi-tenant management |
+| Run — live pipeline log & run history | Clients — multi-tenant management (`CLIENTS_ENABLED`) |
 |---|---|
 | [![Run tab](docs/screenshots/run.png)](docs/screenshots/run.png) | [![Clients tab](docs/screenshots/clients.png)](docs/screenshots/clients.png) |
 
-| Profile — CV & preferences the AI matches against | Sources — career pages to watch |
+| Profile — CV, preferences & platform accounts | Sources — career pages and job-board searches |
 |---|---|
 | [![Profile tab](docs/screenshots/profile.png)](docs/screenshots/profile.png) | [![Sources tab](docs/screenshots/sources.png)](docs/screenshots/sources.png) |
 
