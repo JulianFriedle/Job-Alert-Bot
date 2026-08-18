@@ -123,7 +123,22 @@ web GUI. Multi-tenant: every job, run and setting is scoped by `client_id`.
 - **A new env var lives in three places**: `.env.example`, `SETTINGS_SCHEMA` in
   `src/server.js` (otherwise it never shows up in Einstellungen), and the setup
   wizard `STEPS` in `src/setup.js` if a new user must set it. Advanced knobs may
-  skip the settings form on purpose — then say so in `.env.example`.
+  skip the settings form on purpose — then say so in `.env.example`. If it reaches
+  a form, it also needs its English override (next bullet).
+- **Ask on every change: does `public/i18n.js` need an edit?** Two different
+  mechanisms, and only one of them fails loudly:
+  - *Static markup* uses `data-i18n` keys. Add **both** a `de` and an `en` entry
+    to `I18N`. A missing key renders as the raw key — you will see it.
+  - *Server-driven forms* — `SETTINGS_SCHEMA` (`src/server.js`), `PROMPT_FIELDS`
+    (`src/prompts.js`), wizard `STEPS` (`src/setup.js`) — carry **German**
+    `label`/`help` as their source of truth. English comes from the override maps
+    at the bottom of `i18n.js`: `SETTINGS_GROUPS_EN` / `SETTINGS_LABELS_EN` /
+    `SETTINGS_HELP_EN`, `PROMPTS_*_EN`, `WIZARD_*_EN`, keyed by field key (group
+    maps by the German heading). A missing override **falls back to German
+    silently** — the English GUI just shows a German label and nothing complains.
+    That is how eight settings and a whole group heading shipped untranslated.
+    Add the override in the same commit as the field, and remember a new group
+    heading needs its own entry.
 - **Bump `SETUP_VERSION`** (`src/setup.js`) when adding a wizard step that
   existing users should be re-prompted for.
 - **Log lines are colorized by regex** in `colorizeLog` (`public/app.js`):
