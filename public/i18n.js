@@ -214,6 +214,23 @@ const I18N = {
     'update.depsChanged': '⚠ Abhängigkeiten haben sich geändert – bitte im Terminal „npm install“ ausführen und dann neu starten.',
     'update.failed': 'Update fehlgeschlagen: ', 'update.applyBtn': '↻ Neu starten & anwenden',
 
+    // Desktop app self-update (desktop/updater.js)
+    'desktopUpdate.help': 'Neue Versionen kommen als GitHub-Release. „Aktualisieren“ lädt sie herunter, installiert sie und startet die App neu. Eine laufende Jobsuche wird vorher sauber beendet.',
+    'desktopUpdate.check': '↻ Nach Updates suchen', 'desktopUpdate.install': '↧ Aktualisieren',
+    'desktopUpdate.download': '↧ Neue Version herunterladen',
+    'desktopUpdate.openData': '📁 Datenordner öffnen',
+    'desktopUpdate.installed': 'Installiert: Version {v}.',
+    'desktopUpdate.checking': 'Suche nach Updates …',
+    'desktopUpdate.upToDate': '✓ Du hast die neueste Version.',
+    'desktopUpdate.available': 'Version {v} ist verfügbar.',
+    'desktopUpdate.downloading': 'Version {v} wird heruntergeladen … {p} %',
+    'desktopUpdate.downloaded': 'Version {v} ist geladen – die App startet zum Installieren neu.',
+    'desktopUpdate.error': 'Update fehlgeschlagen: {e}',
+    'desktopUpdate.unsupported': 'Automatische Updates gibt es nur in der installierten App (Installer, AppImage oder .deb) – nicht im Entwicklungsmodus.',
+    'desktopUpdate.macHint': 'Auf dem Mac öffnet sich die Download-Seite: die neue Version in den Programme-Ordner ziehen und die alte ersetzen.',
+    'desktopUpdate.banner': 'Neue Version {v} verfügbar.',
+    'desktopUpdate.bannerDownloading': 'Version {v} wird heruntergeladen … {p} %',
+
     // Settings field chrome (frontend bits around backend labels)
     'settings.required': 'erforderlich', 'settings.secretSet': '•••••••• gesetzt',
     'settings.secretUnset': 'nicht gesetzt', 'settings.defaultPrefix': 'Standard: ',
@@ -453,6 +470,23 @@ const I18N = {
     'update.updated': '✓ Updated. Restart to apply the changes.',
     'update.depsChanged': '⚠ Dependencies changed – please run “npm install” in the terminal, then restart.',
     'update.failed': 'Update failed: ', 'update.applyBtn': '↻ Restart & apply',
+
+    // Desktop app self-update
+    'desktopUpdate.help': 'New versions are published as GitHub releases. “Update” downloads and installs them, then restarts the app. A running job search is stopped cleanly first.',
+    'desktopUpdate.check': '↻ Check for updates', 'desktopUpdate.install': '↧ Update',
+    'desktopUpdate.download': '↧ Download new version',
+    'desktopUpdate.openData': '📁 Open data folder',
+    'desktopUpdate.installed': 'Installed: version {v}.',
+    'desktopUpdate.checking': 'Checking for updates …',
+    'desktopUpdate.upToDate': '✓ You have the latest version.',
+    'desktopUpdate.available': 'Version {v} is available.',
+    'desktopUpdate.downloading': 'Downloading version {v} … {p} %',
+    'desktopUpdate.downloaded': 'Version {v} is downloaded – the app restarts to install it.',
+    'desktopUpdate.error': 'Update failed: {e}',
+    'desktopUpdate.unsupported': 'Automatic updates only work in the installed app (installer, AppImage or .deb) – not in development mode.',
+    'desktopUpdate.macHint': 'On a Mac the download page opens: drag the new version into Applications to replace the old one.',
+    'desktopUpdate.banner': 'New version {v} available.',
+    'desktopUpdate.bannerDownloading': 'Downloading version {v} … {p} %',
 
     // Settings field chrome
     'settings.required': 'required', 'settings.secretSet': '•••••••• set',

@@ -11,24 +11,25 @@
 
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 import { getClient, updateClient, DEFAULT_CLIENT_ID } from './database.js';
+import { APP_ROOT, CONFIG_DIR as DEFAULT_CONFIG_DIR, DATA_DIR, ENV_FILE } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(__dirname, '..');
+// Templates ship with the code; everything the wizard writes goes to the
+// writable paths from paths.js.
+const ROOT = APP_ROOT;
 
 // Both overridable so a sandbox instance (scripts/operator-sandbox.js) can
 // redirect every wizard write away from the operator's real files.
-const CONFIG_DIR = process.env.SETUP_CONFIG_DIR || path.join(ROOT, 'config');
+const CONFIG_DIR = process.env.SETUP_CONFIG_DIR || DEFAULT_CONFIG_DIR;
 const REAL = {
-  env:     process.env.ENV_FILE_PATH || path.join(ROOT, '.env'),
+  env:     ENV_FILE,
   profile: path.join(CONFIG_DIR, 'profile.json'),
   jobs:    path.join(CONFIG_DIR, 'jobs.json'),
   filters: path.join(CONFIG_DIR, 'filters.json'),
   state:   path.join(CONFIG_DIR, 'setup-state.json'),
 };
-const SANDBOX_DIR = path.join(ROOT, 'data', 'setup-debug');
+const SANDBOX_DIR = path.join(DATA_DIR, 'setup-debug');
 const SANDBOX = {
   env:     path.join(SANDBOX_DIR, 'env'),
   profile: path.join(SANDBOX_DIR, 'profile.json'),

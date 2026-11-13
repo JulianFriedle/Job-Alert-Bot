@@ -511,6 +511,16 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .appearance-field select { max-width: 220px; }
 
 .update-output { height: auto; max-height: 220px; margin-top: 12px; font-size: .74rem; }
+.update-status { margin: 12px 0 0; font-size: .9rem; }
+.update-status.err { color: var(--red); }
+.update-progress { height: 6px; margin-top: 10px; border-radius: 3px; background: var(--accent-soft); overflow: hidden; }
+.update-progress > div { height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
+.update-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 16px; padding: 12px 16px;
+  background: var(--accent-soft); border: 1px solid var(--accent); border-radius: var(--radius);
+}
+.update-banner-text { font-weight: 600; }
 
 .restart-card { border-color: color-mix(in srgb, var(--red) 25%, var(--border)); }
 .restart-card .muted { margin-bottom: 14px; }

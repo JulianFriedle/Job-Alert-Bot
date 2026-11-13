@@ -2,7 +2,7 @@
 // The key comes from the CREDENTIALS_KEY env var (64 hex chars = 32 bytes),
 // generated once via: npm run generate-credentials-key
 // Blob format: base64(iv).base64(authTag).base64(ciphertext)
-import 'dotenv/config';
+import './env.js';
 import crypto from 'crypto';
 
 import {

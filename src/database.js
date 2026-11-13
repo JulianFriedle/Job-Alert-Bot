@@ -1,12 +1,12 @@
 import Database from 'better-sqlite3';
 import { mkdirSync, copyFileSync, rmSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { DATA_DIR } from './paths.js';
+
 // JOBS_DB_PATH lets a deployment (Docker volume) or a test point the DB elsewhere.
-export const DB_PATH = process.env.JOBS_DB_PATH || path.join(__dirname, '..', 'data', 'jobs.db');
+export const DB_PATH = process.env.JOBS_DB_PATH || path.join(DATA_DIR, 'jobs.db');
 
 // Every table that holds real data — used by the backup/restore copy. Order does
 // not matter for the wipe+refill (foreign keys are not enforced), but we keep a

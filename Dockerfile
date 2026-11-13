@@ -7,8 +7,9 @@ WORKDIR /app
 # Install dependencies first for better layer caching. Copy the lockfile too and
 # use `npm ci` so the image gets the exact, pinned versions we tested locally
 # (reproducible builds — no silent transitive-dependency upgrades at build time).
+# --omit=dev skips Electron and electron-builder, which only the desktop app needs.
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm ci --omit=dev --no-audit --no-fund
 
 COPY . .
 

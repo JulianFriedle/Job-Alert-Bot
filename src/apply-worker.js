@@ -10,10 +10,9 @@
 // so the GUI or Telegram acting on the same row at the same moment can never
 // race the worker. Nothing is EVER submitted from any state but `approved`,
 // and even then the kill switch, daily cap and cooldown are checked first.
-import 'dotenv/config';
+import './env.js';
 import { mkdirSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 import {
   getNextApplicationByState, getApplicationsByState, getApplicationById, claimApplication,
@@ -29,10 +28,10 @@ import { sendNextQuestion, sendReviewSummary, sendInfoToClient } from './telegra
 import * as stepstoneApplier from './appliers/stepstone.js';
 import * as linkedinApplier from './appliers/linkedin.js';
 import * as indeedApplier from './appliers/indeed.js';
+import { DATA_DIR } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ARTIFACTS_DIR = path.join(__dirname, '..', 'data', 'apply-artifacts');
-const CV_DIR = path.join(__dirname, '..', 'data', 'cv');
+const ARTIFACTS_DIR = path.join(DATA_DIR, 'apply-artifacts');
+const CV_DIR = path.join(DATA_DIR, 'cv');
 
 const APPLIERS = { stepstone: stepstoneApplier, linkedin: linkedinApplier, indeed: indeedApplier };
 

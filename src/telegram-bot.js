@@ -11,7 +11,7 @@
 //  3. Status upkeep: an emoji reaction (👍/👎/🤝/🎉) or a text reply
 //     (beworben/absage/interview/angebot) on a job notification sets the
 //     job's application status.
-import 'dotenv/config';
+import './env.js';
 import TelegramBot from 'node-telegram-bot-api';
 
 import {

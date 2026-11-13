@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self'">
+  <title>Job Alert Bot</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f6f7f9; --text: #1a1d21; --muted: #6b7280; --accent: #2d6a4f; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #0f1115; --text: #e8eaed; --muted: #9aa3ad; --accent: #4ade80; } }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    img { width: 96px; height: 96px; }
+    p { margin: 0; color: var(--muted); font-size: .95rem; }
+    .bar { width: 180px; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 20%, transparent); overflow: hidden; }
+    .bar::after { content: ""; display: block; width: 40%; height: 100%; background: var(--accent); animation: slide 1.2s ease-in-out infinite; }
+    @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+    @media (prefers-reduced-motion: reduce) { .bar::after { animation: none; width: 100%; } }
+  </style>
+</head>
+<body>
+  <img src="icon.png" alt="">
+  <p>Job Alert Bot wird gestartet …</p>
+  <div class="bar"></div>
+</body>
+</html>

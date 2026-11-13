@@ -1,0 +1,84 @@
+# Desktop installers (npm run dist). Built per OS by .github/workflows/release.yml.
+appId: io.github.julianfriedle.jobalertbot
+productName: Job Alert Bot
+executableName: job-alert-bot
+copyright: Copyright © Julian Friedle
+
+directories:
+  output: dist
+
+# The entry point of the desktop app; package.json keeps "main": "index.js"
+# for the plain Node/Docker use.
+extraMetadata:
+  main: desktop/main.js
+
+# Whitelist, so a local build can never pick up personal files (.env,
+# config/profile.json, data/*.db, logs/). User data lives in the OS's app-data
+# folder at runtime, never in the package.
+files:
+  - package.json
+  - index.js
+  - src/**/*
+  - public/**/*
+  - desktop/**/*
+  - config/profile.example.json
+  - LICENSE
+  # SQLite sources — only needed to compile, and the prebuilt binaries are used.
+  - "!node_modules/better-sqlite3/{deps,src}/**"
+
+# No asar archive: the app spawns its own scripts as Node child processes and
+# Playwright launches a browser from node_modules — both are simpler and more
+# robust on a plain directory.
+asar: false
+# better-sqlite3 ships prebuilt N-API binaries for every OS/arch, which work in
+# Electron as-is — nothing to compile.
+npmRebuild: false
+
+publish:
+  provider: github
+  owner: JulianFriedle
+  repo: Job-Alert-Bot
+
+# Fixed, space-free artifact names: GitHub turns spaces into dots on upload,
+# which would break the file references in latest*.yml.
+mac:
+  category: public.app-category.productivity
+  icon: desktop/icon.png
+  artifactName: Job-Alert-Bot-${version}-mac-${arch}.${ext}
+  # No Apple Developer ID yet: ad-hoc signature, which Apple Silicon needs to
+  # run the app at all. With a Developer ID, remove these two lines and
+  # provide CSC_LINK / CSC_KEY_PASSWORD (+ notarization) in the release workflow.
+  identity: "-"
+  hardenedRuntime: false
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    # The zip is what electron-updater downloads on macOS (once signed).
+    - target: zip
+      arch: [arm64, x64]
+
+win:
+  icon: desktop/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  # Per-user install without admin rights, so updates install silently.
+  oneClick: true
+  perMachine: false
+  artifactName: Job-Alert-Bot-${version}-windows-setup.${ext}
+
+linux:
+  icon: desktop/icon.png
+  category: Office
+  synopsis: Jobsuche mit KI-Bewertung und Telegram-Benachrichtigungen
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  maintainer: Julian Friedle
+appImage:
+  artifactName: Job-Alert-Bot-${version}-linux-x86_64.${ext}
+deb:
+  artifactName: Job-Alert-Bot-${version}-linux-amd64.${ext}

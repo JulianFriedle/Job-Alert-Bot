@@ -48,6 +48,11 @@
   <main>
     <!-- ───────── JOBS ───────── -->
     <section class="view active" id="view-jobs">
+      <!-- Desktop app only: shown when a newer release exists (see app.js) -->
+      <div class="update-banner" id="update-banner" role="status" hidden>
+        <span class="update-banner-text" id="update-banner-text"></span>
+        <button class="btn btn-primary" id="update-banner-btn"></button>
+      </div>
       <div class="stats" id="stats"></div>
 
       <div class="toolbar">
@@ -280,13 +285,27 @@
 
       <div class="card">
         <div class="card-head"><h2 data-i18n="update.title">Updates</h2></div>
-        <p class="muted" data-i18n-html="update.help">Holt die neueste Version aus dem GitHub-Repository (<code>git pull</code>). Code-Änderungen greifen nach einem Neustart.</p>
-        <div class="panel-actions" style="margin-top:12px">
-          <button class="btn" id="update-btn" data-i18n="update.btn">↧ Nach Updates suchen</button>
-          <button class="btn btn-primary" id="update-apply-btn" data-i18n="update.applyBtn" hidden>↻ Neu starten &amp; anwenden</button>
+        <!-- git clone / Docker: git pull -->
+        <div id="update-git">
+          <p class="muted" data-i18n-html="update.help">Holt die neueste Version aus dem GitHub-Repository (<code>git pull</code>). Code-Änderungen greifen nach einem Neustart.</p>
+          <div class="panel-actions" style="margin-top:12px">
+            <button class="btn" id="update-btn" data-i18n="update.btn">↧ Nach Updates suchen</button>
+            <button class="btn btn-primary" id="update-apply-btn" data-i18n="update.applyBtn" hidden>↻ Neu starten &amp; anwenden</button>
+          </div>
+          <p class="save-hint" id="update-msg"></p>
+          <pre class="console update-output" id="update-output" hidden></pre>
         </div>
-        <p class="save-hint" id="update-msg"></p>
-        <pre class="console update-output" id="update-output" hidden></pre>
+        <!-- Desktop app: installs GitHub releases (desktop/updater.js) -->
+        <div id="update-desktop" hidden>
+          <p class="muted" data-i18n="desktopUpdate.help">Neue Versionen kommen als GitHub-Release. „Aktualisieren“ lädt sie herunter, installiert sie und startet die App neu. Eine laufende Jobsuche wird vorher sauber beendet.</p>
+          <p class="update-status" id="desktop-update-status"></p>
+          <div class="update-progress" id="desktop-update-progress" hidden><div id="desktop-update-bar"></div></div>
+          <div class="panel-actions" style="margin-top:12px">
+            <button class="btn" id="desktop-update-check" data-i18n="desktopUpdate.check">↻ Nach Updates suchen</button>
+            <button class="btn btn-primary" id="desktop-update-install"></button>
+            <button class="btn btn-ghost" id="desktop-open-data" data-i18n="desktopUpdate.openData">📁 Datenordner öffnen</button>
+          </div>
+        </div>
       </div>
 
       <div class="card">

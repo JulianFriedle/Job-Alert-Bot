@@ -1104,6 +1104,78 @@ $('#update-btn').addEventListener('click', async () => {
 
 $('#update-apply-btn').addEventListener('click', () => restartService($('#update-apply-btn')));
 
+// ── UPDATE (desktop app: GitHub releases) ─────────────────────────────────────
+// window.jobAlertDesktop only exists inside the desktop app (desktop/preload.cjs).
+// There the git card is replaced by the release updater; the dashboard shows a
+// banner while a newer version is available. In a browser nothing changes.
+const desktopApp = window.jobAlertDesktop;
+let desktopUpdate = null;
+
+function fillUpdateText(key, s) {
+  return t(key)
+    .replace('{v}', s.version || '')
+    .replace('{p}', String(s.percent ?? 0))
+    .replace('{e}', s.error || '');
+}
+
+function renderDesktopUpdate() {
+  const s = desktopUpdate;
+  if (!s) return;
+  const status = $('#desktop-update-status');
+  const progress = $('#desktop-update-progress');
+  const installBtn = $('#desktop-update-install');
+  const checkBtn = $('#desktop-update-check');
+  const banner = $('#update-banner');
+  const busy = s.status === 'checking' || s.status === 'downloading' || s.status === 'downloaded';
+  // An update is waiting (or its download failed and can be retried).
+  const pending = ['available', 'downloading', 'downloaded'].includes(s.status) || (s.status === 'error' && !!s.version);
+  const installLabel = t(s.nativeInstall ? 'desktopUpdate.install' : 'desktopUpdate.download');
+
+  const lines = [fillUpdateText('desktopUpdate.installed', { version: s.currentVersion })];
+  if (!s.supported) lines.push(t('desktopUpdate.unsupported'));
+  else if (s.status === 'checking') lines.push(t('desktopUpdate.checking'));
+  else if (s.status === 'not-available') lines.push(t('desktopUpdate.upToDate'));
+  else if (s.status === 'available') lines.push(fillUpdateText('desktopUpdate.available', s));
+  else if (s.status === 'downloading') lines.push(fillUpdateText('desktopUpdate.downloading', s));
+  else if (s.status === 'downloaded') lines.push(fillUpdateText('desktopUpdate.downloaded', s));
+  else if (s.status === 'error') lines.push(fillUpdateText('desktopUpdate.error', s));
+  if (s.supported && pending && !s.nativeInstall) lines.push(t('desktopUpdate.macHint'));
+  status.textContent = lines.join(' ');
+  status.classList.toggle('err', s.status === 'error');
+
+  progress.hidden = s.status !== 'downloading';
+  $('#desktop-update-bar').style.width = `${s.percent ?? 0}%`;
+
+  // Always visible in the settings; only clickable when there is something to install.
+  installBtn.textContent = installLabel;
+  installBtn.disabled = !s.supported || !pending || busy;
+  checkBtn.disabled = !s.supported || busy;
+
+  banner.hidden = !(s.supported && pending);
+  $('#update-banner-text').textContent = fillUpdateText(
+    s.status === 'downloading' ? 'desktopUpdate.bannerDownloading' : 'desktopUpdate.banner', s);
+  $('#update-banner-btn').textContent = installLabel;
+  $('#update-banner-btn').disabled = busy;
+}
+
+if (desktopApp) {
+  $('#update-git').hidden = true;
+  $('#update-desktop').hidden = false;
+
+  const setState = (s) => { if (s) { desktopUpdate = s; renderDesktopUpdate(); } };
+  desktopApp.update.onState(setState);
+  desktopApp.update.getState().then(setState);
+  onLangChange(renderDesktopUpdate);
+
+  // Main asks before stopping a running job search; when the user keeps it
+  // running, the call simply returns and the button becomes clickable again.
+  const install = () => desktopApp.update.install().then(setState).catch(err => toast(err.message));
+  $('#desktop-update-install').addEventListener('click', install);
+  $('#update-banner-btn').addEventListener('click', install);
+  $('#desktop-update-check').addEventListener('click', () => desktopApp.update.check().then(setState));
+  $('#desktop-open-data').addEventListener('click', () => desktopApp.openDataFolder());
+}
+
 function showSettingsMsg(msg, kind) {
   const el = $('#settings-msg');
   el.textContent = msg; el.className = 'save-hint ' + kind;

@@ -52,6 +52,11 @@ src/cover-letter.js       ← CLI for generating a cover letter via Claude (npm 
 src/server.js             ← Web GUI server (npm run gui) — built-in http, operator login + client CRUD
 src/setup.js              ← Guided setup wizard (steps, validation, debug sandbox)
 src/backup.js             ← Database backups (daily/manual/upload snapshots, retention)
+src/paths.js              ← Where state lives: next to the code, or APP_DATA_DIR (desktop app)
+src/env.js                ← Loads .env (imported first by every entry point)
+desktop/                  ← Desktop app (Electron): main.js starts server + scheduler, updater.js self-updates
+electron-builder.yml      ← Installer config (npm run dist)
+.github/workflows/release.yml ← Tag → Docker image on ghcr.io + installers on a GitHub release
 public/                   ← Dashboard frontend (index.html, app.js, i18n.js, setup.js, style.css)
 scripts/migrate-to-multitenant.js ← One-time migration to the clients model (npm run migrate)
 scripts/hash-password.js  ← Generate OPERATOR_PASSWORD_HASH for SaaS login (npm run hash-password)
@@ -67,7 +72,74 @@ data/apply-artifacts/     ← Dry-run screenshots of filled apply forms (gitigno
 data/relevant_jobs.xlsx   ← Latest export (gitignored)
 ```
 
+## Installation
+
+Three ways to run it — pick one:
+
+| | For | Updates |
+|---|---|---|
+| **Desktop app** (macOS, Windows, Linux) | Private use, no terminal needed | **Aktualisieren** button in the app |
+| **Docker image** (`ghcr.io/julianfriedle/job-alert-bot`) | Servers, Unraid, the SaaS setup ([DEPLOY.md](DEPLOY.md)) | `docker compose pull && docker compose up -d` |
+| **From source** (`git clone`) | Development | **Einstellungen → Updates** (`git pull`) |
+
+### Desktop app
+
+Download the installer for your system from the
+[latest release](https://github.com/JulianFriedle/Job-Alert-Bot/releases/latest):
+
+| System | File |
+|---|---|
+| macOS (Apple Silicon / Intel) | `Job-Alert-Bot-<version>-mac-arm64.dmg` / `…-mac-x64.dmg` |
+| Windows | `Job-Alert-Bot-<version>-windows-setup.exe` |
+| Linux | `Job-Alert-Bot-<version>-linux-x86_64.AppImage` or `…-linux-amd64.deb` |
+
+On first start the app downloads its browser component (Chromium, ~150 MB) in the
+background and opens the [setup wizard](#guided-setup-wizard). Once the wizard is done,
+the hourly job search starts by itself — like `npm start`, the first search runs
+right away.
+
+- **Closing the window keeps the app running** in the tray/menu bar, so the hourly
+  search and Telegram alerts continue. Quit via the tray icon → **Beenden**. If a job
+  search is running, the app asks first and then stops it cleanly (everything found
+  so far stays saved).
+- **Your data** (`.env`, `config/`, `data/`, `logs/`) lives in the per-user app-data
+  folder, not in the install directory: `~/Library/Application Support/Job Alert Bot`
+  (macOS), `%APPDATA%\Job Alert Bot` (Windows), `~/.config/Job Alert Bot` (Linux).
+  **Einstellungen → Updates → Datenordner öffnen** opens it. Uninstalling the app
+  leaves it in place.
+- The GUI only listens on `127.0.0.1` (port 3456, or a free one if taken) — it is not
+  reachable from your network.
+- **Updates:** when a new release exists, a banner with an **Aktualisieren** button
+  appears on the dashboard; the same button is always in **Einstellungen → Updates**.
+  It downloads the new version, stops a running search cleanly (asking first),
+  installs it and restarts the app.
+- Use one Telegram bot token per running instance: the desktop app polls Telegram like
+  the scheduler does, so running it *and* a server install with the same token causes
+  409 conflicts.
+
+> **The installers are not code-signed yet.** macOS: the first time, right-click the
+> app → **Öffnen** (if macOS says the app is “damaged”, run
+> `xattr -dr com.apple.quarantine "/Applications/Job Alert Bot.app"`). Windows:
+> SmartScreen → **Weitere Informationen → Trotzdem ausführen**. On **macOS** the
+> update button opens the download page instead of installing in place — macOS only
+> allows in-place updates of signed apps. Windows, AppImage and `.deb` update in place.
+
+### Docker image
+
+Every release is published as a multi-arch image (amd64 + arm64):
+
+```bash
+docker pull ghcr.io/julianfriedle/job-alert-bot:latest
+```
+
+Tags: `latest`, the exact version (`2.1.0`) and the minor line (`2.1`). To use it with
+the bundled `docker-compose.yml`, replace `build: .` / `image: job-alert-bot` in both
+services with `image: ghcr.io/julianfriedle/job-alert-bot:latest`. See [DEPLOY.md](DEPLOY.md).
+
 ## Setup
+
+The steps below are for running **from source**. The desktop app and the Docker
+image already contain everything from step 1.
 
 > **The easy way — guided setup wizard.** After installing dependencies (step 1),
 > just start the GUI with `npm run gui` and open <http://localhost:3000>. On a fresh
@@ -81,10 +153,15 @@ data/relevant_jobs.xlsx   ← Latest export (gitignored)
 
 ### 1. Install dependencies
 
+Requires **Node.js 22** or newer.
+
 ```bash
 npm install
 npx playwright install --with-deps chromium
 ```
+
+`npm install` also fetches Electron and electron-builder (~200 MB), which only the
+desktop app needs. To skip them: `npm install --omit=dev`.
 
 > If you're using the wizard, you can stop here and run `npm run gui` — the wizard
 > covers steps 2–6. Read on only for the manual route.
@@ -193,6 +270,8 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `SOURCE_HOST_GAP_MS` | `2000` | Same, between two source scrapes that share a host |
 | `PLATFORM_DESC_HOST_GAP_MS` | `2500` | Same, for the job boards (LinkedIn/StepStone/Indeed) |
 | `GUI_PORT` | `3000` | Port for the web GUI |
+| `GUI_HOST` | *(all interfaces)* | Address the GUI binds to, e.g. `127.0.0.1` to keep it off the network. Not in the settings form. The desktop app sets it to `127.0.0.1` |
+| `APP_DATA_DIR` | *(project folder)* | Moves all writable state (`.env`, `config/`, `data/`, `logs/`) into this folder. Must be set in the real environment, not in `.env` (it decides where `.env` is read from). The desktop app sets it to the per-user app-data folder |
 | `RUN_STOP_GRACE_MS` | `45000` | How long **Lauf stoppen** waits for the run to wind down before force-killing it |
 | `JOBS_DB_PATH` | `data/jobs.db` | SQLite DB path (set to a mounted volume in Docker) |
 | `CLIENTS_ENABLED` | `false` | Show the multi-client UI (**Klienten** tab + client selector). Off = private single-user view |
@@ -322,6 +401,12 @@ npm run refetch-descriptions
 
 # Run the test suite (node:test, offline — no network, no real DB, no API calls)
 npm test
+
+# Start the desktop app from source (data in "Job Alert Bot (Dev)", not the installed app's folder)
+npm run desktop
+
+# Build the desktop installers for the current OS into dist/ (unsigned)
+npm run dist
 ```
 
 ### Stopping a run
@@ -373,14 +458,14 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 
 | Tab | What it does |
 |---|---|
-| **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Sort by relevance or by **date found** (oldest / newest first). Set application status or hide a job with one click. The **✎** button opens the cover-letter window (see [Generating a Cover Letter](#generating-a-cover-letter)). |
+| **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Sort by relevance or by **date found** (oldest / newest first). Set application status or hide a job with one click. The **✎** button opens the cover-letter window (see [Generating a Cover Letter](#generating-a-cover-letter)). In the desktop app, a banner with an **Aktualisieren** button appears at the top when a new release is available. |
 | **Quellen** | Edit the active client's job sources visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. |
 | **Profil** | Edit the active client's CV & preferences in a structured form — this is what the AI matches jobs against and uses for cover letters. |
 | **Prompts** | Edit the prompts sent to Claude for the active client (relevance scoring + cover letters). Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
 | **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. **Lauf stoppen** aborts a running pipeline: the run winds down at the next source/page boundary, keeps every job found so far, and skips the remaining stages (notifications, expiry check, statistics, export) so a partial pass can't distort them. If it hasn't exited after `RUN_STOP_GRACE_MS` (default 45 s) it is force-killed. Nothing already paid for is thrown away: each job is stored as soon as its description has been fetched, and every AI score written the moment it is scored — a stopped run leaves them in the DB, and the next run picks up where it left off instead of re-scraping. Jobs whose detail page was still loading are *not* stored (an empty description would be scored as a blank posting), so they are simply fetched again next time. |
 | **Klienten** | *Hidden unless `CLIENTS_ENABLED=true`.* Create/edit/delete clients (tenants): name, Telegram chat id, active toggle, Telegram & expiry toggles, optional min-score. A **Telegram-Test** button verifies the chat id. Clients receive Telegram alerts only — they have no GUI access. |
 | **Statistik** | Application heatmap, top sources/companies, run history, and a per-run overview table. |
-| **Einstellungen** | Edit every `.env` variable from a form (incl. the SaaS auth vars); switch **theme** and **language** (see below); manage **database backups** (create / upload / download / restore — see [Backups](#backups)); pull the latest version from GitHub (**update button**); restart the GUI; and re-open or test the **setup wizard**. |
+| **Einstellungen** | Edit every `.env` variable from a form (incl. the SaaS auth vars); switch **theme** and **language** (see below); manage **database backups** (create / upload / download / restore — see [Backups](#backups)); update the app (**Updates** card: `git pull` for a source install, release download + install in the desktop app); restart the GUI; and re-open or test the **setup wizard**. |
 
 All tabs operate on the **active client**. Out of the box the multi-client UI is off
 (`CLIENTS_ENABLED=false`): there is no **Klienten** tab and no client selector, and everything
@@ -431,9 +516,15 @@ realistic, but **every save goes to the sandbox — your real `.env` and `config
 never modified or deleted**, and the full flow is always shown so you can rehearse it end to
 end. Delete the `data/setup-debug/` folder to discard the sandbox.
 
-### Updating from GitHub
+### Updating
 
-If you installed via `git clone`, **Einstellungen → Updates → Nach Updates suchen** pulls the
+**Desktop app:** **Einstellungen → Updates → Aktualisieren** (or the banner on the
+dashboard) — see [Desktop app](#desktop-app). The app checks for a new release at
+start and every 6 hours.
+
+**Docker:** `docker compose pull && docker compose up -d` (with the `ghcr.io` image).
+
+**From source:** if you installed via `git clone`, **Einstellungen → Updates → Nach Updates suchen** pulls the
 latest version (`git pull --ff-only`) and shows the git output. If new code was pulled, a
 **Restart & apply** button appears to load it. When dependencies changed (`package.json`), it
 asks you to run `npm install` in the terminal first instead of restarting. The pull is
@@ -446,6 +537,27 @@ npm install -g pm2
 pm2 start index.js --name job-alert
 pm2 save         # persist across reboots
 ```
+
+## Releases (maintainers)
+
+A version tag builds everything — `.github/workflows/release.yml`:
+
+```bash
+npm version minor          # bumps package.json, commits, tags v2.1.0
+git push --follow-tags
+```
+
+1. runs the tests (and fails if the tag doesn't match `package.json`),
+2. builds the Docker image for amd64 + arm64 and pushes it to `ghcr.io`,
+3. builds the installers on macOS, Windows and Linux runners (`electron-builder`),
+4. creates the GitHub release with the installers and the `latest*.yml` files the
+   desktop app's updater reads.
+
+The installers are unsigned (macOS is ad-hoc signed so it runs on Apple Silicon).
+To sign them later: an Apple Developer ID (+ notarization) and a Windows code-signing
+certificate, passed to the `desktop` job as `CSC_LINK` / `CSC_KEY_PASSWORD` secrets;
+then drop `identity: "-"` from `electron-builder.yml` and enable in-place updates on
+macOS (`NATIVE_INSTALL` in `desktop/updater.js`).
 
 ## Backups
 

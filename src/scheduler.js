@@ -1,8 +1,7 @@
-import 'dotenv/config';
+import './env.js';
 import cron from 'node-cron';
 import { createWriteStream, mkdirSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 import { scrapeAll, fetchDescriptions } from './scraper.js';
 import {
@@ -20,8 +19,8 @@ import { startApplyWorker } from './apply-worker.js';
 import { startTelegramBot } from './telegram-bot.js';
 import { isTruthy } from './scrapers/browser.js';
 import { isAborted, beginRun, endRun, exitRequested } from './run-control.js';
+import { LOGS_DIR } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Tunable knobs (env override; defaults preserve original behavior)
 const CRON_SCHEDULE          = process.env.CRON_SCHEDULE || '0 * * * *';
@@ -430,7 +429,7 @@ export async function runAll({ onlyClientId } = {}) {
   }
   runInProgress = true;
   const startTime = Date.now();
-  const logsDir = path.join(__dirname, '..', 'logs');
+  const logsDir = LOGS_DIR;
   mkdirSync(logsDir, { recursive: true });
   // Millisecond precision: two runs starting in the same second must not
   // truncate each other's log file.
