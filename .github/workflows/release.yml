@@ -86,6 +86,9 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ needs.test.outputs.tag }}
             type=raw,value=latest
       - uses: docker/build-push-action@v6
+        env:
+          # No build-record artifact — the release job only wants installers.
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -134,8 +137,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Only the installers: build-push-action also stores a build record as an
+      # artifact, and downloading that one failed the release once.
       - uses: actions/download-artifact@v4
         with:
+          pattern: desktop-*
           path: artifacts
           merge-multiple: true
       # --target creates the tag on this commit when it doesn't exist yet
