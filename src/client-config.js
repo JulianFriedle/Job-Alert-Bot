@@ -9,13 +9,11 @@
 
 import { readFileSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 import { getClient, DEFAULT_CLIENT_ID } from './database.js';
 import { mergePrompts } from './prompts.js';
+import { CONFIG_DIR } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_DIR = path.join(__dirname, '..', 'config');
 
 // German-tuned defaults (formerly hard-coded in scheduler.js).
 export const DEFAULT_TITLE_BLOCKLIST = [

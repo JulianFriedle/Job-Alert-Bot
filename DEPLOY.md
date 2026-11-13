@@ -65,6 +65,12 @@ TELEGRAM_BOT_TOKEN=123456:ABC...               # ONE bot for all clients
 docker compose up -d --build
 ```
 
+Or skip the build and use the released image: in both services replace
+`build: .` / `image: job-alert-bot` with
+`image: ghcr.io/julianfriedle/job-alert-bot:latest` (or a fixed version such as
+`:2.1.0`), then `docker compose pull && docker compose up -d`. Every release tag
+publishes it for amd64 and arm64 (see *Releases* in the README).
+
 This starts two containers sharing `./data`:
 - **gui** — dashboard on port 3000 (the operator logs in here)
 - **scheduler** — runs the hourly pipeline across all enabled clients

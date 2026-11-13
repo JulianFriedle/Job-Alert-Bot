@@ -36,6 +36,9 @@ storage/
 # Run logs
 logs/
 
+# Desktop installers (npm run dist)
+dist/
+
 # Auto-apply: saved platform login sessions, per-client CVs, submit screenshots
 data/sessions/
 data/cv/

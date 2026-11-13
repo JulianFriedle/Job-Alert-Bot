@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './env.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { fileURLToPath } from 'url';
 import { getJobById, DEFAULT_CLIENT_ID } from './database.js';

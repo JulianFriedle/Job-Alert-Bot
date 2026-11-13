@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import '../src/env.js';
 import { getJobsWithEmptyDescription, updateJobDescription, markAnalyzed, getClients } from '../src/database.js';
 import { fetchDescriptions } from '../src/scraper.js';
 import { analyzeJob } from '../src/analyzer.js';

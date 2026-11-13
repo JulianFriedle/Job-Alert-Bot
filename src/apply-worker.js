@@ -10,10 +10,9 @@
 // so the GUI or Telegram acting on the same row at the same moment can never
 // race the worker. Nothing is EVER submitted from any state but `approved`,
 // and even then the kill switch, daily cap and cooldown are checked first.
-import 'dotenv/config';
-import { mkdirSync } from 'fs';
+import './env.js';
+import { mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 import {
   getNextApplicationByState, getApplicationsByState, getApplicationById, claimApplication,
@@ -22,6 +21,10 @@ import {
   upsertLibraryAnswer,
 } from './database.js';
 import { generateCoverLetter } from './cover-letter.js';
+import { getLatestDocument, getClientAssets } from './database.js';
+import { renderDocumentHtml, toPlainText, documentFileName } from './markdown-doc.js';
+import { documentCss } from './application-docs.js';
+import { renderPdf } from './pdf.js';
 import { getAuthenticatedContext, LoginChallengeError, MissingCredentialsError, InvalidCredentialsError } from './platform-login.js';
 import { launchPlatformBrowser, isTruthy, jitter } from './scrapers/browser.js';
 import { parseQuestions, prefillFromLibrary, unansweredRequired, libraryRowsFromQuestions } from './questions.js';
@@ -29,10 +32,10 @@ import { sendNextQuestion, sendReviewSummary, sendInfoToClient } from './telegra
 import * as stepstoneApplier from './appliers/stepstone.js';
 import * as linkedinApplier from './appliers/linkedin.js';
 import * as indeedApplier from './appliers/indeed.js';
+import { DATA_DIR } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ARTIFACTS_DIR = path.join(__dirname, '..', 'data', 'apply-artifacts');
-const CV_DIR = path.join(__dirname, '..', 'data', 'cv');
+const ARTIFACTS_DIR = path.join(DATA_DIR, 'apply-artifacts');
+const CV_DIR = path.join(DATA_DIR, 'cv');
 
 const APPLIERS = { stepstone: stepstoneApplier, linkedin: linkedinApplier, indeed: indeedApplier };
 
@@ -76,6 +79,30 @@ function cvPathFor(clientId) {
   return path.join(CV_DIR, `${clientId}.pdf`);
 }
 
+// The CV to upload for this job: the tailored one from the GUI (rendered fresh
+// to a PDF) when it exists, otherwise the uploaded general CV.
+async function cvPathForJob(clientId, job) {
+  const doc = getLatestDocument(clientId, job.id, 'cv');
+  if (!doc) return cvPathFor(clientId);
+  try {
+    const html = renderDocumentHtml(doc.markdown, { css: documentCss('cv'), assets: getClientAssets(clientId) });
+    const dir = path.join(CV_DIR, clientId);
+    mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, documentFileName({ company: job.company || job.title, kind: 'cv' }));
+    writeFileSync(file, await renderPdf(html));
+    return file;
+  } catch (err) {
+    log(`Angepasster Lebenslauf konnte nicht gerendert werden (nutze Standard-CV): ${err.message}`);
+    return cvPathFor(clientId);
+  }
+}
+
+// Plain text of the tailored cover letter from the GUI, if there is one.
+function tailoredCoverLetter(clientId, jobId) {
+  const doc = getLatestDocument(clientId, jobId, 'cover');
+  return doc ? toPlainText(doc.markdown) : '';
+}
+
 // ── Prepare pass ─────────────────────────────────────────────────────────────
 
 async function preparePass() {
@@ -93,7 +120,9 @@ async function preparePass() {
   logApplicationEvent(app.id, 'prepare_start');
 
   // Cover letter first — no browser needed, and reused on retries.
-  let coverLetter = app.cover_letter;
+  // A tailored cover letter from the GUI wins over a freshly generated one.
+  let coverLetter = app.cover_letter || tailoredCoverLetter(app.client_id, app.job_id);
+  if (coverLetter && !app.cover_letter) updateApplication(app.id, { cover_letter: coverLetter });
   if (!coverLetter) {
     try {
       coverLetter = await generateCoverLetter(job);
@@ -112,7 +141,7 @@ async function preparePass() {
     const page = await context.newPage();
     const screenshot = screenshotFn(app.id, page);
 
-    const result = await APPLIERS[app.platform].prepare(page, job, { cvPath: cvPathFor(app.client_id) });
+    const result = await APPLIERS[app.platform].prepare(page, job, { cvPath: await cvPathForJob(app.client_id, job) });
 
     if (result.external) {
       // Turned out to be an off-site application after all.
@@ -237,7 +266,7 @@ async function submitPass() {
     const result = await APPLIERS[app.platform].submit(page, app, job, {
       questions,
       coverLetter: app.cover_letter || '',
-      cvPath: cvPathFor(app.client_id),
+      cvPath: await cvPathForJob(app.client_id, job),
       dryRun: dryRun(),
       screenshot,
     });

@@ -1,14 +1,13 @@
 import ExcelJS from 'exceljs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { getRelevantJobs, DEFAULT_CLIENT_ID } from './database.js';
+import { DATA_DIR as DEFAULT_DATA_DIR } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Follow JOBS_DB_PATH like database.js/backup.js do, so the export lands next
 // to the DB (e.g. inside the Docker data volume) instead of the code directory.
 const DATA_DIR = process.env.JOBS_DB_PATH
   ? path.dirname(process.env.JOBS_DB_PATH)
-  : path.join(__dirname, '..', 'data');
+  : DEFAULT_DATA_DIR;
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [exporter] ${msg}`);

@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './env.js';
 import TelegramBot from 'node-telegram-bot-api';
 import { fileURLToPath } from 'url';
 import { recordTelegramMessage } from './database.js';

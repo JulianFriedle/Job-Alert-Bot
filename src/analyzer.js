@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './env.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { getClientConfig } from './client-config.js';
 import { analyzerLanguageLine } from './prompts.js';

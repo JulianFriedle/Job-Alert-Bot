@@ -1,15 +1,12 @@
-import 'dotenv/config';
+import '../src/env.js';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 // Importing database.js runs openDb(), which performs the idempotent schema
 // migration (adds client_id + composite PK to jobs, backfills the default client
 // on existing rows) and ensures the default client row exists.
 import { getClient, updateClient, getTotals, DEFAULT_CLIENT_ID } from '../src/database.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_DIR = path.join(__dirname, '..', 'config');
+import { CONFIG_DIR } from '../src/paths.js';
 
 function log(msg) { console.log(`[migrate] ${msg}`); }
 

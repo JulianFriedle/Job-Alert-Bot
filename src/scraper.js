@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './env.js';
 import { chromium } from 'playwright';
 import crypto from 'crypto';
 import { readFile } from 'fs/promises';
@@ -9,8 +9,8 @@ import { isPlatformSource, scrapePlatform } from './scrapers/index.js';
 import { launchPlatformBrowser, newHardenedContext } from './scrapers/browser.js';
 import { runHostLimited, registrableDomain } from './host-limiter.js';
 import { isAborted } from './run-control.js';
+import { CONFIG_DIR } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [scraper] ${msg}`);
@@ -1197,7 +1197,7 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
 
 // Allow direct execution: npm run test-scraper
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const configPath = path.join(__dirname, '..', 'config', 'jobs.json');
+  const configPath = path.join(CONFIG_DIR, 'jobs.json');
   const { sources } = JSON.parse(await readFile(configPath, 'utf-8'));
   const { jobs } = await scrapeAll(sources);
   console.log(JSON.stringify(jobs.map(j => ({ title: j.title, source: j.source })), null, 2));

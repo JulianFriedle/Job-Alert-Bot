@@ -1,6 +1,6 @@
 {
   "name": "job-alert-system",
-  "version": "2.0.4",
+  "version": "2.1.0",
   "description": "Automat1ed job alert system with AI relevance analysis and Telegram notifications",
   "type": "module",
   "main": "index.js",
@@ -10,6 +10,9 @@
     "type": "git",
     "url": "https://github.com/JulianFriedle/Job-Alert-Bot.git"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node index.js",
     "run-once": "node index.js --once",
@@ -17,21 +20,30 @@
     "test-notify": "node src/notifier.js --test",
     "apply": "node src/apply.js",
     "cover-letter": "node src/cover-letter.js",
+    "import-lebenslauf": "node scripts/import-lebenslauf.js",
     "refetch-descriptions": "node scripts/refetch-descriptions.js",
     "migrate": "node scripts/migrate-to-multitenant.js",
     "hash-password": "node scripts/hash-password.js",
     "generate-credentials-key": "node scripts/generate-credentials-key.js",
     "test": "node --test 'test/*.test.js'",
     "gui": "node src/server.js",
-    "gui:operator": "node scripts/operator-sandbox.js"
+    "gui:operator": "node scripts/operator-sandbox.js",
+    "desktop": "electron desktop/main.js",
+    "dist": "electron-builder --publish never"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^13.1.1",
     "dotenv": "^16.5.0",
+    "electron-updater": "^6.8.11",
     "exceljs": "^4.4.0",
+    "marked": "^12.0.2",
     "node-cron": "^3.0.3",
     "node-telegram-bot-api": "^1.2.0",
     "playwright": "^1.52.0"
+  },
+  "devDependencies": {
+    "electron": "^45.3.1",
+    "electron-builder": "^26.18.0"
   }
 }

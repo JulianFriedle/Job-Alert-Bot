@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './src/env.js';
 import { runAll, startScheduler } from './src/scheduler.js';
 import { installAbortSignals, isAborted } from './src/run-control.js';
 

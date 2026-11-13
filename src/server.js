@@ -1,11 +1,10 @@
-import 'dotenv/config';
+import './env.js';
 import http from 'http';
 import { readFile, writeFile, stat } from 'fs/promises';
 import { createReadStream, createWriteStream, readFileSync, existsSync, mkdirSync, rmSync, renameSync } from 'fs';
 import { spawn } from 'child_process';
 import crypto from 'crypto';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 import {
   getRelevantJobs, getRelevantJobsDetailed, getJobById, setApplicationStatus,
@@ -34,20 +33,33 @@ import {
   setPlatformCredentials, deletePlatformCredentials,
 } from './credentials.js';
 import { sessionPath, getAuthenticatedContext } from './platform-login.js';
+import { APP_ROOT, DATA_DIR, ENV_FILE, IS_DESKTOP } from './paths.js';
 import { launchPlatformBrowser } from './scrapers/browser.js';
 import { parseQuestions, applyAnswer, unansweredRequired } from './questions.js';
 import {
   createApplication, getApplications, getApplicationById, getApplicationEvents,
   updateApplication, claimApplication, closeTelegramPromptsForApplication,
+  createManualJob, getDocumentKindsByJob, getDocumentsForJob, getDocument, updateDocument,
+  deleteDocument, getClientAssets, getClientAsset, listClientAssets, setClientAsset, deleteClientAsset,
 } from './database.js';
+import {
+  startGeneration, getGenerationStatus, rehumanizeDocument, humanizeEnabled,
+  getTemplate, documentCss, TEMPLATE_COLUMN,
+} from './application-docs.js';
+import {
+  renderDocumentHtml, lintDocument, documentFileName, toPlainText, ASSET_NAMES, ASSET_MIME, DOC_KINDS,
+} from './markdown-doc.js';
+import { renderPdf } from './pdf.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(__dirname, '..');
+// ROOT = the code (read-only when installed); writable state lives under the
+// paths from paths.js. ENV_FILE honours ENV_FILE_PATH, so a sandbox instance
+// (scripts/operator-sandbox.js) never writes the operator's real .env.
+const ROOT = APP_ROOT;
 const PUBLIC_DIR = path.join(ROOT, 'public');
-// Overridable so a sandbox instance (scripts/operator-sandbox.js) never writes
-// the operator's real .env through PUT /api/settings.
-const ENV_FILE = process.env.ENV_FILE_PATH || path.join(ROOT, '.env');
 const PORT = process.env.GUI_PORT || 3000;
+// Empty = all interfaces (as before). The desktop app binds to 127.0.0.1 so the
+// GUI is never reachable from the local network.
+const HOST = (process.env.GUI_HOST || '').trim() || undefined;
 
 // App version shown in the GUI footer — read once from package.json (maintained
 // manually). Falls back to an empty string if it can't be read.
@@ -177,7 +189,9 @@ const SETTINGS_SCHEMA = [
   { key: 'ANALYZER_MODEL', group: 'KI-Modelle', label: 'Analyse-Modell', type: 'text', default: 'claude-haiku-4-5',
     help: 'Claude-Modell zur Relevanz-Bewertung (günstig/schnell empfohlen)' },
   { key: 'COVER_LETTER_MODEL', group: 'KI-Modelle', label: 'Anschreiben-Modell', type: 'text', default: 'claude-opus-5',
-    help: 'Claude-Modell für Anschreiben (stärkeres Modell empfohlen)' },
+    help: 'Claude-Modell für Anschreiben und angepasste Lebensläufe (stärkeres Modell empfohlen)' },
+  { key: 'DOCS_HUMANIZE', group: 'KI-Modelle', label: 'Humanize-Durchgang', type: 'bool', default: 'true',
+    help: 'An = Lebenslauf und Anschreiben laufen nach dem Erstellen durch einen zweiten KI-Durchgang, der KI-Floskeln entfernt. Natürlicher, kostet aber einen zusätzlichen Aufruf pro Dokument.' },
 
   { key: 'MIN_RELEVANCE_SCORE', group: 'Analyse & Filter', label: 'Min. Relevanz-Score', type: 'int', default: '4', min: 1, max: 10,
     help: 'Mindest-Score (1–10), ab dem ein Job als relevant gilt' },
@@ -340,10 +354,13 @@ function startRun(clientId) {
   if (clientId) args.push('--client', clientId);
   // detached → the child leads its own process group, so a hard stop can signal
   // the whole tree (`-pid`) and take Playwright's chromium children with it.
-  const child = spawn('node', args, {
+  // process.execPath rather than 'node': the desktop app has no node on PATH and
+  // runs us on its own bundled runtime (ELECTRON_RUN_AS_NODE, inherited by env).
+  const child = spawn(process.execPath, args, {
     cwd: ROOT,
     env: process.env,
     detached: true,
+    windowsHide: true,
   });
   run.child = child;
 
@@ -424,6 +441,41 @@ function sendJson(res, status, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(body);
+}
+
+// Raw request body as a Buffer (image uploads). Rejects past maxBytes.
+function readBuffer(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > maxBytes) { reject(new Error('Datei zu groß.')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+// Document previews contain HTML the model wrote. They are served with a CSP
+// that allows no scripts and no network (inline CSS + data: images only) and are
+// shown in a sandboxed iframe, so nothing in them can act on the GUI's origin.
+const PREVIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
+
+// API shape of a stored document: parsed missing-facts list + lint findings.
+function documentDto(doc) {
+  let missing = [];
+  try { missing = JSON.parse(doc.missing_json || '[]'); } catch { /* keep empty */ }
+  return {
+    id: doc.id, job_id: doc.job_id, kind: doc.kind, markdown: doc.markdown, notes: doc.notes,
+    humanized: !!doc.humanized, edited: !!doc.edited, created_at: doc.created_at, updated_at: doc.updated_at,
+    missing, lint: lintDocument(doc.markdown), text: toPlainText(doc.markdown),
+  };
+}
+
+function docTitle(job, kind) {
+  return `${kind === 'cv' ? 'Lebenslauf' : 'Anschreiben'}${job?.company ? ' – ' + job.company : ''}`;
 }
 
 function readBody(req) {
@@ -635,7 +687,27 @@ const server = http.createServer(async (req, res) => {
 
       // GET /api/jobs — all relevant jobs (the dashboard list)
       if (method === 'GET' && pathname === '/api/jobs') {
-        return sendJson(res, 200, getRelevantJobs(clientId));
+        // documents: which tailored documents exist per job (job-list badge)
+        const docKinds = getDocumentKindsByJob(clientId);
+        return sendJson(res, 200, getRelevantJobs(clientId).map(j => ({ ...j, documents: docKinds[j.id] || [] })));
+      }
+
+      // POST /api/jobs/manual { title, company, url?, location?, description } —
+      // add a posting by hand (e.g. found elsewhere) to tailor documents for it.
+      if (method === 'POST' && pathname === '/api/jobs/manual') {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        const field = (k, max) => String(body[k] ?? '').trim().slice(0, max);
+        const job = {
+          title: field('title', 300), company: field('company', 300), url: field('url', 2000),
+          location: field('location', 300), description: field('description', 100_000),
+        };
+        if (!job.title) return sendJson(res, 400, { error: 'Stellenbezeichnung ist erforderlich' });
+        if (job.url && !/^https?:\/\//i.test(job.url)) return sendJson(res, 400, { error: 'URL muss mit http(s):// beginnen' });
+        const created = createManualJob(clientId, job);
+        log(`Manuelle Stelle angelegt: "${created.title}" (${created.company || '–'})`);
+        return sendJson(res, 200, { job: { ...created, documents: [] } });
       }
 
       // GET /api/jobs/export.csv — the Jobs tab as a CSV download.
@@ -706,6 +778,155 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // ---- Application documents (tailored CV + cover letter) ----
+
+      // GET /api/jobs/:id/documents — all versions + generation status
+      m = pathname.match(/^\/api\/jobs\/([^/]+)\/documents$/);
+      if (method === 'GET' && m) {
+        const jobId = decodeURIComponent(m[1]);
+        if (!getJobById(clientId, jobId)) return sendJson(res, 404, { error: 'not found' });
+        return sendJson(res, 200, {
+          documents: getDocumentsForJob(clientId, jobId).map(documentDto),
+          status: getGenerationStatus(clientId, jobId),
+          humanize: humanizeEnabled(),
+        });
+      }
+      // POST /api/jobs/:id/documents { kinds: ['cv','cover'], notes } — start a
+      // generation in the background (calls the Anthropic API, costs money).
+      if (method === 'POST' && m) {
+        const jobId = decodeURIComponent(m[1]);
+        let body = {};
+        try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* defaults */ }
+        const kinds = Array.isArray(body.kinds) ? body.kinds.filter(k => DOC_KINDS.includes(k)) : DOC_KINDS;
+        try {
+          const status = startGeneration(clientId, jobId, { kinds, notes: String(body.notes || '').trim().slice(0, 5000) });
+          return sendJson(res, 202, { status });
+        } catch (err) {
+          return sendJson(res, err.status || 500, { error: err.message });
+        }
+      }
+
+      // /api/documents/:id[/preview|/pdf|/humanize]
+      m = pathname.match(/^\/api\/documents\/([^/]+)(?:\/(preview|pdf|humanize))?$/);
+      if (m) {
+        const doc = getDocument(clientId, decodeURIComponent(m[1]));
+        if (!doc) return sendJson(res, 404, { error: 'not found' });
+        const action = m[2] || '';
+        const job = getJobById(clientId, doc.job_id);
+
+        if (method === 'GET' && (action === 'preview' || action === 'pdf')) {
+          const html = renderDocumentHtml(doc.markdown, {
+            css: documentCss(doc.kind), assets: getClientAssets(clientId), title: docTitle(job, doc.kind),
+            screen: action === 'preview',
+          });
+          if (action === 'preview') {
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': PREVIEW_CSP });
+            return res.end(html);
+          }
+          try {
+            const pdf = await renderPdf(html);
+            const fileName = documentFileName({ date: doc.created_at, company: job?.company || job?.title, kind: doc.kind });
+            res.writeHead(200, {
+              'Content-Type': 'application/pdf',
+              'Content-Disposition': `${url.searchParams.get('download') ? 'attachment' : 'inline'}; filename="${fileName}"`,
+              'Content-Length': pdf.length,
+            });
+            return res.end(pdf);
+          } catch (err) {
+            log(`PDF-Erzeugung fehlgeschlagen: ${err.message}`);
+            return sendJson(res, 500, { error: `PDF konnte nicht erstellt werden: ${err.message}` });
+          }
+        }
+        // PUT /api/documents/:id { markdown } — manual edit, no AI call
+        if (method === 'PUT' && !action) {
+          let body;
+          try { body = JSON.parse(await readBody(req) || '{}'); }
+          catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+          if (typeof body.markdown !== 'string' || !body.markdown.trim())
+            return sendJson(res, 400, { error: 'Erwarte { markdown: "…" }' });
+          return sendJson(res, 200, { document: documentDto(updateDocument(clientId, doc.id, { markdown: body.markdown, edited: true })) });
+        }
+        // POST /api/documents/:id/humanize — one more humanize pass (one API call)
+        if (method === 'POST' && action === 'humanize') {
+          try {
+            return sendJson(res, 200, { document: documentDto(await rehumanizeDocument(clientId, doc)) });
+          } catch (err) {
+            log(`Humanize fehlgeschlagen: ${err.message}`);
+            return sendJson(res, 502, { error: `Überarbeitung fehlgeschlagen: ${err.message}` });
+          }
+        }
+        if (method === 'DELETE' && !action) {
+          deleteDocument(clientId, doc.id);
+          return sendJson(res, 200, { ok: true });
+        }
+      }
+
+      // GET /api/doc-setup — fact base, base templates and images of this client
+      if (method === 'GET' && pathname === '/api/doc-setup') {
+        const client = getClient(clientId);
+        return sendJson(res, 200, {
+          factbase: client.factbase_md || '',
+          templates: Object.fromEntries(DOC_KINDS.map(k => [k, getTemplate(client, k)])),
+          assets: listClientAssets(clientId),
+          humanize: humanizeEnabled(),
+        });
+      }
+      // PUT /api/factbase { factbase }
+      if (method === 'PUT' && pathname === '/api/factbase') {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        if (typeof body.factbase !== 'string') return sendJson(res, 400, { error: 'Erwarte { factbase: "…" }' });
+        updateClient(clientId, { factbase_md: body.factbase.trim() ? body.factbase : null });
+        return sendJson(res, 200, { ok: true });
+      }
+      // GET /api/doc-templates/:kind/preview — the saved base template, rendered
+      m = pathname.match(/^\/api\/doc-templates\/(cv|cover)(\/preview)?$/);
+      if (method === 'GET' && m && m[2]) {
+        const html = renderDocumentHtml(getTemplate(clientId, m[1]).markdown, {
+          css: documentCss(m[1]), assets: getClientAssets(clientId), title: docTitle(null, m[1]), screen: true,
+        });
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': PREVIEW_CSP });
+        return res.end(html);
+      }
+      // PUT /api/doc-templates/:kind { markdown } — empty resets to the example
+      if (method === 'PUT' && m && !m[2]) {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        if (typeof body.markdown !== 'string') return sendJson(res, 400, { error: 'Erwarte { markdown: "…" }' });
+        updateClient(clientId, { [TEMPLATE_COLUMN[m[1]]]: body.markdown.trim() ? body.markdown : null });
+        return sendJson(res, 200, { template: getTemplate(clientId, m[1]) });
+      }
+      // GET/POST/DELETE /api/doc-assets/:name — photo / signature (raw image body)
+      m = pathname.match(/^\/api\/doc-assets\/([a-z]+)$/);
+      if (m) {
+        const name = m[1];
+        if (!ASSET_NAMES.includes(name)) return sendJson(res, 404, { error: 'Unbekanntes Bild' });
+        if (method === 'GET') {
+          const a = getClientAsset(clientId, name);
+          if (!a) return sendJson(res, 404, { error: 'not found' });
+          res.writeHead(200, { 'Content-Type': a.mime, 'Content-Length': a.data.length, 'Cache-Control': 'no-store' });
+          return res.end(a.data);
+        }
+        if (method === 'POST') {
+          const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+          if (!ASSET_MIME.includes(mime)) return sendJson(res, 400, { error: 'Nur PNG, JPEG oder WebP' });
+          try {
+            const data = await readBuffer(req, 5_000_000);
+            if (!data.length) return sendJson(res, 400, { error: 'Leere Datei' });
+            setClientAsset(clientId, name, mime, data);
+            return sendJson(res, 200, { ok: true, assets: listClientAssets(clientId) });
+          } catch (err) {
+            return sendJson(res, 400, { error: `Upload fehlgeschlagen: ${err.message}` });
+          }
+        }
+        if (method === 'DELETE') {
+          deleteClientAsset(clientId, name);
+          return sendJson(res, 200, { ok: true, assets: listClientAssets(clientId) });
+        }
+      }
+
       // ---- Auto-apply: platform credentials ----
 
       // GET /api/credentials — status per platform (email + isSet, never the password)
@@ -768,7 +989,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       // ---- Auto-apply: per-client CV file (PDF) ----
-      const cvPath = path.join(ROOT, 'data', 'cv', `${clientId}.pdf`);
+      const cvPath = path.join(DATA_DIR, 'cv', `${clientId}.pdf`);
 
       // GET /api/cv — does a CV exist?
       if (method === 'GET' && pathname === '/api/cv') {
@@ -1141,6 +1362,11 @@ const server = http.createServer(async (req, res) => {
       // POST /api/update — pull the latest version from GitHub (git pull --ff-only)
       if (method === 'POST' && pathname === '/api/update') {
         if (run.active) return sendJson(res, 409, { error: 'Ein Lauf ist aktiv – bitte zuerst beenden.' });
+        // The desktop app updates itself from GitHub Releases (desktop/updater.js);
+        // its install directory is no git checkout.
+        if (IS_DESKTOP) {
+          return sendJson(res, 200, { ok: false, output: 'Die Desktop-App aktualisiert sich über „Aktualisieren“ in den Einstellungen, nicht per git pull.' });
+        }
 
         const inside = await git(['rev-parse', '--is-inside-work-tree']);
         if (inside.code !== 0 || inside.out.trim() !== 'true') {
@@ -1237,10 +1463,11 @@ const server = http.createServer(async (req, res) => {
         if (run.active) return sendJson(res, 409, { error: 'Ein Lauf ist aktiv – bitte zuerst beenden.' });
         sendJson(res, 200, { ok: true });
         log('Neustart angefordert …');
-        // Under pm2/systemd, exiting is enough — the manager restarts us. Otherwise
-        // re-exec a detached copy of this process. The new instance retries binding
-        // the port (see server 'error' handler) until this one has released it.
-        const managed = process.env.pm_id !== undefined;
+        // Under pm2/systemd or the desktop app, exiting is enough — the manager
+        // restarts us. Otherwise re-exec a detached copy of this process. The new
+        // instance retries binding the port (see server 'error' handler) until this
+        // one has released it.
+        const managed = process.env.pm_id !== undefined || IS_DESKTOP;
         setTimeout(() => {
           if (!managed) {
             const child = spawn(process.argv[0], process.argv.slice(1), {
@@ -1273,13 +1500,13 @@ let bindRetries = 0;
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE' && bindRetries < 30) {
     if (bindRetries++ === 0) log(`Port ${PORT} noch belegt – warte auf Freigabe …`);
-    setTimeout(() => server.listen(PORT), 300);
+    setTimeout(() => server.listen(PORT, HOST), 300);
   } else {
     log(`FATAL: ${err.message}`);
     process.exit(1);
   }
 });
-server.listen(PORT, () => log(`GUI ready → http://localhost:${PORT}`));
+server.listen(PORT, HOST, () => log(`GUI ready → http://localhost:${PORT}`));
 
 // Daily DB backup: check on startup, then every 6h so a long-running server still
 // creates one after crossing midnight. Idempotent — skips if today's already exists.

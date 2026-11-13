@@ -10,14 +10,13 @@
 // Only the scheduler process calls this module, so session files never race.
 import { mkdirSync, existsSync, rmSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 import { newHardenedContext, humanType, humanDelay } from './scrapers/browser.js';
 import { getPlatformCredentials } from './credentials.js';
 import { setLoginState } from './database.js';
+import { DATA_DIR } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const SESSIONS_DIR = process.env.SESSIONS_DIR || path.join(__dirname, '..', 'data', 'sessions');
+export const SESSIONS_DIR = process.env.SESSIONS_DIR || path.join(DATA_DIR, 'sessions');
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [platform-login] ${msg}`);

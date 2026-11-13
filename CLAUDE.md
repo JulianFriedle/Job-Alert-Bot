@@ -55,6 +55,7 @@ Never trigger any of these to "check that it works":
 |---|---|
 | `analyzeJob` (`src/analyzer.js`) | One Anthropic call **per job** — a full backlog is thousands |
 | `src/cover-letter.js` | Anthropic call on a stronger (pricier) model |
+| `src/application-docs.js` | Tailored CV / cover letter: up to 4 calls on the stronger model per click (2 documents × write + humanize) |
 | `src/notifier.js` | Real Telegram messages to real people |
 | `src/apply-worker.js` | Real job applications on LinkedIn/StepStone/Indeed |
 
@@ -99,6 +100,9 @@ web GUI. Multi-tenant: every job, run and setting is scoped by `client_id`.
 | `src/database.js` | better-sqlite3, all SQL lives here |
 | `src/run-control.js` | Cooperative abort flag for stopping a run |
 | `public/` | Vanilla-JS front end (`app.js`, `i18n.js`, no framework, no build step) |
+| `src/paths.js` | All writable paths (`.env`, `config/`, `data/`, `logs/`); `APP_DATA_DIR` relocates them |
+| `desktop/` | Electron shell: spawns server + scheduler, tray, self-update from GitHub Releases |
+| `.github/workflows/release.yml` | `v*` tag → tests, ghcr.io image, installers, GitHub release |
 
 ## Conventions
 
@@ -117,6 +121,11 @@ web GUI. Multi-tenant: every job, run and setting is scoped by `client_id`.
   recently removed. Reach for the stdlib before adding one.
 - Long loops in the pipeline should check `isAborted()` at their boundary so a
   stop stays responsive.
+- **Never build a writable path from `__dirname`.** Use `src/paths.js` — the
+  desktop app's install directory is read-only, and its data lives in
+  `APP_DATA_DIR`. Entry points import `./env.js` (not `dotenv/config`) first.
+- **Spawn Node children with `process.execPath`**, never `'node'`: the desktop
+  app has no `node` on PATH and runs everything on Electron's runtime.
 
 ## Changes that touch more than one place
 

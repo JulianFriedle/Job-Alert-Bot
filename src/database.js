@@ -1,12 +1,12 @@
 import Database from 'better-sqlite3';
 import { mkdirSync, copyFileSync, rmSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { DATA_DIR } from './paths.js';
+
 // JOBS_DB_PATH lets a deployment (Docker volume) or a test point the DB elsewhere.
-export const DB_PATH = process.env.JOBS_DB_PATH || path.join(__dirname, '..', 'data', 'jobs.db');
+export const DB_PATH = process.env.JOBS_DB_PATH || path.join(DATA_DIR, 'jobs.db');
 
 // Every table that holds real data — used by the backup/restore copy. Order does
 // not matter for the wipe+refill (foreign keys are not enforced), but we keep a
@@ -15,6 +15,7 @@ export const DATA_TABLES = [
   'clients', 'jobs', 'runs', 'run_stats', 'status_history',
   'client_credentials', 'applications', 'application_events',
   'telegram_prompts', 'telegram_messages', 'answer_library',
+  'client_assets', 'documents',
 ];
 
 // Tables a backup MUST contain to be restorable. Kept separate from DATA_TABLES
@@ -241,6 +242,39 @@ function createSchema(db) {
       PRIMARY KEY (client_id, question_key)
     );
   `);
+
+  // ── Application documents ────────────────────────────────────────────────────
+  // Images the CV/cover-letter templates reference by name (foto, unterschrift).
+  // Stored in the DB rather than on disk so a backup carries them along.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS client_assets (
+      client_id  TEXT NOT NULL,
+      name       TEXT NOT NULL,
+      mime       TEXT NOT NULL,
+      data       BLOB NOT NULL,
+      updated_at TEXT,
+      PRIMARY KEY (client_id, name)
+    );
+  `);
+  // Tailored CVs / cover letters per job. Every generation is a new row (kind
+  // 'cv' | 'cover'); manual edits update the row in place. PDFs are rendered on
+  // demand from `markdown`, so nothing else has to be kept in sync.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS documents (
+      id           TEXT PRIMARY KEY,
+      client_id    TEXT NOT NULL,
+      job_id       TEXT NOT NULL,
+      kind         TEXT NOT NULL,
+      markdown     TEXT NOT NULL,
+      missing_json TEXT,
+      notes        TEXT,
+      humanized    INTEGER DEFAULT 0,
+      edited       INTEGER DEFAULT 0,
+      created_at   TEXT,
+      updated_at   TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_documents_job ON documents (client_id, job_id, kind, created_at);
+  `);
 }
 
 // Idempotent migrations for DBs created before multi-tenancy. The jobs table is
@@ -271,6 +305,10 @@ function migrateSchema(db) {
     db.exec("ALTER TABLE clients ADD COLUMN auto_apply TEXT DEFAULT 'off'");
   if (!clientCols.includes('max_applies_per_day'))
     db.exec('ALTER TABLE clients ADD COLUMN max_applies_per_day INTEGER');
+  // Application documents: Markdown fact base + base templates per client.
+  if (!clientCols.includes('factbase_md'))       db.exec('ALTER TABLE clients ADD COLUMN factbase_md       TEXT');
+  if (!clientCols.includes('cv_template_md'))    db.exec('ALTER TABLE clients ADD COLUMN cv_template_md    TEXT');
+  if (!clientCols.includes('cover_template_md')) db.exec('ALTER TABLE clients ADD COLUMN cover_template_md TEXT');
 
   // Multi-tenant rebuild: old jobs table had `id` as sole PRIMARY KEY. Recreate it
   // with the composite (client_id, id) key and backfill the default client.
@@ -363,6 +401,7 @@ const CLIENT_FIELDS = [
   'expiry_notifications', 'min_relevance_score',
   'profile_json', 'sources_json', 'filters_json', 'prompts_json',
   'auto_apply', 'max_applies_per_day',
+  'factbase_md', 'cv_template_md', 'cover_template_md',
 ];
 
 export function getClients() {
@@ -435,6 +474,8 @@ export function deleteClient(id) {
     db.prepare('DELETE FROM client_credentials WHERE client_id = ?').run(id);
     db.prepare('DELETE FROM telegram_messages WHERE client_id = ?').run(id);
     db.prepare('DELETE FROM answer_library WHERE client_id = ?').run(id);
+    db.prepare('DELETE FROM client_assets WHERE client_id = ?').run(id);
+    db.prepare('DELETE FROM documents WHERE client_id = ?').run(id);
     db.prepare('DELETE FROM clients WHERE id = ?').run(id);
   });
   tx();
@@ -470,6 +511,21 @@ export function saveJob(clientId, job) {
     easy_apply: job.easyApply == null ? null : (job.easyApply ? 1 : 0),
     platform: job.platform ?? null,
   });
+}
+
+// A posting the user adds by hand (pasted text) so documents can be tailored to
+// it. It skips the pipeline entirely: relevant + notified are set so it is never
+// analyzed or sent to Telegram, and last_seen_at stays NULL so it never expires.
+export function createManualJob(clientId, { id, title, company, url, location, description, scraped_at }) {
+  const jobId = id || `manual:${randomUUID()}`;
+  const now = scraped_at || new Date().toISOString();
+  db.prepare(`
+    INSERT INTO jobs
+      (client_id, id, title, company, url, location, description, source, relevant, notified,
+       scraped_at, analyzed_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'Manuell', 1, 1, ?, ?, NULL)
+  `).run(clientId, jobId, title || '', company || '', url || '', location || '', description || '', now, now);
+  return getJobById(clientId, jobId);
 }
 
 export function setJobEasyApply(clientId, id, easyApply) {
@@ -517,8 +573,9 @@ export function getJobById(clientId, id) {
   return db.prepare('SELECT * FROM jobs WHERE client_id = ? AND id = ?').get(clientId, id);
 }
 
-export function setApplicationStatus(clientId, id, status) {
-  const now = new Date().toISOString();
+// `at` (ISO string) backdates the change — used when importing an old log.
+export function setApplicationStatus(clientId, id, status, at = null) {
+  const now = at || new Date().toISOString();
   const prev = db.prepare('SELECT status FROM jobs WHERE client_id = ? AND id = ?').get(clientId, id);
   db.prepare(`
     UPDATE jobs SET
@@ -599,7 +656,8 @@ export function markIrrelevant(clientId, id) {
 
 export function getJobsWithEmptyDescription(clientId) {
   return db.prepare(
-    "SELECT * FROM jobs WHERE client_id = ? AND (description IS NULL OR description = '') AND (expired = 0 OR expired IS NULL)"
+    // Manual jobs ("+ Stelle") are never scraped or analyzed, not even here.
+    "SELECT * FROM jobs WHERE client_id = ? AND (description IS NULL OR description = '') AND (expired = 0 OR expired IS NULL) AND source IS NOT 'Manuell'"
   ).all(clientId);
 }
 
@@ -1002,6 +1060,90 @@ export function upsertLibraryAnswer(clientId, { question_key, label, type, optio
       answer = @answer, use_count = use_count + 1, updated_at = @now
   `).run({ client_id: clientId, question_key, label: label ?? null, type: type ?? null,
            options_json: options_json ?? null, answer: answer ?? null, now });
+}
+
+// ── Application documents (assets + tailored CVs / cover letters) ────────────
+
+export function getClientAsset(clientId, name) {
+  return db.prepare('SELECT name, mime, data, updated_at FROM client_assets WHERE client_id = ? AND name = ?')
+    .get(clientId, name);
+}
+
+// { foto: { mime, data }, … } — the shape renderDocumentHtml expects.
+export function getClientAssets(clientId) {
+  const out = {};
+  for (const r of db.prepare('SELECT name, mime, data FROM client_assets WHERE client_id = ?').all(clientId)) {
+    out[r.name] = { mime: r.mime, data: r.data };
+  }
+  return out;
+}
+
+export function listClientAssets(clientId) {
+  return db.prepare('SELECT name, mime, length(data) AS size, updated_at FROM client_assets WHERE client_id = ?')
+    .all(clientId);
+}
+
+export function setClientAsset(clientId, name, mime, data) {
+  db.prepare(`
+    INSERT INTO client_assets (client_id, name, mime, data, updated_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (client_id, name) DO UPDATE SET mime = excluded.mime, data = excluded.data, updated_at = excluded.updated_at
+  `).run(clientId, name, mime, data, new Date().toISOString());
+}
+
+export function deleteClientAsset(clientId, name) {
+  db.prepare('DELETE FROM client_assets WHERE client_id = ? AND name = ?').run(clientId, name);
+}
+
+export function createDocument(clientId, { job_id, kind, markdown, missing = [], notes = null, humanized = false, created_at = null }) {
+  const id = randomUUID();
+  const now = created_at || new Date().toISOString();
+  db.prepare(`
+    INSERT INTO documents (id, client_id, job_id, kind, markdown, missing_json, notes, humanized, edited, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+  `).run(id, clientId, job_id, kind, markdown, JSON.stringify(missing || []), notes, humanized ? 1 : 0, now, now);
+  return getDocument(clientId, id);
+}
+
+export function getDocument(clientId, id) {
+  return db.prepare('SELECT * FROM documents WHERE client_id = ? AND id = ?').get(clientId, id);
+}
+
+// All versions for one job, newest first.
+export function getDocumentsForJob(clientId, jobId) {
+  return db.prepare(`
+    SELECT * FROM documents WHERE client_id = ? AND job_id = ? ORDER BY created_at DESC, rowid DESC
+  `).all(clientId, jobId);
+}
+
+export function getLatestDocument(clientId, jobId, kind) {
+  return db.prepare(`
+    SELECT * FROM documents WHERE client_id = ? AND job_id = ? AND kind = ?
+    ORDER BY created_at DESC, rowid DESC LIMIT 1
+  `).get(clientId, jobId, kind);
+}
+
+// Per job: which kinds have at least one document (for the job-list badge).
+export function getDocumentKindsByJob(clientId) {
+  const out = {};
+  for (const r of db.prepare('SELECT DISTINCT job_id, kind FROM documents WHERE client_id = ?').all(clientId)) {
+    (out[r.job_id] ||= []).push(r.kind);
+  }
+  return out;
+}
+
+// Partial update: markdown edits (marks the row as hand-edited) or a humanize pass.
+export function updateDocument(clientId, id, { markdown, humanized, edited } = {}) {
+  const sets = ['updated_at = @updated_at'];
+  const params = { clientId, id, updated_at: new Date().toISOString() };
+  if (typeof markdown === 'string') { sets.push('markdown = @markdown'); params.markdown = markdown; }
+  if (humanized !== undefined) { sets.push('humanized = @humanized'); params.humanized = humanized ? 1 : 0; }
+  if (edited !== undefined) { sets.push('edited = @edited'); params.edited = edited ? 1 : 0; }
+  db.prepare(`UPDATE documents SET ${sets.join(', ')} WHERE client_id = @clientId AND id = @id`).run(params);
+  return getDocument(clientId, id);
+}
+
+export function deleteDocument(clientId, id) {
+  return db.prepare('DELETE FROM documents WHERE client_id = ? AND id = ?').run(clientId, id).changes === 1;
 }
 
 // ── Backup & restore ─────────────────────────────────────────────────────────
