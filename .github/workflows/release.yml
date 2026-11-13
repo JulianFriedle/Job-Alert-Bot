@@ -1,5 +1,7 @@
-# Release: push a version tag (npm version patch|minor|major && git push --follow-tags)
-# and this workflow
+# Release: push a version tag (npm version patch|minor|major && git push --follow-tags),
+# or start it by hand (Actions → Release → Run workflow, on main): it then
+# releases the version in package.json and creates the tag v<version> itself.
+# Either way this workflow
 #   1. runs the tests,
 #   2. builds the Docker image and pushes it to ghcr.io (linux/amd64 + arm64),
 #   3. builds the desktop installers on macOS, Windows and Linux,
@@ -10,6 +12,7 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,6 +24,8 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,14 +33,30 @@ jobs:
           node-version: 22
           cache: npm
       # The tag must match package.json — the installers and the updater take
-      # their version from package.json, the release from the tag.
-      - name: Tag matches package.json version
+      # their version from package.json, the release from the tag. A manual
+      # start releases main only, and only a version that isn't released yet.
+      - name: Determine and check the version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PKG="v$(node -p "require('./package.json').version")"
-          if [ "$PKG" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME passt nicht zur package.json-Version $PKG"
-            exit 1
+          TAG="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            if [ "$TAG" != "$GITHUB_REF_NAME" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME passt nicht zur package.json-Version $TAG"
+              exit 1
+            fi
+          else
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "::error::Manuelle Releases nur von main (gestartet auf $GITHUB_REF)"
+              exit 1
+            fi
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "::error::$TAG ist schon veröffentlicht – erst die Version in package.json erhöhen"
+              exit 1
+            fi
           fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       - run: npm ci --no-audit --no-fund
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
@@ -61,8 +82,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ needs.test.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.test.outputs.tag }}
             type=raw,value=latest
       - uses: docker/build-push-action@v6
         with:
@@ -108,7 +129,7 @@ jobs:
             dist/latest*.yml
 
   release:
-    needs: [docker, desktop]
+    needs: [test, docker, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -117,13 +138,17 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      # --target creates the tag on this commit when it doesn't exist yet
+      # (manual start); for a pushed tag it is already there.
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.test.outputs.tag }}
         run: |
           ls -la artifacts
-          gh release create "$GITHUB_REF_NAME" artifacts/* \
+          gh release create "$TAG" artifacts/* \
             --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
             --generate-notes \
             --latest
