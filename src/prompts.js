@@ -64,3 +64,31 @@ export function minimizePromptOverrides(incoming) {
   }
   return overrides;
 }
+
+// ── Output language ──────────────────────────────────────────────────────────
+// A client may pick the language of AI-written text (profile
+// preferences.outputLanguage, asked in the setup wizard). Unset means "as
+// before": no directive is added, so existing prompts behave exactly as they did.
+const LANGUAGE_NAMES = { de: { en: 'German', de: 'Deutsch' }, en: { en: 'English', de: 'Englisch' } };
+
+export function outputLanguage(profile) {
+  const v = profile?.preferences?.outputLanguage;
+  return Object.hasOwn(LANGUAGE_NAMES, v) ? v : null;
+}
+
+// Appended to the analyzer's job block (English, like the rest of that prompt).
+export function analyzerLanguageLine(profile) {
+  const l = outputLanguage(profile);
+  return l ? `Write "reasons", "concerns" and "summary" in ${LANGUAGE_NAMES[l].en}.` : '';
+}
+
+// Appended to the cover-letter task. It sits last in the user turn and says it
+// wins, because the (editable) system prompt may still name another language.
+export function coverLetterLanguageLine(profile) {
+  const l = outputLanguage(profile);
+  if (!l) return '';
+  return l === 'en'
+    ? 'Sprache: Verfasse das Anschreiben vollständig auf Englisch, als englischsprachigen Geschäftsbrief. ' +
+      'Diese Vorgabe hat Vorrang vor allen anderen Sprachangaben.'
+    : 'Sprache: Verfasse das Anschreiben vollständig auf Deutsch. Diese Vorgabe hat Vorrang vor allen anderen Sprachangaben.';
+}

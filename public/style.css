@@ -270,7 +270,7 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 
 /* ── Sources ───────────────────────────────────────────────────────────── */
 .panel-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
-.panel-actions { display: flex; gap: 8px; align-items: center; }
+.panel-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .source-list { display: flex; flex-direction: column; gap: 8px; }
 .source-row {
   display: grid; grid-template-columns: 170px 128px 1fr auto; gap: 8px; align-items: center;
@@ -588,6 +588,13 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 @media (max-width: 640px) {
   .topbar { gap: 12px; padding: 10px 14px; flex-wrap: wrap; }
   .topbar .btn-primary { order: 3; }
+  /* Tabs get their own swipeable row instead of widening the whole page. */
+  .tabs {
+    order: 4; flex: 1 0 100%; margin-left: 0;
+    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: none; }
   main { padding: 16px; }
   .job { grid-template-columns: auto 1fr; }
   .job-actions { grid-column: 1 / -1; flex-direction: row; }
@@ -607,9 +614,11 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   padding: 2px 9px; border-radius: 100px;
 }
 .setup-progress {
-  display: flex; gap: 6px; justify-content: center;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 12px 18px 0;
 }
+.setup-dots { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+.setup-count { font-size: .72rem; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
 .setup-dot {
   width: 22px; height: 4px; border-radius: 100px; background: var(--border);
   transition: background .2s;
@@ -650,6 +659,20 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .su-toggle-field .set-help { margin-top: 6px; }
 .su-dim { opacity: .45; transition: opacity .15s; }
 
+.su-checks { display: flex; flex-wrap: wrap; gap: 8px; }
+.su-chip {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2);
+  border-radius: 100px; padding: 6px 13px; font-size: .85rem; font-weight: 550;
+}
+.su-chip:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+.su-chip input { accent-color: var(--accent); }
+.su-board-note, .su-later { font-size: .8rem; color: var(--muted); line-height: 1.5; margin: 4px 0 0; }
+.su-later { margin-top: 18px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.su-later::before { content: "📍 "; }
+.su-next { margin-top: 4px; }
+.su-run-hint { font-size: .78rem; margin: 6px 0 0 24px; }
+
 /* Prompts/Profile tab: inline "restore default" button + larger editors */
 .prompt-default { font-size: .7rem; padding: 2px 8px; margin-left: auto; }
 #prompts-groups .su-textarea { min-height: 110px; font-family: var(--mono); font-size: .82rem; line-height: 1.5; }
@@ -667,6 +690,36 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   .su-source-row { grid-template-columns: 1fr auto; }
   .su-source-row .su-url { grid-column: 1 / -1; }
 }
+
+/* ── Guided tour ─────────────────────────────────────────────────────────── */
+.help-btn {
+  width: 32px; height: 32px; padding: 0; border-radius: 50%;
+  font-weight: 700; font-size: .95rem; border: 1px solid var(--border);
+}
+.tour { position: fixed; inset: 0; z-index: 120; }
+/* Swallows clicks so the page can't be changed mid-tour. Dims only when there is
+   no spotlight; otherwise the hole's shadow does the dimming. */
+.tour-block { position: fixed; inset: 0; }
+.tour-centered .tour-block { background: rgba(10, 12, 16, .55); }
+.tour-hole {
+  position: fixed; border-radius: var(--radius-sm); pointer-events: none;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 0 9999px rgba(10, 12, 16, .55);
+  transition: left .2s, top .2s, width .2s, height .2s;
+}
+.tour-pop {
+  position: fixed; width: min(380px, calc(100vw - 32px));
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg); padding: 16px 18px 14px;
+}
+.tour-count { font-size: .7rem; font-weight: 700; color: var(--accent-ink); letter-spacing: .03em; margin-bottom: 4px; min-height: 1em; }
+.tour-pop h3 { margin: 0 0 8px; font-size: 1rem; }
+.tour-body { font-size: .87rem; line-height: 1.6; }
+.tour-body p { margin: 0 0 8px; }
+.tour-body ul { margin: 0 0 8px; padding-left: 18px; }
+.tour-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.tour-spacer { flex: 1; }
+@media (prefers-reduced-motion: reduce) { .tour-hole { transition: none; } }
 
 /* ── Auto-apply: platform badges, application panel, credentials ───────────── */
 .platform-badge {
