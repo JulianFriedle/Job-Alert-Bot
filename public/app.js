@@ -1327,6 +1327,8 @@ const PROFILE_FIELDS = [
   { p: 'preferences.salaryMin',    t: 'int',      l: 'profile.field.salaryMin', group: PREF },
   { p: 'preferences.contractTypes',t: 'list',     l: 'profile.field.contractTypes', group: PREF },
   { p: 'preferences.dealbreakers', t: 'list',     l: 'profile.field.dealbreakers', group: PREF, h: 'profile.field.dealbreakers.h' },
+  { p: 'preferences.outputLanguage', t: 'select', l: 'profile.field.outputLanguage', group: PREF, h: 'profile.field.outputLanguage.h',
+    options: [['', 'profile.lang.unset'], ['de', 'profile.lang.de'], ['en', 'profile.lang.en']] },
 ];
 
 const getPath = (o, dotted) => dotted.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
@@ -1362,6 +1364,9 @@ function profileField(f) {
     control = `<textarea id="${id}" class="set-input su-textarea" ${da} rows="4" spellcheck="false">${esc(v ?? '')}</textarea>`;
   } else if (f.t === 'int') {
     control = `<input id="${id}" class="set-input set-num" type="number" ${da} value="${esc(v ?? '')}">`;
+  } else if (f.t === 'select') {
+    control = `<select id="${id}" class="set-input" ${da}>${f.options.map(([val, key]) =>
+      `<option value="${esc(val)}"${(v ?? '') === val ? ' selected' : ''}>${esc(t(key))}</option>`).join('')}</select>`;
   } else {
     control = `<input id="${id}" class="set-input" type="text" ${da} value="${esc(v ?? '')}" spellcheck="false">`;
   }
@@ -1391,6 +1396,8 @@ $('#save-profile').addEventListener('click', async () => {
     } else if (ty === 'int') {
       const raw = inp.value.trim();
       setPath(next, p, raw === '' ? undefined : Number(raw));
+    } else if (ty === 'select') {
+      setPath(next, p, inp.value === '' ? undefined : inp.value);
     } else {
       setPath(next, p, inp.value.trim());
     }

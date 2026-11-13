@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import Anthropic from '@anthropic-ai/sdk';
 import { getClientConfig } from './client-config.js';
+import { analyzerLanguageLine } from './prompts.js';
 
 const MODEL = () => process.env.ANALYZER_MODEL || 'claude-haiku-4-5';
 const DEFAULT_MIN_RELEVANCE_SCORE = Number(process.env.MIN_RELEVANCE_SCORE) || 4;
@@ -29,14 +30,14 @@ function buildProfileBlock(profile) {
 
 // `instructions` is the (editable) scoring guidance; the JSON contract below is
 // fixed so parsing never breaks regardless of what the user customizes.
-function buildJobBlock(job, instructions) {
+function buildJobBlock(job, instructions, languageLine = '') {
   return `\nJob Posting
 Title: ${job.title || 'N/A'}
 Company: ${job.company || 'N/A'}
 Location: ${job.location || 'N/A'}
 Description: ${(job.description || 'N/A').slice(0, 4000)}
 
-${instructions}
+${instructions}${languageLine ? `\n\n${languageLine}` : ''}
 
 Task
 Respond with this exact JSON structure:
@@ -68,7 +69,7 @@ export async function analyzeJob(job, cfg) {
             role: 'user',
             content: [
               { type: 'text', text: buildProfileBlock(profile), cache_control: { type: 'ephemeral' } },
-              { type: 'text', text: buildJobBlock(job, prompts.analyzerInstructions) },
+              { type: 'text', text: buildJobBlock(job, prompts.analyzerInstructions, analyzerLanguageLine(profile)) },
             ],
           },
         ],

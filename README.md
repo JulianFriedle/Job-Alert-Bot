@@ -52,7 +52,7 @@ src/cover-letter.js       ← CLI for generating a cover letter via Claude (npm 
 src/server.js             ← Web GUI server (npm run gui) — built-in http, operator login + client CRUD
 src/setup.js              ← Guided setup wizard (steps, validation, debug sandbox)
 src/backup.js             ← Database backups (daily/manual/upload snapshots, retention)
-public/                   ← Dashboard frontend (index.html, app.js, i18n.js, setup.js, style.css)
+public/                   ← Dashboard frontend (index.html, app.js, i18n.js, setup.js, tour.js, style.css)
 scripts/migrate-to-multitenant.js ← One-time migration to the clients model (npm run migrate)
 scripts/hash-password.js  ← Generate OPERATOR_PASSWORD_HASH for SaaS login (npm run hash-password)
 scripts/generate-credentials-key.js ← Generate CREDENTIALS_KEY (npm run generate-credentials-key)
@@ -376,12 +376,12 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 |---|---|
 | **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Sort by relevance or by **date found** (oldest / newest first). Set application status or hide a job with one click. The **✎** button opens the cover-letter window (see [Generating a Cover Letter](#generating-a-cover-letter)). |
 | **Quellen** | Edit the active client's job sources visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. |
-| **Profil** | Edit the active client's CV & preferences in a structured form — this is what the AI matches jobs against and uses for cover letters. |
+| **Profil** | Edit the active client's CV & preferences in a structured form — this is what the AI matches jobs against and uses for cover letters. **Sprache der KI-Texte** sets the language of the AI's job reasoning and of cover letters (Deutsch / English; unset = as before, i.e. German cover letters). |
 | **Prompts** | Edit the prompts sent to Claude for the active client (relevance scoring + cover letters). Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
 | **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. **Lauf stoppen** aborts a running pipeline: the run winds down at the next source/page boundary, keeps every job found so far, and skips the remaining stages (notifications, expiry check, statistics, export) so a partial pass can't distort them. If it hasn't exited after `RUN_STOP_GRACE_MS` (default 45 s) it is force-killed. Nothing already paid for is thrown away: each job is stored as soon as its description has been fetched, and every AI score written the moment it is scored — a stopped run leaves them in the DB, and the next run picks up where it left off instead of re-scraping. Jobs whose detail page was still loading are *not* stored (an empty description would be scored as a blank posting), so they are simply fetched again next time. **Letzte Läufe** lists recent runs per source; a source that threw an error, was blocked, or found **0 jobs** is flagged in red with a **Problem melden** button. It opens a preview of a GitHub issue (source, URL without query string, error message, recent found-counts, version) that you can edit, then opens the pre-filled issue form on GitHub, where you submit it yourself — the bot sends nothing. Platform sources are reported by type only, never with their search terms. |
 | **Klienten** | *Hidden unless `CLIENTS_ENABLED=true`.* Create/edit/delete clients (tenants): name, Telegram chat id, active toggle, Telegram & expiry toggles, optional min-score. A **Telegram-Test** button verifies the chat id. Clients receive Telegram alerts only — they have no GUI access. |
 | **Statistik** | Application heatmap, top sources/companies, run history, and a per-run overview table. |
-| **Einstellungen** | Edit every `.env` variable from a form (incl. the SaaS auth vars); switch **theme** and **language** (see below); manage **database backups** (create / upload / download / restore — see [Backups](#backups)); pull the latest version from GitHub (**update button**); restart the GUI; and re-open or test the **setup wizard**. |
+| **Einstellungen** | Edit every `.env` variable from a form (incl. the SaaS auth vars); switch **theme** and **language** (see below); manage **database backups** (create / upload / download / restore — see [Backups](#backups)); pull the latest version from GitHub (**update button**); restart the GUI; re-open or test the **setup wizard**; and replay the **guided tour**. |
 
 All tabs operate on the **active client**. Out of the box the multi-client UI is off
 (`CLIENTS_ENABLED=false`): there is no **Klienten** tab and no client selector, and everything
@@ -406,19 +406,39 @@ All three choices are saved in your browser (`localStorage`) and applied before 
 
 The first time you open the GUI with required configuration missing, a step-by-step
 **setup wizard** opens automatically. Each step is its own small sub-page, so even a
-non-technical user can get going without editing any files. The welcome screen lets you
-pick the **interface language** (Deutsch / English) first; everything that follows — and
-the rest of the GUI — switches accordingly.
+non-technical user can get going without editing any files. The welcome screen explains
+what the tool does and lets you pick the **interface language** (Deutsch / English) first;
+everything that follows — and the rest of the GUI — switches accordingly. A *“Step 3 of 9”*
+counter shows how far along you are, and every step says where in the GUI its answers can be
+changed later.
 
-1. **Anthropic API key**
-2. **Telegram** *(optional)* — bot token + chat ID, with a *“send test message”* button to verify it works, or a toggle to skip notifications and use only the GUI
-3. **Your profile** — name, summary, desired roles, locations, … (what the AI matches against)
-4. **Career pages** — add the company sites to watch
-5. *(optional)* **Title filters** and **fine-tuning** (score threshold, schedule)
+1. *(optional)* **Language** — interface language and the **language of AI texts** (job reasoning and cover letters)
+2. **Anthropic API key**
+3. **Telegram** *(optional)* — bot token + chat ID, with a *“send test message”* button to verify it works, or a toggle to skip notifications and use only the GUI; plus whether to report jobs that disappear
+4. **About you** — name, short profile, skills, education, work history, language skills
+5. **What you're looking for** — desired roles, locations, industries, contract types, minimum salary, dealbreakers
+6. *(optional)* **Job boards** — tick LinkedIn / StepStone / Indeed and enter one search term + location (pre-filled from your desired roles); no account needed
+7. **Career pages** — company sites to watch. At least one source is required overall; a job-board search from step 6 counts
+8. *(optional)* **Title filters** — blocklist and priority keywords
+9. *(optional)* **How often & how strict** — schedule as a plain choice (hourly … once a day) and the score threshold
 
-Only the steps you still need are shown. That means **after an update that introduces a
-new required setting, only that one new step appears** — you're never asked to redo
-everything. You can re-open the wizard any time from **Einstellungen → Assistent öffnen**.
+On a first run every step is shown once (optional ones can be skipped). After that, only the
+steps you still need appear: **after an update that introduces a new required setting, only
+that one new step appears** — you're never asked to redo everything. You can re-open the
+wizard any time from **Einstellungen → Assistent öffnen**.
+
+The job-board step manages one search per platform and tags it `"managedBy": "wizard"` in the
+source list; searches you add by hand in the **Quellen** tab are never touched by it. Saving
+the career-page step keeps every job-board search and all per-source extras
+(`paginationParam`, `extraWait`, …).
+
+#### Guided tour
+
+When you finish the wizard, a short **tour** walks through the GUI: it switches to each tab,
+spotlights it and explains in two or three sentences what it is for (Jobs, filters, starting a
+run, Quellen, Profil, Statistik, Prompts, Klienten if enabled, Einstellungen). Arrow keys
+navigate, Esc ends it. Replay it any time with the **?** button in the top bar or
+**Einstellungen → Rundgang starten**.
 
 Behind the scenes the wizard writes the same files you'd edit by hand
 (`.env`, `config/profile.json`, `config/jobs.json`, `config/filters.json`) and records

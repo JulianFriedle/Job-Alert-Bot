@@ -46,3 +46,40 @@ test('a missing template or missing value is never a match', () => {
   assert.equal(isTemplateValue(undefined, 'Your Name'), false);
   assert.equal(isTemplateValue(null, 'Your Name'), false);
 });
+
+// ── Job-board step and career-page step share one source list ────────────────
+const { boardsFromSources, applyBoards, mergeCareerSources } = await import('../src/setup.js');
+
+const career = { name: 'Firma', url: 'https://firma.example/jobs', type: 'careers-page', paginationParam: 'page' };
+const handMade = { name: 'Meine LinkedIn-Suche', type: 'linkedin', search: { keywords: 'CAD', location: 'Ulm' } };
+
+test('the boards step creates one managed search per chosen platform', () => {
+  const out = applyBoards([career], { platforms: ['linkedin', 'indeed'], keywords: 'Konstrukteur', location: 'Stuttgart', radiusKm: 30 });
+  const boards = out.filter(s => s.managedBy === 'wizard');
+  assert.deepEqual(boards.map(s => s.type), ['linkedin', 'indeed']);
+  assert.deepEqual(boards[0].search, { keywords: 'Konstrukteur', location: 'Stuttgart', radiusKm: 30 });
+  assert.ok(out.includes(career), 'career pages survive');
+});
+
+test('re-saving the boards step replaces only its own searches', () => {
+  const first = applyBoards([career, handMade], { platforms: ['linkedin', 'stepstone'], keywords: 'A', location: '', radiusKm: null });
+  const second = applyBoards(first, { platforms: ['indeed'], keywords: 'B', location: '', radiusKm: null });
+  assert.deepEqual(second.filter(s => s.managedBy === 'wizard').map(s => s.type), ['indeed']);
+  assert.ok(second.includes(handMade), 'a hand-made search is never touched');
+  assert.ok(second.includes(career));
+  // Unticking every platform removes the managed searches and nothing else.
+  assert.deepEqual(applyBoards(second, { platforms: [], keywords: '', location: '', radiusKm: null }), [career, handMade]);
+});
+
+test('the boards step reads back what it wrote, and ignores hand-made searches', () => {
+  const saved = applyBoards([handMade], { platforms: ['stepstone'], keywords: 'Ingenieur', location: 'Ulm', radiusKm: 25 });
+  assert.deepEqual(boardsFromSources(saved), { platforms: ['stepstone'], keywords: 'Ingenieur', location: 'Ulm', radiusKm: '25' });
+  assert.deepEqual(boardsFromSources([handMade]).platforms, []);
+});
+
+test('saving career pages keeps every job-board search', () => {
+  const managed = applyBoards([], { platforms: ['linkedin'], keywords: 'X', location: '', radiusKm: null })[0];
+  const merged = mergeCareerSources([career, handMade, managed], [{ ...career, name: 'Firma neu' }]);
+  assert.deepEqual(merged.map(s => s.name), ['Firma neu', 'Meine LinkedIn-Suche', 'LinkedIn Suche']);
+  assert.equal(merged[0].paginationParam, 'page', 'per-source extras survive a wizard save');
+});

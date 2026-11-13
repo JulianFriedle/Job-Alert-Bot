@@ -40,6 +40,7 @@
         <span class="client-switch-label" data-i18n="client.active">Klient</span>
         <select id="client-switcher" class="set-input"></select>
       </label>
+      <button class="btn btn-ghost help-btn" id="help-btn" data-i18n-title="tour.helpTitle" title="Rundgang durch die Oberfläche" aria-label="Rundgang durch die Oberfläche">?</button>
       <button class="btn btn-primary" id="quick-run" data-i18n="btn.startRun">▶ Lauf starten</button>
       <button class="btn btn-ghost" id="logout-btn" data-i18n="auth.logout" hidden>Abmelden</button>
     </div>
@@ -270,10 +271,11 @@
       </div>
 
       <div class="card">
-        <div class="card-head"><h2 data-i18n="setup.cardTitle">Einrichtungs-Assistent</h2></div>
-        <p class="muted" data-i18n="setup.cardHelp">Den geführten Ersteinrichtungs-Assistenten erneut öffnen, oder ihn gefahrlos im Debug-Modus testen (schreibt in eine Sandbox, deine echten Daten bleiben unberührt).</p>
+        <div class="card-head"><h2 data-i18n="setup.cardTitle">Einrichtung &amp; Rundgang</h2></div>
+        <p class="muted" data-i18n="setup.cardHelp">Den geführten Einrichtungs-Assistenten erneut öffnen (z. B. für Sprache, Jobportale oder Titel-Filter), den Rundgang durch die Oberfläche wiederholen, oder den Assistenten gefahrlos im Debug-Modus testen (schreibt in eine Sandbox, deine echten Daten bleiben unberührt).</p>
         <div class="panel-actions" style="margin-top:12px">
           <button class="btn" id="reopen-setup" data-i18n="setup.openBtn">⚙ Assistent öffnen</button>
+          <button class="btn" id="tour-btn" data-i18n="setup.tourBtn">🧭 Rundgang starten</button>
           <button class="btn" id="debug-setup" title="Test-Lauf in Sandbox – ändert nichts an deinen Daten" data-i18n="setup.debugBtn" data-i18n-title="setup.debugBtnTitle">🧪 Im Debug-Modus testen</button>
         </div>
       </div>
@@ -421,5 +423,6 @@
   <script src="i18n.js"></script>
   <script src="setup.js"></script>
   <script src="app.js"></script>
+  <script src="tour.js"></script>
 </body>
 </html>
