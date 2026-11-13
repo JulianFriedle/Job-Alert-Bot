@@ -57,9 +57,9 @@ jobs:
             fi
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-      - run: npm ci --no-audit --no-fund
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      # --ignore-scripts: see the Dockerfile; it also skips Electron's binary
+      # download, which neither the tests nor electron-builder need.
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
 
   docker:
@@ -108,7 +108,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       # --publish never: only build here; the release job uploads everything at once.
       - run: npx electron-builder --publish never
         env:

@@ -8,8 +8,11 @@ WORKDIR /app
 # use `npm ci` so the image gets the exact, pinned versions we tested locally
 # (reproducible builds — no silent transitive-dependency upgrades at build time).
 # --omit=dev skips Electron and electron-builder, which only the desktop app needs.
+# --ignore-scripts: better-sqlite3 ships prebuilt binaries for every platform and
+# only loads those, but its binding.gyp makes npm try a pointless node-gyp
+# compile, which fails here (no make). No other runtime dependency needs a script.
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --no-audit --no-fund
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 COPY . .
 
