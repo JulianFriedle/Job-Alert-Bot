@@ -74,8 +74,9 @@ const cell = (v) => sanitizeText(v).replace(/\|/g, '\\|').replace(/\s*\n\s*/g, '
 export function buildSourceReport({ source, row, run, history = [], version = '', nodeVersion = process.version }) {
   const isPlatform = Boolean(source && PLATFORM_TYPES.includes(source.type));
   // A platform source's name usually is the search ("LinkedIn – PM München"),
-  // so it is replaced by the platform type.
-  const label = isPlatform ? source.type : (row?.source || source?.name || '?');
+  // so it is replaced by the platform type. A source removed since the run may
+  // have been such a search too, so its stored name is not used either.
+  const label = isPlatform ? source.type : source ? (row?.source || source.name || '?') : 'entfernte Quelle';
   const problem = row?.problem || 'empty';
   const problemText = PROBLEM_LABELS[problem] || problem;
 
@@ -83,7 +84,7 @@ export function buildSourceReport({ source, row, run, history = [], version = ''
     '| Feld | Wert |',
     '|---|---|',
     `| Quelle | ${cell(label)} |`,
-    `| Typ | ${isPlatform ? `Plattform (${source.type})` : 'Karriereseite'} |`,
+    `| Typ | ${isPlatform ? `Plattform (${source.type})` : source ? 'Karriereseite' : 'unbekannt (Quelle entfernt)'} |`,
   ];
   if (!isPlatform) lines.push(`| URL | ${cell(sanitizeUrl(source?.url) || '(unbekannt)')} |`);
   lines.push(`| Problem | ${problemText} |`);

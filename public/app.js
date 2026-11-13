@@ -1068,7 +1068,10 @@ $('#save-sources').addEventListener('click', async () => {
       const search = { ...row._search, keywords };
       if (location) search.location = location; else delete search.location;
       if (radius !== '') search.radiusKm = Number(radius); else delete search.radiusKm;
-      sources.push({ name, type, search });
+      // ..._extra keeps top-level markers such as managedBy: 'wizard' — without
+      // it the setup wizard no longer recognises its own job-board searches and
+      // would add a second one per portal.
+      sources.push({ ...row._extra, name, type, search });
     } else {
       const url = row.querySelector('.url').value.trim();
       if (!url) { showSourcesMsg(t('sources.needNameUrl'), 'err'); return; }

@@ -52,6 +52,19 @@ test('platform sources are reported by type, never with name or search terms', (
   assert.equal(r.fields.source, 'linkedin');
 });
 
+test('a source removed since the run is reported without its stored name', () => {
+  // It may have been a platform search, whose name carries the search terms.
+  const r = buildSourceReport({
+    source: undefined,
+    row: { source: 'LinkedIn – Projektleiter München', found: 0, problem: 'empty', error: null },
+    run: { id: 1, ranAt: '2026-11-13T10:00:00Z' },
+  });
+  const all = r.title + JSON.stringify(r.fields);
+  assert.ok(!all.includes('Projektleiter'));
+  assert.ok(!all.includes('München'));
+  assert.equal(r.fields.source, 'entfernte Quelle');
+});
+
 test('career-page report carries URL (no query), error, history and safe config only', () => {
   const source = { name: 'ACME', url: 'https://acme.de/jobs?session=abc', paginationMode: 'param', paginationParam: 'page', secretThing: 'x' };
   const r = buildSourceReport({

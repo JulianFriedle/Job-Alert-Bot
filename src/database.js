@@ -656,7 +656,8 @@ export function markIrrelevant(clientId, id) {
 
 export function getJobsWithEmptyDescription(clientId) {
   return db.prepare(
-    "SELECT * FROM jobs WHERE client_id = ? AND (description IS NULL OR description = '') AND (expired = 0 OR expired IS NULL)"
+    // Manual jobs ("+ Stelle") are never scraped or analyzed, not even here.
+    "SELECT * FROM jobs WHERE client_id = ? AND (description IS NULL OR description = '') AND (expired = 0 OR expired IS NULL) AND source IS NOT 'Manuell'"
   ).all(clientId);
 }
 
