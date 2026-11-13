@@ -439,6 +439,18 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .run-entry[open] .run-chip { background: var(--surface-2); }
 .run-chip b { color: var(--text); font-weight: 700; }
 .run-entry .table-scroll { padding: 0 14px 12px; }
+.run-chip.run-chip-problem { color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
+.run-chip.run-chip-problem b { color: var(--red); }
+.run-problem {
+  font-size: .68rem; font-weight: 600; white-space: nowrap; cursor: help;
+  color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent);
+  padding: 1px 7px; border-radius: 100px; margin-left: 4px;
+}
+.run-actions { text-align: right; white-space: nowrap; }
+.btn.btn-sm { padding: 3px 9px; font-size: .75rem; }
+.rp-hint { font-size: .82rem; color: var(--muted); margin: 0 0 14px; }
+.rp-field { margin-bottom: 12px; }
+.cl-text.rp-diagnose { min-height: 200px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; line-height: 1.5; margin-bottom: 12px; }
 
 /* ── Backups (settings) ─────────────────────────────────────────────────── */
 .bk-table td { vertical-align: middle; }
