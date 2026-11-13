@@ -584,6 +584,10 @@ npm version minor          # bumps package.json, commits, tags v2.1.0
 git push --follow-tags
 ```
 
+Without pushing a tag: bump `version` in `package.json` on `main`, then
+**Actions → Release → Run workflow**. That releases the `package.json` version and
+creates the tag `v<version>` itself (refused if that version is already released).
+
 1. runs the tests (and fails if the tag doesn't match `package.json`),
 2. builds the Docker image for amd64 + arm64 and pushes it to `ghcr.io`,
 3. builds the installers on macOS, Windows and Linux runners (`electron-builder`),
