@@ -1,0 +1,61 @@
+/* Anschreiben – Print-Layout (A4, DIN-5008-nah) */
+
+@page {
+  size: A4;
+  margin: 20mm 25mm 18mm 25mm;
+}
+
+:root {
+  --text: #1a1a1a;
+  --grau: #555;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Helvetica Neue", Arial, "Liberation Sans", "Segoe UI", sans-serif;
+  color: var(--text);
+  font-size: 10.5pt;
+  line-height: 1.42;
+  margin: 0;
+}
+
+.dokument { max-width: 100%; }
+
+/* Absenderzeile / Betreff / Empfänger laufen als normale Absätze;
+   die Struktur kommt aus dem Markdown. */
+
+h1 {
+  font-size: 12pt;
+  font-weight: 700;
+  margin: 0 0 6mm 0;
+}
+
+/* Betreff (als H2 im Markdown ausgezeichnet) */
+h2 {
+  font-size: 11pt;
+  font-weight: 700;
+  margin: 8mm 0 5mm 0;
+}
+
+p { margin: 0 0 2.8mm 0; }
+
+/* Ort/Datum rechtsbündig, wenn als Blockquote ausgezeichnet */
+blockquote {
+  margin: 0 0 6mm 0;
+  text-align: right;
+  color: var(--text);
+}
+
+a { color: var(--text); text-decoration: none; }
+
+strong { font-weight: 700; }
+
+hr {
+  border: none;
+  border-top: 1px solid #d0d5db;
+  margin: 6mm 0;
+}
+
+/* Handschriftliche Unterschrift */
+.unterschrift { width: 45mm; height: auto; display: block; margin: 2mm 0 1mm 0; }

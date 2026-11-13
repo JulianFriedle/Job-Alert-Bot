@@ -17,6 +17,7 @@
     "test-notify": "node src/notifier.js --test",
     "apply": "node src/apply.js",
     "cover-letter": "node src/cover-letter.js",
+    "import-lebenslauf": "node scripts/import-lebenslauf.js",
     "refetch-descriptions": "node scripts/refetch-descriptions.js",
     "migrate": "node scripts/migrate-to-multitenant.js",
     "hash-password": "node scripts/hash-password.js",
@@ -30,6 +31,7 @@
     "better-sqlite3": "^11.10.0",
     "dotenv": "^16.5.0",
     "exceljs": "^4.4.0",
+    "marked": "^12.0.2",
     "node-cron": "^3.0.3",
     "node-telegram-bot-api": "^1.2.0",
     "playwright": "^1.52.0"

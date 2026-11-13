@@ -37,7 +37,17 @@ import { parseQuestions, applyAnswer, unansweredRequired } from './questions.js'
 import {
   createApplication, getApplications, getApplicationById, getApplicationEvents,
   updateApplication, claimApplication, closeTelegramPromptsForApplication,
+  createManualJob, getDocumentKindsByJob, getDocumentsForJob, getDocument, updateDocument,
+  deleteDocument, getClientAssets, getClientAsset, listClientAssets, setClientAsset, deleteClientAsset,
 } from './database.js';
+import {
+  startGeneration, getGenerationStatus, rehumanizeDocument, humanizeEnabled,
+  getTemplate, documentCss, TEMPLATE_COLUMN,
+} from './application-docs.js';
+import {
+  renderDocumentHtml, lintDocument, documentFileName, toPlainText, ASSET_NAMES, ASSET_MIME, DOC_KINDS,
+} from './markdown-doc.js';
+import { renderPdf } from './pdf.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -175,7 +185,9 @@ const SETTINGS_SCHEMA = [
   { key: 'ANALYZER_MODEL', group: 'KI-Modelle', label: 'Analyse-Modell', type: 'text', default: 'claude-haiku-4-5',
     help: 'Claude-Modell zur Relevanz-Bewertung (günstig/schnell empfohlen)' },
   { key: 'COVER_LETTER_MODEL', group: 'KI-Modelle', label: 'Anschreiben-Modell', type: 'text', default: 'claude-opus-5',
-    help: 'Claude-Modell für Anschreiben (stärkeres Modell empfohlen)' },
+    help: 'Claude-Modell für Anschreiben und angepasste Lebensläufe (stärkeres Modell empfohlen)' },
+  { key: 'DOCS_HUMANIZE', group: 'KI-Modelle', label: 'Humanize-Durchgang', type: 'bool', default: 'true',
+    help: 'An = Lebenslauf und Anschreiben laufen nach dem Erstellen durch einen zweiten KI-Durchgang, der KI-Floskeln entfernt. Natürlicher, kostet aber einen zusätzlichen Aufruf pro Dokument.' },
 
   { key: 'MIN_RELEVANCE_SCORE', group: 'Analyse & Filter', label: 'Min. Relevanz-Score', type: 'int', default: '4', min: 1, max: 10,
     help: 'Mindest-Score (1–10), ab dem ein Job als relevant gilt' },
@@ -422,6 +434,41 @@ function sendJson(res, status, obj) {
   res.end(body);
 }
 
+// Raw request body as a Buffer (image uploads). Rejects past maxBytes.
+function readBuffer(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > maxBytes) { reject(new Error('Datei zu groß.')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+// Document previews contain HTML the model wrote. They are served with a CSP
+// that allows no scripts and no network (inline CSS + data: images only) and are
+// shown in a sandboxed iframe, so nothing in them can act on the GUI's origin.
+const PREVIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
+
+// API shape of a stored document: parsed missing-facts list + lint findings.
+function documentDto(doc) {
+  let missing = [];
+  try { missing = JSON.parse(doc.missing_json || '[]'); } catch { /* keep empty */ }
+  return {
+    id: doc.id, job_id: doc.job_id, kind: doc.kind, markdown: doc.markdown, notes: doc.notes,
+    humanized: !!doc.humanized, edited: !!doc.edited, created_at: doc.created_at, updated_at: doc.updated_at,
+    missing, lint: lintDocument(doc.markdown), text: toPlainText(doc.markdown),
+  };
+}
+
+function docTitle(job, kind) {
+  return `${kind === 'cv' ? 'Lebenslauf' : 'Anschreiben'}${job?.company ? ' – ' + job.company : ''}`;
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -631,7 +678,27 @@ const server = http.createServer(async (req, res) => {
 
       // GET /api/jobs — all relevant jobs (the dashboard list)
       if (method === 'GET' && pathname === '/api/jobs') {
-        return sendJson(res, 200, getRelevantJobs(clientId));
+        // documents: which tailored documents exist per job (job-list badge)
+        const docKinds = getDocumentKindsByJob(clientId);
+        return sendJson(res, 200, getRelevantJobs(clientId).map(j => ({ ...j, documents: docKinds[j.id] || [] })));
+      }
+
+      // POST /api/jobs/manual { title, company, url?, location?, description } —
+      // add a posting by hand (e.g. found elsewhere) to tailor documents for it.
+      if (method === 'POST' && pathname === '/api/jobs/manual') {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        const field = (k, max) => String(body[k] ?? '').trim().slice(0, max);
+        const job = {
+          title: field('title', 300), company: field('company', 300), url: field('url', 2000),
+          location: field('location', 300), description: field('description', 100_000),
+        };
+        if (!job.title) return sendJson(res, 400, { error: 'Stellenbezeichnung ist erforderlich' });
+        if (job.url && !/^https?:\/\//i.test(job.url)) return sendJson(res, 400, { error: 'URL muss mit http(s):// beginnen' });
+        const created = createManualJob(clientId, job);
+        log(`Manuelle Stelle angelegt: "${created.title}" (${created.company || '–'})`);
+        return sendJson(res, 200, { job: { ...created, documents: [] } });
       }
 
       // GET /api/jobs/export.csv — the Jobs tab as a CSV download.
@@ -699,6 +766,155 @@ const server = http.createServer(async (req, res) => {
         } catch (err) {
           log(`Cover-letter error for "${job.title}": ${err.message}`);
           return sendJson(res, 502, { error: `Anschreiben konnte nicht erstellt werden: ${err.message}` });
+        }
+      }
+
+      // ---- Application documents (tailored CV + cover letter) ----
+
+      // GET /api/jobs/:id/documents — all versions + generation status
+      m = pathname.match(/^\/api\/jobs\/([^/]+)\/documents$/);
+      if (method === 'GET' && m) {
+        const jobId = decodeURIComponent(m[1]);
+        if (!getJobById(clientId, jobId)) return sendJson(res, 404, { error: 'not found' });
+        return sendJson(res, 200, {
+          documents: getDocumentsForJob(clientId, jobId).map(documentDto),
+          status: getGenerationStatus(clientId, jobId),
+          humanize: humanizeEnabled(),
+        });
+      }
+      // POST /api/jobs/:id/documents { kinds: ['cv','cover'], notes } — start a
+      // generation in the background (calls the Anthropic API, costs money).
+      if (method === 'POST' && m) {
+        const jobId = decodeURIComponent(m[1]);
+        let body = {};
+        try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* defaults */ }
+        const kinds = Array.isArray(body.kinds) ? body.kinds.filter(k => DOC_KINDS.includes(k)) : DOC_KINDS;
+        try {
+          const status = startGeneration(clientId, jobId, { kinds, notes: String(body.notes || '').trim().slice(0, 5000) });
+          return sendJson(res, 202, { status });
+        } catch (err) {
+          return sendJson(res, err.status || 500, { error: err.message });
+        }
+      }
+
+      // /api/documents/:id[/preview|/pdf|/humanize]
+      m = pathname.match(/^\/api\/documents\/([^/]+)(?:\/(preview|pdf|humanize))?$/);
+      if (m) {
+        const doc = getDocument(clientId, decodeURIComponent(m[1]));
+        if (!doc) return sendJson(res, 404, { error: 'not found' });
+        const action = m[2] || '';
+        const job = getJobById(clientId, doc.job_id);
+
+        if (method === 'GET' && (action === 'preview' || action === 'pdf')) {
+          const html = renderDocumentHtml(doc.markdown, {
+            css: documentCss(doc.kind), assets: getClientAssets(clientId), title: docTitle(job, doc.kind),
+            screen: action === 'preview',
+          });
+          if (action === 'preview') {
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': PREVIEW_CSP });
+            return res.end(html);
+          }
+          try {
+            const pdf = await renderPdf(html);
+            const fileName = documentFileName({ date: doc.created_at, company: job?.company || job?.title, kind: doc.kind });
+            res.writeHead(200, {
+              'Content-Type': 'application/pdf',
+              'Content-Disposition': `${url.searchParams.get('download') ? 'attachment' : 'inline'}; filename="${fileName}"`,
+              'Content-Length': pdf.length,
+            });
+            return res.end(pdf);
+          } catch (err) {
+            log(`PDF-Erzeugung fehlgeschlagen: ${err.message}`);
+            return sendJson(res, 500, { error: `PDF konnte nicht erstellt werden: ${err.message}` });
+          }
+        }
+        // PUT /api/documents/:id { markdown } — manual edit, no AI call
+        if (method === 'PUT' && !action) {
+          let body;
+          try { body = JSON.parse(await readBody(req) || '{}'); }
+          catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+          if (typeof body.markdown !== 'string' || !body.markdown.trim())
+            return sendJson(res, 400, { error: 'Erwarte { markdown: "…" }' });
+          return sendJson(res, 200, { document: documentDto(updateDocument(clientId, doc.id, { markdown: body.markdown, edited: true })) });
+        }
+        // POST /api/documents/:id/humanize — one more humanize pass (one API call)
+        if (method === 'POST' && action === 'humanize') {
+          try {
+            return sendJson(res, 200, { document: documentDto(await rehumanizeDocument(clientId, doc)) });
+          } catch (err) {
+            log(`Humanize fehlgeschlagen: ${err.message}`);
+            return sendJson(res, 502, { error: `Überarbeitung fehlgeschlagen: ${err.message}` });
+          }
+        }
+        if (method === 'DELETE' && !action) {
+          deleteDocument(clientId, doc.id);
+          return sendJson(res, 200, { ok: true });
+        }
+      }
+
+      // GET /api/doc-setup — fact base, base templates and images of this client
+      if (method === 'GET' && pathname === '/api/doc-setup') {
+        const client = getClient(clientId);
+        return sendJson(res, 200, {
+          factbase: client.factbase_md || '',
+          templates: Object.fromEntries(DOC_KINDS.map(k => [k, getTemplate(client, k)])),
+          assets: listClientAssets(clientId),
+          humanize: humanizeEnabled(),
+        });
+      }
+      // PUT /api/factbase { factbase }
+      if (method === 'PUT' && pathname === '/api/factbase') {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        if (typeof body.factbase !== 'string') return sendJson(res, 400, { error: 'Erwarte { factbase: "…" }' });
+        updateClient(clientId, { factbase_md: body.factbase.trim() ? body.factbase : null });
+        return sendJson(res, 200, { ok: true });
+      }
+      // GET /api/doc-templates/:kind/preview — the saved base template, rendered
+      m = pathname.match(/^\/api\/doc-templates\/(cv|cover)(\/preview)?$/);
+      if (method === 'GET' && m && m[2]) {
+        const html = renderDocumentHtml(getTemplate(clientId, m[1]).markdown, {
+          css: documentCss(m[1]), assets: getClientAssets(clientId), title: docTitle(null, m[1]), screen: true,
+        });
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': PREVIEW_CSP });
+        return res.end(html);
+      }
+      // PUT /api/doc-templates/:kind { markdown } — empty resets to the example
+      if (method === 'PUT' && m && !m[2]) {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        if (typeof body.markdown !== 'string') return sendJson(res, 400, { error: 'Erwarte { markdown: "…" }' });
+        updateClient(clientId, { [TEMPLATE_COLUMN[m[1]]]: body.markdown.trim() ? body.markdown : null });
+        return sendJson(res, 200, { template: getTemplate(clientId, m[1]) });
+      }
+      // GET/POST/DELETE /api/doc-assets/:name — photo / signature (raw image body)
+      m = pathname.match(/^\/api\/doc-assets\/([a-z]+)$/);
+      if (m) {
+        const name = m[1];
+        if (!ASSET_NAMES.includes(name)) return sendJson(res, 404, { error: 'Unbekanntes Bild' });
+        if (method === 'GET') {
+          const a = getClientAsset(clientId, name);
+          if (!a) return sendJson(res, 404, { error: 'not found' });
+          res.writeHead(200, { 'Content-Type': a.mime, 'Content-Length': a.data.length, 'Cache-Control': 'no-store' });
+          return res.end(a.data);
+        }
+        if (method === 'POST') {
+          const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+          if (!ASSET_MIME.includes(mime)) return sendJson(res, 400, { error: 'Nur PNG, JPEG oder WebP' });
+          try {
+            const data = await readBuffer(req, 5_000_000);
+            if (!data.length) return sendJson(res, 400, { error: 'Leere Datei' });
+            setClientAsset(clientId, name, mime, data);
+            return sendJson(res, 200, { ok: true, assets: listClientAssets(clientId) });
+          } catch (err) {
+            return sendJson(res, 400, { error: `Upload fehlgeschlagen: ${err.message}` });
+          }
+        }
+        if (method === 'DELETE') {
+          deleteClientAsset(clientId, name);
+          return sendJson(res, 200, { ok: true, assets: listClientAssets(clientId) });
         }
       }
 

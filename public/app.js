@@ -143,6 +143,8 @@ function renderJobs() {
     // Application-queue badge (only while the job isn't simply "applied" yet)
     const apPill = (j.application_state && !['discarded'].includes(j.application_state) && j.status !== 'applied')
       ? `<span class="pill ap-${esc(j.application_state)}">${esc(apStateLabel(j.application_state))}</span>` : '';
+    const docs = (j.documents || []).length
+      ? `<span class="pill pill-docs" title="${esc(t('docs.badgeTitle'))}">📄 ${esc(['cv', 'cover'].filter(k => j.documents.includes(k)).map(k => t('docs.short.' + k)).join(' + '))}</span>` : '';
     const easy = (j.easy_apply === 1 && !j.application_state && !j.status)
       ? `<span class="pill pill-easy" title="${esc(t('ap.easyTitle'))}">⚡ ${esc(t('ap.easy'))}</span>` : '';
     const loc = j.location ? `<span>${esc(j.location)}</span><span class="dot">·</span>` : '';
@@ -150,21 +152,24 @@ function renderJobs() {
       <article class="job" data-id="${esc(j.id)}">
         <div class="score-badge ${scoreClass(j.score)}">${j.score ?? '–'}</div>
         <div class="job-main">
-          <div class="job-title">${platformBadge(j)}<a href="${esc(j.url)}" target="_blank" rel="noopener">${esc(j.title)}</a></div>
+          <div class="job-title">${platformBadge(j)}${j.url
+            ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">${esc(j.title)}</a>`
+            : esc(j.title)}</div>
           <div class="job-meta">
             <strong>${esc(j.company || j.source)}</strong><span class="dot">·</span>
             ${loc}<span>${esc(j.source)}</span>
             ${pill ? '<span class="dot">·</span>' + pill : ''}
             ${apPill ? '<span class="dot">·</span>' + apPill : ''}
             ${easy ? '<span class="dot">·</span>' + easy : ''}
+            ${docs ? '<span class="dot">·</span>' + docs : ''}
           </div>
           ${j.summary ? `<div class="job-summary">${esc(j.summary)}</div>` : ''}
         </div>
         <div class="job-actions">
           <select class="js-status" title="${esc(t('job.statusTitle'))}">${opts}</select>
           <div class="row">
-            <button class="btn btn-ghost js-cover" title="${esc(t('job.coverTitle'))}">✎</button>
-            <a class="btn btn-ghost" href="${esc(j.url)}" target="_blank" rel="noopener" title="${esc(t('job.openTitle'))}">↗</a>
+            <button class="btn btn-ghost js-cover" title="${esc(t('job.docsTitle'))}">✎</button>
+            ${j.url ? `<a class="btn btn-ghost" href="${esc(j.url)}" target="_blank" rel="noopener" title="${esc(t('job.openTitle'))}">↗</a>` : ''}
             <button class="btn btn-ghost btn-danger js-ignore" title="${esc(t('job.ignoreTitle'))}">✕</button>
           </div>
         </div>
@@ -215,25 +220,21 @@ $('#job-list').addEventListener('click', async (e) => {
   } catch (err) { toast(t('toast.error') + err.message); }
 });
 
-// ── COVER LETTER MODAL ───────────────────────────────────────────────────────
+// ── JOB MODAL (application documents + auto-apply panel) ─────────────────────
 let coverJob = null;
 
 async function openCoverLetter(job) {
   if (!job) return;
   coverJob = job;
-  $('#cl-sub').textContent = `${job.title} · ${job.company || job.source}`;
-  // Initial state: let the user add optional notes before generating.
+  $('#cl-sub').textContent = [job.title, job.company || job.source, job.location].filter(Boolean).join(' · ');
+  const open = $('#cl-open');
+  open.hidden = !job.url;
+  if (job.url) open.href = job.url;
   $('#cl-notes').value = '';
-  $('#cl-loading').hidden = true;
-  $('#cl-text').hidden = true;
-  $('#cl-error').hidden = true;
-  $('#cl-copy').hidden = true;
-  $('#cl-regen').hidden = true;
-  $('#cl-generate').hidden = false;
   updateAppliedBtn();
   $('#cl-modal').hidden = false;
   renderApplyPanel(job);
-  $('#cl-notes').focus();
+  openDocs(job);
 }
 
 // ── AUTO-APPLY PANEL (in the job popup, platform jobs only) ──────────────────
@@ -397,40 +398,15 @@ function updateAppliedBtn() {
   btn.textContent = done ? t('cover.appliedDone') : t('cover.applied');
 }
 
-async function generateCover() {
-  const loading = $('#cl-loading'), text = $('#cl-text'), error = $('#cl-error');
-  const notes = $('#cl-notes').value.trim();
-  loading.hidden = false; text.hidden = true; error.hidden = true;
-  $('#cl-copy').hidden = true; $('#cl-regen').hidden = true; $('#cl-generate').hidden = true;
-  try {
-    const { text: letter } = await api(`/api/jobs/${encodeURIComponent(coverJob.id)}/cover-letter`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ notes }),
-    });
-    text.value = letter;
-    loading.hidden = true; text.hidden = false;
-    $('#cl-copy').hidden = false; $('#cl-regen').hidden = false;
-    autosize(text);
-  } catch (err) {
-    loading.hidden = true; error.hidden = false;
-    error.textContent = err.message;
-    $('#cl-regen').hidden = false;
-  }
-}
-
-function autosize(ta) {
-  ta.style.height = 'auto';
-  ta.style.height = Math.min(ta.scrollHeight + 2, window.innerHeight * 0.6) + 'px';
-}
-
-function closeCover() { $('#cl-modal').hidden = true; coverJob = null; }
+function closeCover() { $('#cl-modal').hidden = true; coverJob = null; closeDocs(); }
 
 $('#cl-close').addEventListener('click', closeCover);
 $('#cl-modal').addEventListener('click', (e) => { if (e.target.id === 'cl-modal') closeCover(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#cl-modal').hidden) closeCover(); });
-$('#cl-generate').addEventListener('click', generateCover);
-$('#cl-regen').addEventListener('click', generateCover);
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (!$('#mj-modal').hidden) closeManualJob();
+  else if (!$('#cl-modal').hidden) closeCover();
+});
 $('#cl-applied').addEventListener('click', async () => {
   if (!coverJob || coverJob.status === 'applied') return;
   try {
@@ -446,21 +422,6 @@ $('#cl-applied').addEventListener('click', async () => {
     toast(`Status: ${statusLabel('applied')}`);
   } catch (err) { toast(t('toast.error') + err.message); }
 });
-$('#cl-text').addEventListener('input', (e) => autosize(e.target));
-
-$('#cl-copy').addEventListener('click', async () => {
-  const txt = $('#cl-text').value;
-  try {
-    await navigator.clipboard.writeText(txt);
-    toast(t('toast.copied'));
-  } catch {
-    // Fallback for non-secure contexts (http://localhost is usually fine, but just in case)
-    const ta = $('#cl-text');
-    ta.select(); document.execCommand('copy');
-    toast(t('toast.copiedShort'));
-  }
-});
-
 ['input', 'change'].forEach(ev => {
   $('#search').addEventListener(ev, renderJobs);
 });
@@ -484,6 +445,264 @@ $('#export-csv')?.addEventListener('click', () => {
   if (currentClientId) params.set('clientId', currentClientId);
   window.location.href = '/api/jobs/export.csv?' + params.toString();
   toast(t('jobs.exportStarted'));
+});
+
+// ── APPLICATION DOCUMENTS (tailored CV + cover letter, in the job modal) ──────
+// Generation runs in the background on the server (several Claude calls); the
+// modal polls GET /api/jobs/:id/documents until it reports done or an error.
+const DOC_KINDS = ['cv', 'cover'];
+let docsState = null;   // { job, documents, status, humanize, kind, versionId, editing }
+let docsPoll = null;
+
+// Server-side document URLs carry the clientId themselves: they are used as
+// iframe/link targets, not through api().
+function docUrl(id, suffix = '', extra = '') {
+  const q = new URLSearchParams();
+  if (currentClientId) q.set('clientId', currentClientId);
+  if (extra) for (const [k, v] of new URLSearchParams(extra)) q.set(k, v);
+  const qs = q.toString();
+  return `/api/documents/${encodeURIComponent(id)}${suffix}${qs ? '?' + qs : ''}`;
+}
+
+function closeDocs() {
+  clearTimeout(docsPoll); docsPoll = null;
+  docsState = null;
+  $('#docs-preview').removeAttribute('src');
+}
+
+async function openDocs(job) {
+  closeDocs();
+  docsState = { job, documents: [], status: null, humanize: true, kind: 'cv', versionId: null, editing: false, hasFacts: true };
+  $('#docs-error').hidden = true;
+  $('#docs-progress').hidden = true;
+  $('#docs-view').hidden = true;
+  try {
+    const setup = await api('/api/doc-setup');
+    if (docsState?.job !== job) return;
+    docsState.hasFacts = Boolean(setup.factbase.trim());
+  } catch { /* the generate call reports a missing fact base anyway */ }
+  await refreshDocs();
+}
+
+async function refreshDocs() {
+  const st = docsState;
+  if (!st) return;
+  try {
+    const r = await api(`/api/jobs/${encodeURIComponent(st.job.id)}/documents`);
+    if (docsState !== st) return;   // modal closed or switched meanwhile
+    st.documents = r.documents;
+    st.status = r.status;
+    st.humanize = r.humanize;
+  } catch (err) {
+    if (docsState !== st) return;
+    $('#docs-error').textContent = err.message; $('#docs-error').hidden = false;
+  }
+  // Prefer the kind that exists if the current one has no document yet.
+  if (!st.documents.some(d => d.kind === st.kind) && st.documents.length) st.kind = st.documents[0].kind;
+  drawDocs();
+  // Keep the job list's "documents" badge in sync.
+  const kinds = [...new Set(st.documents.map(d => d.kind))];
+  const listJob = allJobs.find(j => j.id === st.job.id);
+  if (listJob && String(listJob.documents || []) !== String(kinds)) { listJob.documents = kinds; renderJobs(); }
+
+  const running = st.status && !st.status.done && !st.status.error;
+  clearTimeout(docsPoll);
+  if (running) docsPoll = setTimeout(refreshDocs, 3000);
+}
+
+function docsStepLabel(step) {
+  const [kind, phase] = String(step || '').split(':');
+  if (!phase) return t('docs.step.start');
+  return t(`docs.step.${phase}`).replace('{doc}', t(`docs.${kind}`));
+}
+
+function drawDocs() {
+  const st = docsState;
+  if (!st) return;
+  const running = st.status && !st.status.done && !st.status.error;
+
+  // Generate controls
+  $('#docs-nofacts').hidden = st.hasFacts;
+  const kinds = DOC_KINDS.filter(k => $(`#docs-kind-${k}`).checked);
+  const calls = kinds.length * (st.humanize ? 2 : 1);
+  $('#docs-cost').textContent = kinds.length ? t('docs.cost').replace('{n}', calls) : '';
+  const gen = $('#docs-generate');
+  gen.disabled = running || !kinds.length || !st.hasFacts;
+  gen.textContent = st.documents.length ? t('docs.regenerate') : t('docs.generate');
+  $('#docs-progress').hidden = !running;
+  if (running) $('#docs-progress-text').textContent = docsStepLabel(st.status.step);
+  if (st.status?.error) { $('#docs-error').textContent = t('docs.failed') + st.status.error; $('#docs-error').hidden = false; }
+
+  // Document view
+  const docsOfKind = st.documents.filter(d => d.kind === st.kind);
+  $('#docs-view').hidden = !st.documents.length;
+  if (!st.documents.length) return;
+
+  $('#docs-tabs').innerHTML = DOC_KINDS.map(k => {
+    const n = st.documents.filter(d => d.kind === k).length;
+    return `<button class="seg-btn${k === st.kind ? ' active' : ''}" data-kind="${k}" ${n ? '' : 'disabled'}>${esc(t('docs.' + k))}</button>`;
+  }).join('');
+
+  let doc = docsOfKind.find(d => d.id === st.versionId) || docsOfKind[0];
+  if (!doc) { $('#docs-toolbar').innerHTML = ''; $('#docs-warn').innerHTML = ''; return; }
+  st.versionId = doc.id;
+
+  const versions = docsOfKind.length > 1 ? `<select class="docs-version" id="docs-version" title="${esc(t('docs.version'))}">
+      ${docsOfKind.map((d, i) => `<option value="${esc(d.id)}"${d.id === doc.id ? ' selected' : ''}>${esc(t('docs.versionN').replace('{n}', docsOfKind.length - i))} · ${esc(new Date(d.created_at).toLocaleString(locale(), { dateStyle: 'short', timeStyle: 'short' }))}${d.edited ? ' ✎' : ''}</option>`).join('')}
+    </select>` : '';
+  const flags = [doc.humanized ? `<span class="pill">${esc(t('docs.humanized'))}</span>` : '',
+    doc.edited ? `<span class="pill">${esc(t('docs.edited'))}</span>` : ''].join('');
+
+  $('#docs-toolbar').innerHTML = st.editing ? `
+      <button class="btn btn-primary" id="docs-save">${esc(t('btn.save'))}</button>
+      <button class="btn" id="docs-cancel">${esc(t('docs.cancel'))}</button>
+      <span class="muted">${esc(t('docs.editHelp'))}</span>` : `
+      ${versions}${flags}
+      <span class="docs-spacer"></span>
+      <a class="btn" href="${esc(docUrl(doc.id, '/pdf'))}" target="_blank" rel="noopener">${esc(t('docs.openPdf'))}</a>
+      <a class="btn btn-primary" href="${esc(docUrl(doc.id, '/pdf', 'download=1'))}">${esc(t('docs.downloadPdf'))}</a>
+      <button class="btn" id="docs-edit">${esc(t('docs.edit'))}</button>
+      <button class="btn" id="docs-humanize" title="${esc(t('docs.humanizeTitle'))}" ${running ? 'disabled' : ''}>${esc(t('docs.humanize'))}</button>
+      <button class="btn" id="docs-copy" title="${esc(t('docs.copyTitle'))}">${esc(t('docs.copy'))}</button>
+      <button class="btn btn-ghost btn-danger" id="docs-delete" title="${esc(t('docs.delete'))}">✕</button>`;
+
+  const warn = [];
+  if (doc.missing.length) warn.push(`<div class="docs-warn-box"><strong>${esc(t('docs.missing'))}</strong>
+      <ul>${doc.missing.map(m => `<li>${esc(m)}</li>`).join('')}</ul></div>`);
+  if (doc.lint.length) warn.push(`<div class="docs-warn-box"><strong>${esc(t('docs.lint'))}</strong>
+      <ul>${doc.lint.map(l => `<li>${esc(t('docs.lint.' + l.rule))}${l.line ? ` (${esc(t('docs.line'))} ${l.line})` : ''}: <code>${esc(l.text)}</code></li>`).join('')}</ul></div>`);
+  $('#docs-warn').innerHTML = warn.join('');
+
+  const frame = $('#docs-preview');
+  const editor = $('#docs-editor');
+  frame.hidden = st.editing;
+  editor.hidden = !st.editing;
+  if (st.editing) {
+    if (editor.dataset.docId !== doc.id) { editor.value = doc.markdown; editor.dataset.docId = doc.id; }
+  } else {
+    const src = docUrl(doc.id, '/preview', `v=${encodeURIComponent(doc.updated_at)}`);
+    if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
+  }
+}
+
+['#docs-kind-cv', '#docs-kind-cover'].forEach(sel => $(sel).addEventListener('change', drawDocs));
+
+$('#docs-goto-setup').addEventListener('click', () => {
+  closeCover();
+  $('.tab[data-tab="profile"]').click();
+  setTimeout(() => $('#docs-setup-card')?.scrollIntoView({ behavior: 'smooth' }), 100);
+});
+
+$('#docs-generate').addEventListener('click', async () => {
+  const st = docsState;
+  if (!st) return;
+  const kinds = DOC_KINDS.filter(k => $(`#docs-kind-${k}`).checked);
+  if (st.documents.length && !confirm(t('docs.regenConfirm'))) return;
+  $('#docs-error').hidden = true;
+  try {
+    const { status } = await api(`/api/jobs/${encodeURIComponent(st.job.id)}/documents`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kinds, notes: $('#cl-notes').value.trim() }),
+    });
+    st.status = status;
+    st.kind = kinds[0];
+    st.versionId = null;
+    drawDocs();
+    clearTimeout(docsPoll);
+    docsPoll = setTimeout(refreshDocs, 3000);
+  } catch (err) {
+    $('#docs-error').textContent = err.message; $('#docs-error').hidden = false;
+  }
+});
+
+$('#docs-tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('.seg-btn');
+  if (!b || !docsState || docsState.editing) return;
+  docsState.kind = b.dataset.kind;
+  docsState.versionId = null;
+  drawDocs();
+});
+
+$('#docs-toolbar').addEventListener('change', (e) => {
+  if (e.target.id !== 'docs-version' || !docsState) return;
+  docsState.versionId = e.target.value;
+  drawDocs();
+});
+
+$('#docs-toolbar').addEventListener('click', async (e) => {
+  const st = docsState;
+  if (!st) return;
+  const doc = st.documents.find(d => d.id === st.versionId);
+  if (!doc) return;
+  const btn = e.target.closest('button');
+  if (!btn) return;
+
+  if (btn.id === 'docs-edit') { st.editing = true; $('#docs-editor').dataset.docId = ''; drawDocs(); $('#docs-editor').focus(); }
+  if (btn.id === 'docs-cancel') { st.editing = false; drawDocs(); }
+  if (btn.id === 'docs-save') {
+    try {
+      const { document } = await api(docUrl(doc.id).replace(/\?.*$/, ''), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ markdown: $('#docs-editor').value }),
+      });
+      Object.assign(doc, document);
+      st.editing = false;
+      drawDocs();
+      toast(t('docs.saved'));
+    } catch (err) { toast(t('toast.error') + err.message); }
+  }
+  if (btn.id === 'docs-humanize') {
+    if (!confirm(t('docs.humanizeConfirm'))) return;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> ${esc(t('docs.humanizing'))}`;
+    try {
+      const { document } = await api(docUrl(doc.id).replace(/\?.*$/, '') + '/humanize', { method: 'POST' });
+      Object.assign(doc, document);
+      toast(t('docs.humanizedToast'));
+    } catch (err) { toast(t('toast.error') + err.message); }
+    drawDocs();
+  }
+  if (btn.id === 'docs-copy') {
+    try { await navigator.clipboard.writeText(doc.text); toast(t('toast.copied')); }
+    catch { toast(t('toast.error') + 'clipboard'); }
+  }
+  if (btn.id === 'docs-delete') {
+    if (!confirm(t('docs.deleteConfirm'))) return;
+    try {
+      await api(docUrl(doc.id).replace(/\?.*$/, ''), { method: 'DELETE' });
+      st.versionId = null;
+      await refreshDocs();
+    } catch (err) { toast(t('toast.error') + err.message); }
+  }
+});
+
+// ── MANUAL JOB (posting the scraper didn't find) ─────────────────────────────
+function closeManualJob() { $('#mj-modal').hidden = true; }
+
+$('#manual-job').addEventListener('click', () => {
+  for (const id of ['#mj-job-title', '#mj-company', '#mj-location', '#mj-url', '#mj-description']) $(id).value = '';
+  $('#mj-error').hidden = true;
+  $('#mj-modal').hidden = false;
+  $('#mj-job-title').focus();
+});
+$('#mj-close').addEventListener('click', closeManualJob);
+$('#mj-modal').addEventListener('click', (e) => { if (e.target.id === 'mj-modal') closeManualJob(); });
+$('#mj-save').addEventListener('click', async () => {
+  const body = {
+    title: $('#mj-job-title').value.trim(), company: $('#mj-company').value.trim(),
+    location: $('#mj-location').value.trim(), url: $('#mj-url').value.trim(),
+    description: $('#mj-description').value.trim(),
+  };
+  if (!body.title) { $('#mj-error').textContent = t('manual.needTitle'); $('#mj-error').hidden = false; return; }
+  try {
+    const { job } = await api('/api/jobs/manual', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    allJobs.unshift(job);
+    populateSourceFilter(); renderStats(); renderJobs();
+    closeManualJob();
+    openCoverLetter(job);
+  } catch (err) { $('#mj-error').textContent = err.message; $('#mj-error').hidden = false; }
 });
 
 // ── STATS ─────────────────────────────────────────────────────────────────--
@@ -1288,6 +1507,7 @@ async function loadProfile() {
     profileLoaded = true;
   } catch (err) { toast(t('toast.error') + err.message); }
   loadCredentials();   // Plattform-Zugänge card lives on the same tab
+  loadDocsSetup();     // Bewerbungsunterlagen card too
 }
 
 function profileField(f) {
@@ -1347,6 +1567,129 @@ $('#save-profile').addEventListener('click', async () => {
 });
 
 $('#profile-reset').addEventListener('click', loadProfile);
+
+// ── BEWERBUNGSUNTERLAGEN SETUP (fact base, base templates, images) ───────────
+let docsSetup = null;   // { factbase, templates: { cv, cover }, assets }
+let tplKind = 'cv';
+
+function docsSetupMsg(msg, kind) {
+  const el = $('#docs-setup-msg');
+  el.textContent = msg; el.className = 'save-hint ' + (kind || '');
+  if (kind === 'ok') setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 5000);
+}
+
+async function loadDocsSetup() {
+  try {
+    docsSetup = await api('/api/doc-setup');
+    $('#factbase').value = docsSetup.factbase;
+    $('#factbase-state').textContent = docsSetup.factbase.trim() ? '' : t('docsSetup.factbaseEmpty');
+    drawTemplateEditor();
+    drawDocAssets();
+  } catch (err) { docsSetupMsg(t('toast.error') + err.message, 'err'); }
+}
+
+function drawTemplateEditor() {
+  if (!docsSetup) return;
+  const tpl = docsSetup.templates[tplKind];
+  $$('#tpl-tabs .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.kind === tplKind));
+  $('#tpl-editor').value = tpl.markdown;
+  $('#tpl-state').textContent = tpl.isDefault ? t('docsSetup.tplDefault') : '';
+  $('#tpl-reset').hidden = tpl.isDefault;
+}
+
+function drawDocAssets() {
+  const have = Object.fromEntries((docsSetup?.assets || []).map(a => [a.name, a]));
+  const q = currentClientId ? `clientId=${encodeURIComponent(currentClientId)}&` : '';
+  $('#docs-assets').innerHTML = ['foto', 'unterschrift'].map(name => {
+    const a = have[name];
+    return `<div class="docs-asset" data-name="${name}">
+      <div class="docs-asset-thumb">${a
+        ? `<img src="/api/doc-assets/${name}?${q}t=${encodeURIComponent(a.updated_at)}" alt="">`
+        : `<span class="muted">${esc(t('docsSetup.noImage'))}</span>`}</div>
+      <div class="docs-asset-meta">
+        <strong>${esc(t('docsSetup.asset.' + name))}</strong>
+        <span class="muted">${esc(t('docsSetup.assetHelp.' + name))}</span>
+        <div class="docs-row">
+          <button class="btn js-asset-up">⬆ ${esc(t('docsSetup.upload'))}</button>
+          ${a ? `<button class="btn btn-ghost btn-danger js-asset-del" title="${esc(t('docsSetup.removeImage'))}">✕</button>` : ''}
+          <input type="file" class="js-asset-file" accept="image/png,image/jpeg,image/webp" hidden>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+$('#factbase-save').addEventListener('click', async () => {
+  try {
+    await api('/api/factbase', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ factbase: $('#factbase').value }),
+    });
+    docsSetup.factbase = $('#factbase').value;
+    $('#factbase-state').textContent = docsSetup.factbase.trim() ? '' : t('docsSetup.factbaseEmpty');
+    docsSetupMsg(t('docsSetup.factbaseSaved'), 'ok');
+  } catch (err) { docsSetupMsg(t('toast.error') + err.message, 'err'); }
+});
+
+$('#tpl-tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('.seg-btn');
+  if (!b || b.dataset.kind === tplKind) return;
+  if (docsSetup && $('#tpl-editor').value !== docsSetup.templates[tplKind].markdown && !confirm(t('docsSetup.discardConfirm'))) return;
+  tplKind = b.dataset.kind;
+  drawTemplateEditor();
+});
+
+async function saveTemplate(markdown) {
+  const { template } = await api(`/api/doc-templates/${tplKind}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markdown }),
+  });
+  docsSetup.templates[tplKind] = template;
+  drawTemplateEditor();
+}
+
+$('#tpl-save').addEventListener('click', async () => {
+  try { await saveTemplate($('#tpl-editor').value); docsSetupMsg(t('docsSetup.tplSaved'), 'ok'); }
+  catch (err) { docsSetupMsg(t('toast.error') + err.message, 'err'); }
+});
+$('#tpl-reset').addEventListener('click', async () => {
+  if (!confirm(t('docsSetup.resetConfirm'))) return;
+  try { await saveTemplate(''); docsSetupMsg(t('docsSetup.tplSaved'), 'ok'); }
+  catch (err) { docsSetupMsg(t('toast.error') + err.message, 'err'); }
+});
+$('#tpl-preview').addEventListener('click', () => {
+  if (docsSetup && $('#tpl-editor').value !== docsSetup.templates[tplKind].markdown) docsSetupMsg(t('docsSetup.previewUnsaved'));
+  const q = currentClientId ? `?clientId=${encodeURIComponent(currentClientId)}` : '';
+  window.open(`/api/doc-templates/${tplKind}/preview${q}`, '_blank', 'noopener');
+});
+
+$('#docs-assets').addEventListener('click', async (e) => {
+  const box = e.target.closest('.docs-asset');
+  if (!box) return;
+  const name = box.dataset.name;
+  if (e.target.closest('.js-asset-up')) box.querySelector('.js-asset-file').click();
+  if (e.target.closest('.js-asset-del')) {
+    if (!confirm(t('docsSetup.removeConfirm'))) return;
+    try {
+      const { assets } = await api(`/api/doc-assets/${name}`, { method: 'DELETE' });
+      docsSetup.assets = assets; drawDocAssets();
+    } catch (err) { docsSetupMsg(t('toast.error') + err.message, 'err'); }
+  }
+});
+$('#docs-assets').addEventListener('change', async (e) => {
+  const input = e.target.closest('.js-asset-file');
+  if (!input) return;
+  const file = input.files[0];
+  const name = input.closest('.docs-asset').dataset.name;
+  input.value = '';
+  if (!file) return;
+  try {
+    const { assets } = await api(`/api/doc-assets/${name}`, {
+      method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
+    });
+    docsSetup.assets = assets; drawDocAssets();
+    docsSetupMsg(t('docsSetup.imageSaved'), 'ok');
+  } catch (err) { docsSetupMsg(t('toast.error') + err.message, 'err'); }
+});
 
 // ── PLATTFORM-ZUGÄNGE (credentials + CV + auto-apply toggle) ──────────────────
 const LOGIN_STATE_META = {
