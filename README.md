@@ -48,7 +48,11 @@ src/credentials.js        ← AES-256-GCM encryption of stored platform logins (
 src/questions.js          ← Answer library for the apply forms' screening questions
 src/telegram-bot.js       ← Interactive Telegram bot (status reactions, apply approval, answers)
 src/apply.js              ← CLI for tracking applications (npm run apply)
-src/cover-letter.js       ← CLI for generating a cover letter via Claude (npm run cover-letter)
+src/cover-letter.js       ← Plain-text cover letter via Claude (auto-apply fallback, npm run cover-letter)
+src/application-docs.js   ← Tailored CV + cover letter: fact base + template + posting → Claude → humanize pass
+src/markdown-doc.js       ← Markdown → HTML for the documents, style lint, file names, plain text
+src/pdf.js                ← HTML → PDF via Playwright's Chromium
+templates/                ← Document CSS (A4), anonymous example templates, default humanize prompt
 src/server.js             ← Web GUI server (npm run gui) — built-in http, operator login + client CRUD
 src/setup.js              ← Guided setup wizard (steps, validation, debug sandbox)
 src/backup.js             ← Database backups (daily/manual/upload snapshots, retention)
@@ -57,12 +61,13 @@ src/env.js                ← Loads .env (imported first by every entry point)
 desktop/                  ← Desktop app (Electron): main.js starts server + scheduler, updater.js self-updates
 electron-builder.yml      ← Installer config (npm run dist)
 .github/workflows/release.yml ← Tag → Docker image on ghcr.io + installers on a GitHub release
-public/                   ← Dashboard frontend (index.html, app.js, i18n.js, setup.js, style.css)
+public/                   ← Dashboard frontend (index.html, app.js, i18n.js, setup.js, tour.js, style.css)
 scripts/migrate-to-multitenant.js ← One-time migration to the clients model (npm run migrate)
 scripts/hash-password.js  ← Generate OPERATOR_PASSWORD_HASH for SaaS login (npm run hash-password)
 scripts/generate-credentials-key.js ← Generate CREDENTIALS_KEY (npm run generate-credentials-key)
 scripts/operator-sandbox.js ← Throwaway operator GUI on :3001 (npm run gui:operator)
 scripts/refetch-descriptions.js  ← Re-fetch & re-analyze jobs saved with empty descriptions
+scripts/import-lebenslauf.js ← One-off import of a Markdown CV repo (npm run import-lebenslauf)
 config/*.json             ← Default-client fallback (profile/jobs/filters/prompts); per-client config lives in the DB
 logs/                     ← Timestamped log file from each run (gitignored)
 data/jobs.db              ← SQLite database — clients, jobs, runs (gitignored)
@@ -259,7 +264,9 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `TELEGRAM_NOTIFICATIONS` | `on` | Set to `off` to disable Telegram push notifications entirely |
 | `EXPIRY_NOTIFICATIONS` | `on` | Set to `off` to silence Telegram alerts for expired jobs (new-job alerts still fire) |
 | `ANALYZER_MODEL` | `claude-haiku-4-5` | Model that scores job relevance |
-| `COVER_LETTER_MODEL` | `claude-opus-5` | Model that writes cover letters |
+| `COVER_LETTER_MODEL` | `claude-opus-5` | Model that writes cover letters and tailored CVs |
+| `DOCS_HUMANIZE` | `true` | Run tailored CVs / cover letters through a second "humanize" pass that removes AI phrasing (one extra API call per document) |
+| `CHROME_PATH` | — | Chrome/Chromium binary for the document PDFs, only needed when Playwright's bundled browser is missing (not in the settings form) |
 | `MIN_RELEVANCE_SCORE` | `4` | Min AI score (1–10) for a job to count as relevant |
 | `CRON_SCHEDULE` | `0 * * * *` | Scheduler cadence (node-cron syntax) |
 | `EXPIRY_THRESHOLD_HOURS` | `72` | Hours unseen before a notified job is marked expired |
@@ -272,6 +279,7 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `GUI_PORT` | `3000` | Port for the web GUI |
 | `GUI_HOST` | *(all interfaces)* | Address the GUI binds to, e.g. `127.0.0.1` to keep it off the network. Not in the settings form. The desktop app sets it to `127.0.0.1` |
 | `APP_DATA_DIR` | *(project folder)* | Moves all writable state (`.env`, `config/`, `data/`, `logs/`) into this folder. Must be set in the real environment, not in `.env` (it decides where `.env` is read from). The desktop app sets it to the per-user app-data folder |
+| `ISSUE_REPO` | `JulianFriedle/Job-Alert-Bot` | GitHub repo (`owner/repo`) the **Problem melden** button opens a pre-filled issue in. Only change it for your own fork |
 | `RUN_STOP_GRACE_MS` | `45000` | How long **Lauf stoppen** waits for the run to wind down before force-killing it |
 | `JOBS_DB_PATH` | `data/jobs.db` | SQLite DB path (set to a mounted volume in Docker) |
 | `CLIENTS_ENABLED` | `false` | Show the multi-client UI (**Klienten** tab + client selector). Off = private single-user view |
@@ -306,18 +314,20 @@ Edit this file to tune what gets filtered. If the file is missing, built-in defa
 
 ### AI prompts (`config/prompts.json`)
 
-The prompts sent to Claude (relevance-scoring system prompt + scoring guidance, and the
-cover-letter system prompt + task) are editable in the **Prompts** tab of the GUI. Overrides
+The prompts sent to Claude (relevance-scoring system prompt + scoring guidance, the rules and
+instructions for tailored CVs and cover letters including the humanize pass, and the plain-text
+auto-apply cover letter) are editable in the **Prompts** tab of the GUI. Overrides
 are stored in `config/prompts.json` (gitignored); anything not overridden falls back to the
 built-in defaults in `src/prompts.js`. The analyzer's strict JSON output format is fixed and
-not editable, so customizing prompts can't break parsing.
+not editable, so customizing prompts can't break parsing — the same goes for the answer format
+of the document prompts.
 
 ### 🌍 Locale note
 
 This project is tuned for the **German job market** out of the box:
 
 - `config/filters.json` and the example `config/jobs.json` use German job titles and German company career pages.
-- Cover letters are generated in **German** (DIN 5008 style) — see the prompt in [`src/cover-letter.js`](src/cover-letter.js).
+- Cover letters and tailored CVs are generated in **German** (DIN 5008 style) — see the prompts in [`src/prompts.js`](src/prompts.js) and the humanize catalogue in [`templates/humanize.md`](templates/humanize.md).
 - The relevance prompt in [`src/analyzer.js`](src/analyzer.js) references German hiring terms (e.g. *Initiativbewerbung*, *Doktorand*).
 - Console/log output and Telegram labels are partly German.
 
@@ -350,6 +360,9 @@ application must then be **explicitly approved** — either in the job popup in 
 (*Bewerben* button) or via Telegram (review summary with ✅ Bewerben / ✏️ Ändern /
 ❌ Verwerfen buttons). Unknown required questions are asked via Telegram one by one.
 After submission the job status flips to *Beworben* automatically.
+If you created tailored documents for the job in the GUI (see
+[Tailored CV & Cover Letter](#tailored-cv--cover-letter)), the worker uploads that CV as PDF and
+uses the plain text of that cover letter instead of generating a new one.
 
 Setup:
 1. `npm run generate-credentials-key` → put the key into `.env` as `CREDENTIALS_KEY` (or GUI → Einstellungen → Auto-Bewerbung).
@@ -394,6 +407,10 @@ npm run test-scraper
 
 # Test Telegram notifications (sends a sample message)
 npm run test-notify
+
+# One-off: import a Markdown CV repo (profil.md, templates, photo, signature, application
+# log) into a client — see "Tailored CV & Cover Letter". No API calls.
+npm run import-lebenslauf -- ../Lebenslauf
 
 # Re-fetch descriptions and re-analyze all DB entries saved with empty descriptions
 # (useful after fixing the networkidle bug, or when a source was returning 0 chars)
@@ -458,14 +475,14 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 
 | Tab | What it does |
 |---|---|
-| **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Sort by relevance or by **date found** (oldest / newest first). Set application status or hide a job with one click. The **✎** button opens the cover-letter window (see [Generating a Cover Letter](#generating-a-cover-letter)). In the desktop app, a banner with an **Aktualisieren** button appears at the top when a new release is available. |
+| **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Sort by relevance or by **date found** (oldest / newest first). Set application status or hide a job with one click. The **✎** button (or a click on the card) opens the job window with the **tailored CV & cover letter** (see [Tailored CV & Cover Letter](#tailored-cv--cover-letter)); a 📄 badge marks jobs that already have documents. **+ Stelle** adds a posting by hand (pasted text) so documents can be tailored to jobs the bot didn't find. In the desktop app, a banner with an **Aktualisieren** button appears at the top when a new release is available. |
 | **Quellen** | Edit the active client's job sources visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. |
-| **Profil** | Edit the active client's CV & preferences in a structured form — this is what the AI matches jobs against and uses for cover letters. |
-| **Prompts** | Edit the prompts sent to Claude for the active client (relevance scoring + cover letters). Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
-| **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. **Lauf stoppen** aborts a running pipeline: the run winds down at the next source/page boundary, keeps every job found so far, and skips the remaining stages (notifications, expiry check, statistics, export) so a partial pass can't distort them. If it hasn't exited after `RUN_STOP_GRACE_MS` (default 45 s) it is force-killed. Nothing already paid for is thrown away: each job is stored as soon as its description has been fetched, and every AI score written the moment it is scored — a stopped run leaves them in the DB, and the next run picks up where it left off instead of re-scraping. Jobs whose detail page was still loading are *not* stored (an empty description would be scored as a blank posting), so they are simply fetched again next time. |
+| **Profil** | Edit the active client's CV & preferences in a structured form — this is what the AI matches jobs against. **Sprache der KI-Texte** sets the language of the AI's job reasoning and of cover letters (Deutsch / English; unset = as before, i.e. German cover letters). The **Bewerbungsunterlagen** card holds the Markdown **fact base**, the **base templates** for CV and cover letter (with preview) and the **photo / signature** used in the PDFs. |
+| **Prompts** | Edit the prompts sent to Claude for the active client (relevance scoring, tailored documents incl. the humanize pass, auto-apply cover letter). Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
+| **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. **Lauf stoppen** aborts a running pipeline: the run winds down at the next source/page boundary, keeps every job found so far, and skips the remaining stages (notifications, expiry check, statistics, export) so a partial pass can't distort them. If it hasn't exited after `RUN_STOP_GRACE_MS` (default 45 s) it is force-killed. Nothing already paid for is thrown away: each job is stored as soon as its description has been fetched, and every AI score written the moment it is scored — a stopped run leaves them in the DB, and the next run picks up where it left off instead of re-scraping. Jobs whose detail page was still loading are *not* stored (an empty description would be scored as a blank posting), so they are simply fetched again next time. **Letzte Läufe** lists recent runs per source; a source that threw an error, was blocked, or found **0 jobs** is flagged in red with a **Problem melden** button. It opens a preview of a GitHub issue (source, URL without query string, error message, recent found-counts, version) that you can edit, then opens the pre-filled issue form on GitHub, where you submit it yourself — the bot sends nothing. Platform sources are reported by type only, never with their search terms. |
 | **Klienten** | *Hidden unless `CLIENTS_ENABLED=true`.* Create/edit/delete clients (tenants): name, Telegram chat id, active toggle, Telegram & expiry toggles, optional min-score. A **Telegram-Test** button verifies the chat id. Clients receive Telegram alerts only — they have no GUI access. |
 | **Statistik** | Application heatmap, top sources/companies, run history, and a per-run overview table. |
-| **Einstellungen** | Edit every `.env` variable from a form (incl. the SaaS auth vars); switch **theme** and **language** (see below); manage **database backups** (create / upload / download / restore — see [Backups](#backups)); update the app (**Updates** card: `git pull` for a source install, release download + install in the desktop app); restart the GUI; and re-open or test the **setup wizard**. |
+| **Einstellungen** | Edit every `.env` variable from a form (incl. the SaaS auth vars); switch **theme** and **language** (see below); manage **database backups** (create / upload / download / restore — see [Backups](#backups)); update the app (**Updates** card: `git pull` for a source install, release download + install in the desktop app); restart the GUI; and re-open or test the **setup wizard**; and replay the **guided tour**. |
 
 All tabs operate on the **active client**. Out of the box the multi-client UI is off
 (`CLIENTS_ENABLED=false`): there is no **Klienten** tab and no client selector, and everything
@@ -490,19 +507,39 @@ All three choices are saved in your browser (`localStorage`) and applied before 
 
 The first time you open the GUI with required configuration missing, a step-by-step
 **setup wizard** opens automatically. Each step is its own small sub-page, so even a
-non-technical user can get going without editing any files. The welcome screen lets you
-pick the **interface language** (Deutsch / English) first; everything that follows — and
-the rest of the GUI — switches accordingly.
+non-technical user can get going without editing any files. The welcome screen explains
+what the tool does and lets you pick the **interface language** (Deutsch / English) first;
+everything that follows — and the rest of the GUI — switches accordingly. A *“Step 3 of 9”*
+counter shows how far along you are, and every step says where in the GUI its answers can be
+changed later.
 
-1. **Anthropic API key**
-2. **Telegram** *(optional)* — bot token + chat ID, with a *“send test message”* button to verify it works, or a toggle to skip notifications and use only the GUI
-3. **Your profile** — name, summary, desired roles, locations, … (what the AI matches against)
-4. **Career pages** — add the company sites to watch
-5. *(optional)* **Title filters** and **fine-tuning** (score threshold, schedule)
+1. *(optional)* **Language** — interface language and the **language of AI texts** (job reasoning and cover letters)
+2. **Anthropic API key**
+3. **Telegram** *(optional)* — bot token + chat ID, with a *“send test message”* button to verify it works, or a toggle to skip notifications and use only the GUI; plus whether to report jobs that disappear
+4. **About you** — name, short profile, skills, education, work history, language skills
+5. **What you're looking for** — desired roles, locations, industries, contract types, minimum salary, dealbreakers
+6. *(optional)* **Job boards** — tick LinkedIn / StepStone / Indeed and enter one search term + location (pre-filled from your desired roles); no account needed
+7. **Career pages** — company sites to watch. At least one source is required overall; a job-board search from step 6 counts
+8. *(optional)* **Title filters** — blocklist and priority keywords
+9. *(optional)* **How often & how strict** — schedule as a plain choice (hourly … once a day) and the score threshold
 
-Only the steps you still need are shown. That means **after an update that introduces a
-new required setting, only that one new step appears** — you're never asked to redo
-everything. You can re-open the wizard any time from **Einstellungen → Assistent öffnen**.
+On a first run every step is shown once (optional ones can be skipped). After that, only the
+steps you still need appear: **after an update that introduces a new required setting, only
+that one new step appears** — you're never asked to redo everything. You can re-open the
+wizard any time from **Einstellungen → Assistent öffnen**.
+
+The job-board step manages one search per platform and tags it `"managedBy": "wizard"` in the
+source list; searches you add by hand in the **Quellen** tab are never touched by it. Saving
+the career-page step keeps every job-board search and all per-source extras
+(`paginationParam`, `extraWait`, …).
+
+#### Guided tour
+
+When you finish the wizard, a short **tour** walks through the GUI: it switches to each tab,
+spotlights it and explains in two or three sentences what it is for (Jobs, filters, starting a
+run, Quellen, Profil, Statistik, Prompts, Klienten if enabled, Einstellungen). Arrow keys
+navigate, Esc ends it. Replay it any time with the **?** button in the top bar or
+**Einstellungen → Rundgang starten**.
 
 Behind the scenes the wizard writes the same files you'd edit by hand
 (`.env`, `config/profile.json`, `config/jobs.json`, `config/filters.json`) and records
@@ -605,25 +642,58 @@ npm run apply -- help
 
 Applied jobs appear at the **top of the Excel file highlighted in blue**, with the application date and current status. The status is stored in the database, so it survives every Excel regeneration. Ignored jobs are removed from the Excel immediately on the next run.
 
-## Generating a Cover Letter
+## Tailored CV & Cover Letter
 
-Claude reads the full job description and your profile from `config/profile.json` and writes a complete, formal German Anschreiben (DIN 5008 style).
+For each job, Claude writes a CV and a cover letter tailored to that posting, rendered as PDF
+in your own layout. Everything is per client and lives in the database (backups include it).
 
-### From the web GUI (recommended)
+### Setup (Profil tab → Bewerbungsunterlagen)
 
-Click the **✎** button on any job card to open the cover-letter window. Before generating you can type **extra notes** into the optional text box — job-specific bonus info that should make it into the letter (e.g. a particular motivation, a relevant project, or your salary expectation). Then hit **Anschreiben erstellen**. Tweak the notes and **↻ Neu generieren** as often as you like, then **📋 Kopieren** the result.
+| Part | What it is |
+|---|---|
+| **Fact base** | Everything about you as Markdown: positions with several phrasing/achievement building blocks each, education, skills, notes for the AI (e.g. the story your career tells). It is the **only source of facts**: the AI picks and rephrases, it never invents numbers, titles, employers, dates or skills. Whatever it would have needed but couldn't find is listed as *missing* next to the document. |
+| **Base templates** | The CV and the cover letter as Markdown with a little HTML (header with photo, signature block). The AI keeps this structure and swaps the content. Until you save your own, an anonymous example from `templates/` is used. **Vorschau** renders the saved template. |
+| **Images** | Photo and signature (PNG/JPEG/WebP). They replace `foto.png` / `unterschrift.png` in the templates. |
 
-Because writing a cover letter usually means you're applying, the window has a **✓ Als beworben markieren** button in the top-right that sets the job's status to *applied* without leaving the modal (it turns green once done).
+Layout comes from `templates/lebenslauf.css` and `templates/anschreiben.css` (A4, print CSS).
 
-### From the CLI
+### In the job window
 
-Each Telegram notification includes a job ID. Use it to generate a letter for that position:
+1. Optional notes for this application (motivation, what to emphasise, salary expectation).
+2. Tick **Lebenslauf** and/or **Anschreiben** and click **Unterlagen erstellen**. This runs in
+   the background: CV first, then the cover letter (which sees the tailored CV and points to it),
+   each followed by the **humanize pass** that strips AI phrasing (`DOCS_HUMANIZE`). The number
+   of API calls is shown next to the button — 4 for both documents with humanize.
+3. Review the A4 preview. Style notes flag a dash in running text or a leftover `[placeholder]`;
+   missing facts are listed above the preview.
+4. **✎ Bearbeiten** edits the Markdown directly (no AI call), **↻ Humanize** runs one more pass,
+   **📋 Text** copies the plain text (for application forms), **⬇ PDF** downloads
+   `YYYY-MM-DD_firmenslug_Lebenslauf.pdf`. Every generation is kept as a version.
+
+The **✓ Als beworben markieren** button in the top-right sets the job's status to *applied*
+without leaving the window — together with the stored documents that is your application log.
+
+### Importing a Markdown CV repo
+
+If you kept your CV workflow in a separate repo (`profil.md`, `bewerbung/lebenslauf.md`,
+`bewerbung/anschreiben.md`, `bewerbung/foto.png`, `bewerbung/unterschrift.png`, `log/index.md`
+with Markdown snapshots), import it once:
 
 ```bash
-npm run cover-letter -- abc123def456
+npm run import-lebenslauf -- ../Lebenslauf             # into the default client
+npm run import-lebenslauf -- ../Lebenslauf --client <id> --force
 ```
 
-The letter is written to the console. To save it directly to a file:
+Fact base, templates and images are taken over (existing ones only with `--force`). Each row
+of `log/index.md` becomes a manual job with its date and status (*beworben* → applied,
+*Gespräch* → interview, *Zusage* → offer, *Absage* → rejected) and its CV / cover-letter
+snapshots as documents. Re-running skips what was already imported.
+
+### Plain-text cover letter (CLI)
+
+`src/cover-letter.js` still writes a plain-text letter from the structured profile. Auto-apply
+uses it when a job has no tailored cover letter; you can also call it directly with the job ID
+from a Telegram notification:
 
 ```bash
 npm run cover-letter -- abc123def456 > anschreiben.txt
@@ -710,6 +780,8 @@ sqlite3 data/jobs.db "SELECT title, company, score, status, scraped_at FROM jobs
 ```
 
 Key `jobs` columns: `client_id`, `id`, `title`, `company`, `url`, `location`, `source`, `relevant`, `score`, `summary`, `notified`, `expired`, `applied`, `applied_at`, `status`, `scraped_at`, `last_seen_at`.
+
+Tailored documents live in `documents` (one row per version: `client_id`, `job_id`, `kind` = `cv`/`cover`, `markdown`, missing facts); photo and signature in `client_assets`; the fact base and base templates in the `clients` columns `factbase_md`, `cv_template_md`, `cover_template_md`. Manually added jobs have `source = 'Manuell'` and an id starting with `manual:` (`import:` for the CV-repo import).
 
 > The schema migrates automatically on first open of the new code (adds `client_id`, rebuilds the
 > `jobs` primary key, creates the default client). `npm run migrate` additionally imports your

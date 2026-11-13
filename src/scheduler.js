@@ -20,6 +20,7 @@ import { startTelegramBot } from './telegram-bot.js';
 import { isTruthy } from './scrapers/browser.js';
 import { isAborted, beginRun, endRun, exitRequested } from './run-control.js';
 import { LOGS_DIR } from './paths.js';
+import { classifySourceProblem } from './source-report.js';
 
 
 // Tunable knobs (env override; defaults preserve original behavior)
@@ -403,6 +404,14 @@ async function runClientPipeline(client) {
         newRelevant:   s.relevant || 0,
         totalRelevant: relevantBySource[source.name] || 0,
         notified:      s.notified || 0,
+        // Why this source looks broken this run (null = fine) — the Run tab
+        // offers a GitHub problem report for every row that has one.
+        problem:       classifySourceProblem({
+          found: s.total || 0,
+          blocked: scrapeStats[source.name]?.blocked,
+          error: scrapeStats[source.name]?.error,
+        }),
+        error:         scrapeStats[source.name]?.error ?? null,
       };
     });
     saveRunSnapshot(clientId, snapshotRows);

@@ -40,6 +40,7 @@
         <span class="client-switch-label" data-i18n="client.active">Klient</span>
         <select id="client-switcher" class="set-input"></select>
       </label>
+      <button class="btn btn-ghost help-btn" id="help-btn" data-i18n-title="tour.helpTitle" title="Rundgang durch die Oberfläche" aria-label="Rundgang durch die Oberfläche">?</button>
       <button class="btn btn-primary" id="quick-run" data-i18n="btn.startRun">▶ Lauf starten</button>
       <button class="btn btn-ghost" id="logout-btn" data-i18n="auth.logout" hidden>Abmelden</button>
     </div>
@@ -77,6 +78,7 @@
           <option value="found-desc" data-i18n="jobs.sortNewest">Neueste zuerst</option>
         </select>
         <span class="count" id="result-count"></span>
+        <button class="btn" id="manual-job" data-i18n="manual.add">+ Stelle</button>
         <button class="btn" id="export-csv" data-i18n-title="jobs.exportCsvTitle" title="Aktuell gefilterte Jobs als CSV exportieren">⬇ <span data-i18n="jobs.exportCsv">CSV</span></button>
       </div>
 
@@ -158,6 +160,38 @@
       </div>
       <div class="settings-groups" id="profile-groups"></div>
       <p class="save-hint" id="profile-msg"></p>
+
+      <!-- Bewerbungsunterlagen: fact base, base templates and images for tailored CVs -->
+      <div class="card" id="docs-setup-card">
+        <div class="card-head"><h2 data-i18n="docsSetup.title">Bewerbungsunterlagen</h2></div>
+        <p class="muted" data-i18n="docsSetup.intro">Grundlage für angepasste Lebensläufe und Anschreiben. Im Job-Popup (✎) erstellt die KI daraus pro Stelle zugeschnittene Unterlagen als PDF.</p>
+
+        <h3 class="docs-h3" data-i18n="docsSetup.factbase">Faktenbasis</h3>
+        <p class="muted" data-i18n="docsSetup.factbaseHelp">Alles über dich als Markdown: Stationen, Erfolge, Skills, Formulierungsbausteine, Hinweise für die KI. Die KI verwendet ausschließlich, was hier steht, und erfindet nichts dazu.</p>
+        <textarea class="set-input docs-md" id="factbase" rows="16" spellcheck="false"></textarea>
+        <div class="docs-row">
+          <button class="btn btn-primary" id="factbase-save" data-i18n="btn.save">Speichern</button>
+          <span class="muted" id="factbase-state"></span>
+        </div>
+
+        <h3 class="docs-h3" data-i18n="docsSetup.templates">Basis-Vorlagen</h3>
+        <p class="muted" data-i18n="docsSetup.templatesHelp">Aufbau und Layout der Dokumente als Markdown mit etwas HTML. Die KI behält die Struktur bei und passt den Inhalt an. foto.png und unterschrift.png werden durch die Bilder unten ersetzt.</p>
+        <div class="seg docs-tabs" id="tpl-tabs">
+          <button class="seg-btn active" data-kind="cv" data-i18n="docs.cv">Lebenslauf</button>
+          <button class="seg-btn" data-kind="cover" data-i18n="docs.cover">Anschreiben</button>
+        </div>
+        <textarea class="set-input docs-md" id="tpl-editor" rows="16" spellcheck="false"></textarea>
+        <div class="docs-row">
+          <button class="btn btn-primary" id="tpl-save" data-i18n="btn.save">Speichern</button>
+          <button class="btn" id="tpl-preview" data-i18n="docsSetup.preview">Vorschau</button>
+          <button class="btn btn-ghost btn-danger" id="tpl-reset" data-i18n="docsSetup.resetTpl">Auf Beispiel zurücksetzen</button>
+          <span class="muted" id="tpl-state"></span>
+        </div>
+
+        <h3 class="docs-h3" data-i18n="docsSetup.images">Bilder</h3>
+        <div class="docs-assets" id="docs-assets"></div>
+        <p class="save-hint" id="docs-setup-msg"></p>
+      </div>
 
       <!-- Plattform-Zugänge: per-client logins for LinkedIn/StepStone/Indeed + CV -->
       <div class="card" id="platform-access-card">
@@ -275,10 +309,11 @@
       </div>
 
       <div class="card">
-        <div class="card-head"><h2 data-i18n="setup.cardTitle">Einrichtungs-Assistent</h2></div>
-        <p class="muted" data-i18n="setup.cardHelp">Den geführten Ersteinrichtungs-Assistenten erneut öffnen, oder ihn gefahrlos im Debug-Modus testen (schreibt in eine Sandbox, deine echten Daten bleiben unberührt).</p>
+        <div class="card-head"><h2 data-i18n="setup.cardTitle">Einrichtung &amp; Rundgang</h2></div>
+        <p class="muted" data-i18n="setup.cardHelp">Den geführten Einrichtungs-Assistenten erneut öffnen (z. B. für Sprache, Jobportale oder Titel-Filter), den Rundgang durch die Oberfläche wiederholen, oder den Assistenten gefahrlos im Debug-Modus testen (schreibt in eine Sandbox, deine echten Daten bleiben unberührt).</p>
         <div class="panel-actions" style="margin-top:12px">
           <button class="btn" id="reopen-setup" data-i18n="setup.openBtn">⚙ Assistent öffnen</button>
+          <button class="btn" id="tour-btn" data-i18n="setup.tourBtn">🧭 Rundgang starten</button>
           <button class="btn" id="debug-setup" title="Test-Lauf in Sandbox – ändert nichts an deinen Daten" data-i18n="setup.debugBtn" data-i18n-title="setup.debugBtnTitle">🧪 Im Debug-Modus testen</button>
         </div>
       </div>
@@ -331,15 +366,16 @@
     </section>
   </main>
 
-  <!-- ───────── COVER-LETTER MODAL ───────── -->
+  <!-- ───────── JOB MODAL: application documents + auto-apply ───────── -->
   <div class="modal-backdrop" id="cl-modal" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cl-title">
+    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="cl-title">
       <header class="modal-head">
         <div>
-          <h2 id="cl-title" data-i18n="cover.title">Anschreiben</h2>
+          <h2 id="cl-title" data-i18n="docs.title">Bewerbungsunterlagen</h2>
           <p class="muted" id="cl-sub"></p>
         </div>
         <div class="cl-head-actions">
+          <a class="btn btn-ghost" id="cl-open" target="_blank" rel="noopener" title="Stellenanzeige öffnen" data-i18n-title="job.openTitle" hidden>↗</a>
           <button class="btn btn-primary" id="cl-applied" data-i18n="cover.applied">✓ Als beworben markieren</button>
           <button class="btn btn-ghost" id="cl-close" title="Schließen" data-i18n-title="cover.close">✕</button>
         </div>
@@ -347,20 +383,95 @@
       <div class="modal-body" id="cl-body">
         <!-- Auto-apply panel: rendered for LinkedIn/StepStone/Indeed jobs -->
         <div class="ap-panel" id="ap-panel" hidden></div>
-        <label class="cl-notes-label" for="cl-notes" data-i18n="cover.notesLabel">Zusätzliche Hinweise für dieses Anschreiben (optional)</label>
-        <textarea class="cl-notes" id="cl-notes" rows="3" spellcheck="false"
-                  data-i18n-ph="cover.notesPlaceholder"
-                  placeholder="z. B. besondere Motivation, relevante Projekte, Gehaltsvorstellung …"></textarea>
-        <div class="cl-loading" id="cl-loading" hidden>
-          <span class="spinner"></span> <span data-i18n="cover.loading">Anschreiben wird erstellt…</span>
+
+        <div class="docs-gen">
+          <p class="docs-hint" id="docs-nofacts" hidden>
+            <span data-i18n="docs.noFactbase">Noch keine Faktenbasis hinterlegt. Ohne sie kann die KI keine Unterlagen erstellen.</span>
+            <button class="btn" id="docs-goto-setup" data-i18n="docs.gotoSetup">Zum Profil-Tab</button>
+          </p>
+          <label class="cl-notes-label" for="cl-notes" data-i18n="docs.notesLabel">Hinweise für diese Bewerbung (optional)</label>
+          <textarea class="cl-notes" id="cl-notes" rows="2" spellcheck="false"
+                    data-i18n-ph="docs.notesPlaceholder"
+                    placeholder="z. B. besondere Motivation, welches Projekt betont werden soll, Gehaltsvorstellung …"></textarea>
+          <div class="docs-gen-row">
+            <label class="docs-check"><input type="checkbox" id="docs-kind-cv" checked> <span data-i18n="docs.cv">Lebenslauf</span></label>
+            <label class="docs-check"><input type="checkbox" id="docs-kind-cover" checked> <span data-i18n="docs.cover">Anschreiben</span></label>
+            <button class="btn btn-primary" id="docs-generate" data-i18n="docs.generate">✎ Unterlagen erstellen</button>
+            <span class="muted docs-cost" id="docs-cost"></span>
+          </div>
+          <div class="cl-loading" id="docs-progress" hidden>
+            <span class="spinner"></span> <span id="docs-progress-text"></span>
+          </div>
+          <div class="cl-error" id="docs-error" hidden></div>
         </div>
-        <textarea class="cl-text" id="cl-text" spellcheck="false" hidden></textarea>
-        <div class="cl-error" id="cl-error" hidden></div>
+
+        <div class="docs-view" id="docs-view" hidden>
+          <div class="seg docs-tabs" id="docs-tabs"></div>
+          <div class="docs-toolbar" id="docs-toolbar"></div>
+          <div class="docs-warn" id="docs-warn"></div>
+          <iframe class="docs-preview" id="docs-preview" sandbox title="Vorschau" data-i18n-title="docs.preview"></iframe>
+          <textarea class="cl-text docs-editor" id="docs-editor" spellcheck="false" hidden></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────── MANUAL JOB MODAL ───────── -->
+  <div class="modal-backdrop" id="mj-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mj-title">
+      <header class="modal-head">
+        <div>
+          <h2 id="mj-title" data-i18n="manual.title">Stelle manuell hinzufügen</h2>
+          <p class="muted" data-i18n="manual.intro">Für Anzeigen, die der Bot nicht gefunden hat. Den Anzeigentext einfügen, damit Lebenslauf und Anschreiben darauf zugeschnitten werden können.</p>
+        </div>
+        <div class="cl-head-actions">
+          <button class="btn btn-ghost" id="mj-close" title="Schließen" data-i18n-title="cover.close">✕</button>
+        </div>
+      </header>
+      <div class="modal-body mj-body">
+        <label><span data-i18n="manual.jobTitle">Stellenbezeichnung</span> <span class="req">*</span>
+          <input class="set-input" id="mj-job-title" maxlength="300"></label>
+        <label><span data-i18n="manual.company">Unternehmen</span>
+          <input class="set-input" id="mj-company" maxlength="300"></label>
+        <label><span data-i18n="manual.location">Ort</span>
+          <input class="set-input" id="mj-location" maxlength="300"></label>
+        <label><span data-i18n="manual.url">Link zur Anzeige</span>
+          <input class="set-input" id="mj-url" type="url" placeholder="https://…" maxlength="2000"></label>
+        <label><span data-i18n="manual.description">Anzeigentext</span>
+          <textarea class="set-input su-textarea" id="mj-description" rows="10" spellcheck="false"></textarea></label>
+        <div class="cl-error" id="mj-error" hidden></div>
       </div>
       <footer class="modal-foot">
-        <button class="btn btn-primary" id="cl-generate" data-i18n="cover.generate">✎ Anschreiben erstellen</button>
-        <button class="btn" id="cl-regen" data-i18n="cover.regen" hidden>↻ Neu generieren</button>
-        <button class="btn btn-primary" id="cl-copy" data-i18n="cover.copy" hidden>📋 Kopieren</button>
+        <button class="btn btn-primary" id="mj-save" data-i18n="manual.save">Hinzufügen</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ───────── SOURCE PROBLEM REPORT MODAL ───────── -->
+  <div class="modal-backdrop" id="rp-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rp-heading">
+      <header class="modal-head">
+        <div>
+          <h2 id="rp-heading" data-i18n="report.title">Problem auf GitHub melden</h2>
+          <p class="muted" id="rp-sub"></p>
+        </div>
+        <button class="btn btn-ghost" id="rp-close" title="Schließen" data-i18n-title="cover.close">✕</button>
+      </header>
+      <div class="modal-body">
+        <p class="rp-hint" data-i18n="report.publicHint">Es wird nichts automatisch gesendet: GitHub öffnet sich mit diesem Text, und du schickst das Issue dort selbst ab. Das Issue ist für alle sichtbar, die das Repo sehen können, bitte also nichts Persönliches eintragen.</p>
+        <label class="cl-notes-label" for="rp-title" data-i18n="report.titleLabel">Titel</label>
+        <input class="set-input rp-field" id="rp-title" maxlength="200">
+        <label class="cl-notes-label" for="rp-diagnose" data-i18n="report.diagnoseLabel">Diagnose (wird mitgeschickt, bitte prüfen)</label>
+        <textarea class="cl-text rp-diagnose" id="rp-diagnose" spellcheck="false"></textarea>
+        <label class="cl-notes-label" for="rp-notes" data-i18n="report.notesLabel">Was ist dir aufgefallen? (optional)</label>
+        <textarea class="cl-notes" id="rp-notes" rows="3" maxlength="2000"
+                  data-i18n-ph="report.notesPlaceholder"
+                  placeholder="z. B. Auf der Website stehen 12 offene Stellen, gefunden wurden 0."></textarea>
+        <div class="cl-error" id="rp-error" hidden></div>
+      </div>
+      <footer class="modal-foot">
+        <button class="btn" id="rp-cancel" data-i18n="report.cancel">Abbrechen</button>
+        <button class="btn btn-primary" id="rp-open" data-i18n="report.open">Auf GitHub öffnen ↗</button>
       </footer>
     </div>
   </div>
@@ -411,5 +522,6 @@
   <script src="i18n.js"></script>
   <script src="setup.js"></script>
   <script src="app.js"></script>
+  <script src="tour.js"></script>
 </body>
 </html>

@@ -55,6 +55,7 @@ Never trigger any of these to "check that it works":
 |---|---|
 | `analyzeJob` (`src/analyzer.js`) | One Anthropic call **per job** — a full backlog is thousands |
 | `src/cover-letter.js` | Anthropic call on a stronger (pricier) model |
+| `src/application-docs.js` | Tailored CV / cover letter: up to 4 calls on the stronger model per click (2 documents × write + humanize) |
 | `src/notifier.js` | Real Telegram messages to real people |
 | `src/apply-worker.js` | Real job applications on LinkedIn/StepStone/Indeed |
 
