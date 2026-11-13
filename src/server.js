@@ -12,6 +12,7 @@ import {
   clearApplicationStatus, markIrrelevant,
   getCombinedRunOverview, getAllTimeBySource, getApplicationActivity,
   getAppliedByCompany, getStatusBreakdown, getRunHistory, getRecentRuns, getTotals,
+  getRunSourceReport,
   getClients, getClient, createClient, updateClient, deleteClient,
   DEFAULT_CLIENT_ID,
 } from './database.js';
@@ -27,6 +28,7 @@ import { handleSetupApi } from './setup.js';
 import { DEFAULT_PROMPTS, PROMPT_FIELDS, minimizePromptOverrides } from './prompts.js';
 import { getProfile, getSources, getFilters, getPrompts } from './client-config.js';
 import { PLATFORM_TYPES } from './scrapers/index.js';
+import { buildSourceReport, buildIssueUrl, issueRepo } from './source-report.js';
 import {
   PLATFORMS, isCredentialsKeySet, listCredentialStatus,
   setPlatformCredentials, deletePlatformCredentials,
@@ -195,6 +197,8 @@ const SETTINGS_SCHEMA = [
     help: 'node-cron Ausdruck. Standard: stündlich zur vollen Stunde' },
   { key: 'GUI_PORT', group: 'Server', label: 'GUI-Port', type: 'int', default: '3000', min: 1, max: 65535,
     help: 'Port der Weboberfläche (Neustart der GUI nötig)' },
+  { key: 'ISSUE_REPO', group: 'Server', label: 'GitHub-Repo für Problemmeldungen', type: 'text', default: 'JulianFriedle/Job-Alert-Bot',
+    help: 'Ziel der Schaltfläche „Problem melden“ bei fehlerhaften Quellen im Lauf-Tab (Format: owner/repo). Nur bei einem eigenen Fork ändern.' },
 
   { key: 'BACKUP_ENABLED', group: 'Datensicherung', label: 'Tägliches Backup', type: 'bool', default: 'true',
     help: 'Erstellt einmal pro Tag automatisch eine Sicherung der Datenbank (auch ohne aktiven Lauf). Manuelle Sicherung, Import, Download und Upload bleiben unabhängig davon verfügbar.' },
@@ -910,6 +914,22 @@ const server = http.createServer(async (req, res) => {
         const raw = parseInt(url.searchParams.get('limit'), 10);
         const limit = Number.isFinite(raw) ? Math.min(Math.max(raw, 1), 100) : 10;
         return sendJson(res, 200, { runs: getRecentRuns(clientId, limit) });
+      }
+
+      // GET /api/runs/report?run=ID&source=NAME — pre-filled GitHub problem report
+      // for a source that failed or found nothing in that run. The browser opens
+      // the returned issue form; the server itself never talks to GitHub.
+      if (method === 'GET' && pathname === '/api/runs/report') {
+        const runId = parseInt(url.searchParams.get('run'), 10);
+        const source = url.searchParams.get('source') || '';
+        if (!Number.isFinite(runId) || !source)
+          return sendJson(res, 400, { error: 'run und source sind erforderlich' });
+        const data = getRunSourceReport(clientId, runId, source);
+        if (!data) return sendJson(res, 404, { error: 'Lauf oder Quelle nicht gefunden' });
+        const sourceCfg = getSources(clientId).find(s => s && s.name === source);
+        const report = buildSourceReport({ source: sourceCfg, ...data, version: APP_VERSION });
+        const repo = issueRepo();
+        return sendJson(res, 200, { repo, ...report, url: buildIssueUrl(repo, report) });
       }
 
       // GET /api/sources — this client's job sources

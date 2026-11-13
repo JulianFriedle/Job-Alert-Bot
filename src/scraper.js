@@ -1157,12 +1157,17 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
         // A challenge/refusal means this source's result is incomplete, not
         // that it legitimately has no jobs.
         failed: Boolean(blocked) || Boolean(stats[source.name]?.failed),
+        blocked: Boolean(blocked) || Boolean(stats[source.name]?.blocked),
+        error: stats[source.name]?.error ?? null,
       };
     } catch (err) {
       log(isAborted()
         ? `${source.name}: abgebrochen — ${err.message.split('\n')[0]}`
         : `ERROR scraping ${source.name}: ${err.message}`);
-      stats[source.name] = { ...(stats[source.name] || { duplicates: 0, siteTotal: null }), failed: true };
+      // Keep the first line only (Playwright appends a multi-line call log) —
+      // it is persisted per run and offered in the GUI's problem report.
+      const error = String(err.message || err).split('\n')[0].slice(0, 500);
+      stats[source.name] = { ...(stats[source.name] || { duplicates: 0, siteTotal: null }), failed: true, error };
     }
   }, {
     keyOf: (source) => registrableDomain(source.url),

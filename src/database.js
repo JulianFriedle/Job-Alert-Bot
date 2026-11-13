@@ -126,7 +126,9 @@ function createSchema(db) {
       analyzed       INTEGER,
       new_relevant   INTEGER,
       total_relevant INTEGER,
-      notified       INTEGER
+      notified       INTEGER,
+      problem        TEXT,
+      error          TEXT
     );
   `);
 
@@ -310,6 +312,12 @@ function migrateSchema(db) {
       throw err;
     }
   }
+
+  // Per-source problem of a run (error | blocked | empty) + the error message,
+  // behind the Run tab's GitHub problem report.
+  const runStatCols = db.prepare("PRAGMA table_info(run_stats)").all().map(r => r.name);
+  if (!runStatCols.includes('problem')) db.exec('ALTER TABLE run_stats ADD COLUMN problem TEXT');
+  if (!runStatCols.includes('error'))   db.exec('ALTER TABLE run_stats ADD COLUMN error   TEXT');
 
   const runCols = db.prepare("PRAGMA table_info(runs)").all().map(r => r.name);
   if (!runCols.includes('client_id')) {
@@ -616,8 +624,8 @@ export function saveRunSnapshot(clientId, rows) {
   `);
   const stmt = db.prepare(`
     INSERT INTO run_stats
-      (run_id, source, found, site_total, new_db, blocked, analyzed, new_relevant, total_relevant, notified)
-    VALUES (@run_id, @source, @found, @site_total, @new_db, @blocked, @analyzed, @new_relevant, @total_relevant, @notified)
+      (run_id, source, found, site_total, new_db, blocked, analyzed, new_relevant, total_relevant, notified, problem, error)
+    VALUES (@run_id, @source, @found, @site_total, @new_db, @blocked, @analyzed, @new_relevant, @total_relevant, @notified, @problem, @error)
   `);
   // Parent + children in ONE transaction — a failing child insert must not
   // leave an orphan runs row behind.
@@ -640,6 +648,8 @@ export function saveRunSnapshot(clientId, rows) {
       new_relevant: r.newRelevant ?? 0,
       total_relevant: r.totalRelevant ?? 0,
       notified: r.notified ?? 0,
+      problem: r.problem ?? null,
+      error: r.error ?? null,
     });
     return runId;
   })();
@@ -687,7 +697,8 @@ export function getRecentRuns(clientId, limit = 10) {
   `).all(clientId, limit);
   const rowStmt = db.prepare(`
     SELECT source, found, site_total AS siteTotal, new_db AS newDb, blocked,
-           analyzed, new_relevant AS newRelevant, total_relevant AS totalRelevant, notified
+           analyzed, new_relevant AS newRelevant, total_relevant AS totalRelevant, notified,
+           problem, error
     FROM run_stats WHERE run_id = ? ORDER BY total_relevant DESC, found DESC
   `);
   return runs.map(r => ({
@@ -700,6 +711,26 @@ export function getRecentRuns(clientId, limit = 10) {
     },
     rows: rowStmt.all(r.id),
   }));
+}
+
+// One source's row of one run, plus that source's recent history — the input for
+// the GitHub problem report. Scoped by client: a run id from another client
+// yields null.
+export function getRunSourceReport(clientId, runId, source, historyLimit = 10) {
+  const run = db.prepare('SELECT id, ran_at AS ranAt FROM runs WHERE id = ? AND client_id = ?').get(runId, clientId);
+  if (!run) return null;
+  const row = db.prepare(`
+    SELECT source, found, site_total AS siteTotal, problem, error
+    FROM run_stats WHERE run_id = ? AND source = ?
+  `).get(runId, source);
+  if (!row) return null;
+  const history = db.prepare(`
+    SELECT r.ran_at AS ranAt, rs.found, rs.problem
+    FROM run_stats rs JOIN runs r ON r.id = rs.run_id
+    WHERE r.client_id = ? AND rs.source = ? AND r.id <= ?
+    ORDER BY r.id DESC LIMIT ?
+  `).all(clientId, source, runId, historyLimit);
+  return { run, row, history };
 }
 
 // All-time per-source aggregates straight from the jobs table (always available).

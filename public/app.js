@@ -1221,20 +1221,29 @@ function renderRecentRuns(runs) {
       [t('stats.legendRelevant'), tot.relevant],
       [t('stats.cardNotified'), tot.notified],
     ].map(([l, v]) => `<span class="run-chip"><b>${v}</b> ${esc(l)}</span>`).join('');
+    const problems = run.rows.filter(r => r.problem).length;
+    const problemChip = problems
+      ? `<span class="run-chip run-chip-problem">⚠ <b>${problems}</b> ${esc(t(problems === 1 ? 'run.problemOne' : 'run.problemMany'))}</span>`
+      : '';
     const body = run.rows.length ? `
       <div class="table-scroll"><table class="data-table run-mini">
-        <thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
-        <tbody>${run.rows.map(r => `<tr>
-          <td class="t-name">${esc(r.source)}</td>
+        <thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}<th></th></tr></thead>
+        <tbody>${run.rows.map(r => `<tr class="${r.problem ? 'run-row-problem' : ''}">
+          <td class="t-name">${esc(r.source)}${r.problem
+            ? ` <span class="run-problem" title="${esc(r.error || '')}">${esc(t(`run.problem.${r.problem}`))}</span>`
+            : ''}</td>
           <td>${r.found}</td><td>${r.analyzed}</td>
           <td class="${r.newRelevant ? 'hl' : ''}">${r.newRelevant}</td>
           <td class="strong">${r.totalRelevant}</td><td>${r.notified}</td>
+          <td class="run-actions">${r.problem
+            ? `<button class="btn btn-sm run-report" data-run="${run.id}" data-source="${esc(r.source)}">${esc(t('run.report'))}</button>`
+            : ''}</td>
         </tr>`).join('')}</tbody>
       </table></div>` : `<p class="muted" style="padding:8px 2px">${esc(t('run.noSources'))}</p>`;
     return `<details class="run-entry"${i === 0 ? ' open' : ''}>
       <summary>
         <span class="run-when">${esc(when)}</span>
-        <span class="run-chips">${chips}</span>
+        <span class="run-chips">${chips}${problemChip}</span>
       </summary>
       ${body}
     </details>`;
@@ -1242,6 +1251,57 @@ function renderRecentRuns(runs) {
 }
 
 $('#run-history-limit')?.addEventListener('change', loadRecentRuns);
+
+// ── SOURCE PROBLEM REPORT (pre-filled GitHub issue for a failed/empty source) ─
+// The server builds the report; the user reviews/edits it here and submits it on
+// GitHub themselves. Nothing is sent from the bot.
+let reportUrl = null;
+
+$('#run-history-list').addEventListener('click', (e) => {
+  const btn = e.target.closest('.run-report');
+  if (btn) openReport(btn.dataset.run, btn.dataset.source);
+});
+
+async function openReport(runId, source) {
+  $('#rp-error').hidden = true;
+  $('#rp-sub').textContent = source;
+  $('#rp-title').value = '';
+  $('#rp-diagnose').value = '';
+  $('#rp-notes').value = '';
+  $('#rp-open').disabled = true;
+  reportUrl = null;
+  $('#rp-modal').hidden = false;
+  try {
+    const r = await api(`/api/runs/report?run=${encodeURIComponent(runId)}&source=${encodeURIComponent(source)}`);
+    reportUrl = r.url;
+    $('#rp-sub').textContent = `${source} → github.com/${r.repo}`;
+    $('#rp-title').value = r.title;
+    $('#rp-diagnose').value = r.fields.diagnose;
+    $('#rp-open').disabled = false;
+  } catch (err) {
+    $('#rp-error').textContent = t('toast.error') + err.message;
+    $('#rp-error').hidden = false;
+  }
+}
+
+function closeReport() { $('#rp-modal').hidden = true; reportUrl = null; }
+
+$('#rp-open').addEventListener('click', () => {
+  if (!reportUrl) return;
+  // Field ids match .github/ISSUE_TEMPLATE/scraper-problem.yml; the edited
+  // values replace the pre-filled ones.
+  const u = new URL(reportUrl);
+  u.searchParams.set('title', $('#rp-title').value.trim());
+  u.searchParams.set('diagnose', $('#rp-diagnose').value);
+  const notes = $('#rp-notes').value.trim();
+  if (notes) u.searchParams.set('notes', notes); else u.searchParams.delete('notes');
+  window.open(u.toString(), '_blank', 'noopener');
+  closeReport();
+});
+$('#rp-close').addEventListener('click', closeReport);
+$('#rp-cancel').addEventListener('click', closeReport);
+$('#rp-modal').addEventListener('click', (e) => { if (e.target.id === 'rp-modal') closeReport(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#rp-modal').hidden) closeReport(); });
 
 // ── PROFILE (CV) ─────────────────────────────────────────────────────────────
 let profileLoaded = false;

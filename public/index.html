@@ -346,6 +346,35 @@
     </div>
   </div>
 
+  <!-- ───────── SOURCE PROBLEM REPORT MODAL ───────── -->
+  <div class="modal-backdrop" id="rp-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rp-heading">
+      <header class="modal-head">
+        <div>
+          <h2 id="rp-heading" data-i18n="report.title">Problem auf GitHub melden</h2>
+          <p class="muted" id="rp-sub"></p>
+        </div>
+        <button class="btn btn-ghost" id="rp-close" title="Schließen" data-i18n-title="cover.close">✕</button>
+      </header>
+      <div class="modal-body">
+        <p class="rp-hint" data-i18n="report.publicHint">Es wird nichts automatisch gesendet: GitHub öffnet sich mit diesem Text, und du schickst das Issue dort selbst ab. Das Issue ist für alle sichtbar, die das Repo sehen können, bitte also nichts Persönliches eintragen.</p>
+        <label class="cl-notes-label" for="rp-title" data-i18n="report.titleLabel">Titel</label>
+        <input class="set-input rp-field" id="rp-title" maxlength="200">
+        <label class="cl-notes-label" for="rp-diagnose" data-i18n="report.diagnoseLabel">Diagnose (wird mitgeschickt, bitte prüfen)</label>
+        <textarea class="cl-text rp-diagnose" id="rp-diagnose" spellcheck="false"></textarea>
+        <label class="cl-notes-label" for="rp-notes" data-i18n="report.notesLabel">Was ist dir aufgefallen? (optional)</label>
+        <textarea class="cl-notes" id="rp-notes" rows="3" maxlength="2000"
+                  data-i18n-ph="report.notesPlaceholder"
+                  placeholder="z. B. Auf der Website stehen 12 offene Stellen, gefunden wurden 0."></textarea>
+        <div class="cl-error" id="rp-error" hidden></div>
+      </div>
+      <footer class="modal-foot">
+        <button class="btn" id="rp-cancel" data-i18n="report.cancel">Abbrechen</button>
+        <button class="btn btn-primary" id="rp-open" data-i18n="report.open">Auf GitHub öffnen ↗</button>
+      </footer>
+    </div>
+  </div>
+
   <!-- ───────── SETUP WIZARD ───────── -->
   <div class="modal-backdrop setup-backdrop" id="setup-modal" hidden>
     <div class="modal setup-modal" role="dialog" aria-modal="true" aria-labelledby="setup-title">

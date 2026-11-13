@@ -1,0 +1,31 @@
+name: Scraper-Problem
+description: Eine Quelle ist beim Lauf fehlgeschlagen, wurde blockiert oder hat 0 Stellen gefunden.
+title: "[Scraper] "
+labels: ["scraper"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Dieses Formular wird normalerweise über **Lauf → Letzte Läufe → Problem melden** in der GUI vorausgefüllt.
+        Bitte nichts Persönliches eintragen (Profil, Suchbegriffe, Zugangsdaten): das Issue ist für alle sichtbar, die das Repo sehen können.
+  - type: input
+    id: source
+    attributes:
+      label: Quelle
+      description: Name der Quelle bzw. Plattform (linkedin, stepstone, indeed).
+    validations:
+      required: true
+  - type: textarea
+    id: diagnose
+    attributes:
+      label: Diagnose
+      description: Von der GUI erzeugt, mit URL, Fehlermeldung, Verlauf und Quell-Konfiguration.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Beobachtung
+      description: Was ist dir aufgefallen? Zum Beispiel, wie viele Stellen auf der Website stehen.
+    validations:
+      required: false
