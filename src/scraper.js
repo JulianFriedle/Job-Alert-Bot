@@ -10,6 +10,7 @@ import { launchPlatformBrowser, newHardenedContext } from './scrapers/browser.js
 import { runHostLimited, registrableDomain } from './host-limiter.js';
 import { isAborted } from './run-control.js';
 import { isNonJobLink } from './link-filter.js';
+import { cleanJobTitle } from './title-cleanup.js';
 import { CONFIG_DIR } from './paths.js';
 
 
@@ -89,8 +90,17 @@ async function extractJobsAndPagination(page, source = {}) {
         '[class*="language"], [class*="lang-switch"], [class*="locale"], select'
       )) return;
 
+      // innerText keeps a break between block elements, so a title and the
+      // location in the next <div> don't run together ("ZeitpunktStuttgart").
+      // textContent stays the fallback for hidden or detached nodes.
+      const textOf = (node) => ((node?.innerText || node?.textContent || '').replace(/\s+/g, ' ').trim());
+      // An anchor that wraps the whole card also carries the date, badges and
+      // the location; a heading inside it is the title alone.
+      const ownHeading = el.querySelector('h1, h2, h3, h4, h5, h6, [class*="title" i]:not([class*="sub" i])');
+      const headingText = textOf(ownHeading);
       let title = (
-        el.textContent?.trim() ||
+        (headingText.split(' ').length >= 2 ? headingText : '') ||
+        textOf(el) ||
         el.getAttribute('aria-label') ||
         el.getAttribute('title') ||
         ''
@@ -107,7 +117,7 @@ async function extractJobsAndPagination(page, source = {}) {
       if (!title || isCallToAction || title.split(/\s+/).length < 2) {
         const card2 = el.closest('li, article, [class*="job"], [class*="career"], [class*="position"]') || el.parentElement;
         const heading = card2?.querySelector('h1, h2, h3, h4, h5, h6, [class*="title"], [class*="heading"]');
-        if (heading) title = heading.textContent?.replace(/\s+/g, ' ').trim() || '';
+        if (heading) title = textOf(heading);
         // No heading to recover: a bare CTA label is worthless as a title (it would
         // slip past every title-based filter), so drop the entry entirely.
         else if (isCallToAction) return;
@@ -578,9 +588,18 @@ export async function scrapeSource(source) {
   // link filter is only for anchors picked off the page.
   const addJobs = (jobs, countDupes = true, fromApi = false) => {
     let added = 0, dupes = 0;
-    for (const job of jobs) {
+    for (let job of jobs) {
       if (seenJobUrls.has(job.url)) { dupes++; continue; }
       seenJobUrls.add(job.url);
+      // Dates, "Neu" badges, "Location…Posted on…", "Einsatzorte: …" glued to
+      // the title (#39); whatever location/date they held fills the empty fields.
+      const cleaned = cleanJobTitle(job.title);
+      job = {
+        ...job,
+        title: cleaned.title,
+        location: job.location || cleaned.location,
+        postedDate: job.postedDate || cleaned.postedDate,
+      };
       // Pagination, legal links, "Stellenanzeige merken" … — never a job, and each
       // one would cost a detail-page fetch and a Claude call.
       if (!fromApi && isNonJobLink(job.title, source.name)) { nonJobLinks.add(job.title); continue; }
