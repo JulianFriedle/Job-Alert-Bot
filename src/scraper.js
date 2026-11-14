@@ -98,10 +98,15 @@ async function extractJobsAndPagination(page, source = {}) {
       // the location; a heading inside it is the title alone. Only when it is
       // the one heading there (with several, the first may be a date or a
       // location) and doesn't itself look like a date, badge or label.
-      const ownHeadings = el.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="title" i]:not([class*="sub" i])');
+      // Innermost matches only: <div class="job-title"><h3>…</h3></div> is one heading.
+      const HEADING_SEL = 'h1, h2, h3, h4, h5, h6, [class*="title" i]:not([class*="sub" i])';
+      const ownHeadings = [...el.querySelectorAll(HEADING_SEL)].filter(h => !h.querySelector(HEADING_SEL));
       const headingText = ownHeadings.length === 1 ? textOf(ownHeadings[0]) : '';
+      // Not a date ("30. September 2026", "30.09."), a "Neu …" badge, "Posted on …"
+      // or a bare label ("Standort: …", "Standort Berlin") — but "Standortleiter
+      // Logistik", "3D-Konstrukteur", "New Business Manager" are titles.
       const headingUsable = headingText.split(' ').length >= 2 &&
-        !/^(\d|posted\b|neu\b|new\b|standort|einsatzort|location|unternehmen)/i.test(headingText);
+        !/^(\d{1,2}\.\s?\S+\s?\d{4}|\d{1,2}\.\d{1,2}\.|posted\b|neu\b|(standort|einsatzort|location|unternehmen)(\s*:|\s+\S+$))/i.test(headingText);
       let title = (
         (headingUsable ? headingText : '') ||
         textOf(el) ||
@@ -137,7 +142,7 @@ async function extractJobsAndPagination(page, source = {}) {
       // the end of its line instead of running into the next element.
       const cardText = (card?.innerText || card?.textContent || '').replace(/[ \t\u00a0]+/g, ' ').trim();
 
-      const locationMatch = cardText.match(/(?:📍|location|standort|ort)[:\s]+([^\n|•·]+)/i);
+      const locationMatch = cardText.match(/(?:📍|\blocation|\bstandort|\bort)[:\s]+([^\n|•·]+)/i);
       const location = locationMatch?.[1]?.trim() || '';
 
       const companyEl = card?.querySelector('[class*="company"], [class*="employer"], [class*="firm"]');
