@@ -1209,8 +1209,11 @@ export function uniqueJobsById(jobs, sourceOrder = []) {
 
 // A job-board card's snippet (Indeed) is a teaser, not the posting, so the
 // detail page is always fetched. Only when that fetch fails or comes back too
-// short does the snippet stand in, if it is the longer text.
-export function withSnippetFallback(job) {
+// short does the snippet stand in, if it is the longer text. Never during a
+// stop: a fetch cut off by the abort says nothing about the page, and the
+// pipeline must keep such a job unsaved (empty) so the next run fetches it.
+export function withSnippetFallback(job, aborted = isAborted()) {
+  if (aborted) return job;
   const snippet = String(job.snippet ?? '');
   const description = String(job.description ?? '');
   if (snippet && isThinDescription(description) && snippet.length > description.trim().length) {

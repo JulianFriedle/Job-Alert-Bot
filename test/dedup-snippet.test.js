@@ -39,6 +39,9 @@ test('the snippet stands in only for a missing or too short description', () => 
   assert.equal(withSnippetFallback({ snippet, description: full }).description, full, 'never instead of the posting');
   assert.equal(withSnippetFallback({ snippet: 'kurz', description: 'Cookie-Banner Text hier' }).description, 'Cookie-Banner Text hier');
   assert.equal(withSnippetFallback({ description: '' }).description, '', 'no snippet, nothing changes');
+  // A fetch cut off by a stop leaves the job empty, so it is not saved and the
+  // next run fetches the posting.
+  assert.equal(withSnippetFallback({ snippet, description: '' }, true).description, '');
 });
 
 test('Indeed snippets are decoded, not just stripped', () => {
