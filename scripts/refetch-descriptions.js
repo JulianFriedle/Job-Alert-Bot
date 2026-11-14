@@ -1,6 +1,6 @@
 import '../src/env.js';
-import { getJobsWithEmptyDescription, updateJobDescription, markAnalyzed, getClients } from '../src/database.js';
-import { fetchDescriptions, minDescriptionChars, isThinDescription } from '../src/scraper.js';
+import { getDescriptionRefetchCandidates, updateJobDescription, markAnalyzed, getClients } from '../src/database.js';
+import { fetchDescriptions, minDescriptionChars, isThinDescription, DESC_MISSING_SUMMARY } from '../src/scraper.js';
 import { analyzeJob } from '../src/analyzer.js';
 import { getClientConfig } from '../src/client-config.js';
 
@@ -14,14 +14,17 @@ function sleep(ms) {
 
 // Same floor as the pipeline: below it a description is a cookie banner or an
 // error page, not the posting (MIN_DESCRIPTION_CHARS, 0 = only empty ones).
-const minChars = minDescriptionChars();
+// Only empty, unanalyzed or given-up jobs are candidates — a job that was
+// really scored keeps its score, however short its text.
+const minChars = Math.max(1, minDescriptionChars());
 
 let grandTotalRelevant = 0;
 for (const client of getClients()) {
   const cid = client.id;
-  const jobs = getJobsWithEmptyDescription(cid, minChars);
+  const jobs = getDescriptionRefetchCandidates(cid, DESC_MISSING_SUMMARY)
+    .filter(j => isThinDescription(j.description, minChars));
   if (jobs.length === 0) continue;
-  log(`Klient "${client.name}": ${jobs.length} job(s) with an empty or too short description (< ${Math.max(1, minChars)} chars) found`);
+  log(`Klient "${client.name}": ${jobs.length} job(s) with an empty or too short description (< ${minChars} chars) found`);
 
   // Re-fetch descriptions (mutates job.description in-place)
   const before = new Map(jobs.map(j => [j.id, String(j.description ?? '')]));
@@ -32,7 +35,7 @@ for (const client of getClients()) {
   const withContent = [];
   for (const job of jobs) {
     const old = before.get(job.id);
-    if (job.description && job.description.length > old.length && !isThinDescription(job.description, Math.max(1, minChars))) {
+    if (job.description && job.description.trim().length > old.trim().length && !isThinDescription(job.description, minChars)) {
       updateJobDescription(cid, job.id, job.description);
       withContent.push(job);
     }

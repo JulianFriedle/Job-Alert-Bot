@@ -3,7 +3,7 @@ import cron from 'node-cron';
 import { createWriteStream, mkdirSync } from 'fs';
 import path from 'path';
 
-import { scrapeAll, fetchDescriptions, minDescriptionChars, isThinDescription } from './scraper.js';
+import { scrapeAll, fetchDescriptions, minDescriptionChars, isThinDescription, DESC_MISSING_SUMMARY } from './scraper.js';
 import {
   isNewJob, saveJob, markAnalyzed, markNotified, getUnanalyzedJobs,
   getRelevantUnnotifiedJobs, getRelevantCountBySource, updateLastSeenBatch,
@@ -115,7 +115,7 @@ function printOverview(clientName, sources, sourceStats, relevantBySource, expir
 // later runs — at most MAX_DESC_ATTEMPTS times — before they are given up and
 // stored as not relevant with DESC_MISSING_SUMMARY.
 export const MAX_DESC_ATTEMPTS = 2;
-export const DESC_MISSING_SUMMARY = 'Beschreibung fehlt – nicht bewertet';
+export { DESC_MISSING_SUMMARY };
 
 // Returns the jobs that are ready for analysis plus counters for the overview.
 // `freshIds` are jobs whose detail page was fetched earlier in this very run:
@@ -123,46 +123,62 @@ export const DESC_MISSING_SUMMARY = 'Beschreibung fehlt – nicht bewertet';
 // `fetch` and `minChars` are injectable for tests.
 export async function settleThinDescriptions(clientId, jobs, freshIds,
   { fetch = fetchDescriptions, minChars = minDescriptionChars() } = {}) {
-  const none = { ready: jobs, total: 0, recovered: 0, gaveUp: 0 };
+  const none = { ready: jobs, held: [], total: 0, recovered: 0, gaveUp: 0 };
   if (minChars <= 0) return none;
   const thin = jobs.filter(j => isThinDescription(j.description, minChars));
   if (thin.length === 0) return none;
+  const textLen = (d) => String(d ?? '').trim().length;
 
   let recovered = 0;
   const retry = thin.filter(j => !freshIds.has(j.id) && (j.desc_attempts ?? 0) < MAX_DESC_ATTEMPTS);
   if (retry.length > 0 && !isAborted()) {
     log(`${retry.length} Stelle(n) mit zu kurzer Beschreibung — Detailseite wird erneut abgerufen…`);
     const before = new Map(retry.map(j => [j.id, String(j.description ?? '')]));
+    const visited = new Set();
+    const countAttempt = (job) => {
+      try { recordDescriptionAttempt(clientId, job.id, job.description); }
+      catch (err) { log(`ERROR saving description of "${job.title}": ${err.message}`); return; }
+      job.desc_attempts = (job.desc_attempts ?? 0) + 1;
+    };
     const onJob = (job) => {
+      visited.add(job.id);
       const old = before.get(job.id) ?? '';
       // Never trade a stored text for a shorter one from a worse fetch.
-      if (String(job.description ?? '').length < old.length) job.description = old;
-      const improved = String(job.description ?? '').length > old.length;
+      if (textLen(job.description) < textLen(old)) job.description = old;
+      const improved = textLen(job.description) > textLen(old);
       // Cut off by a stop: that visit says nothing about the page.
       if (!improved && isAborted()) return;
-      recordDescriptionAttempt(clientId, job.id, job.description);
-      job.desc_attempts = (job.desc_attempts ?? 0) + 1;
+      countAttempt(job);
       if (!isThinDescription(job.description, minChars)) recovered++;
     };
     try { await fetch(retry, { onJob }); }
     catch (err) { log(`ERROR re-fetching descriptions: ${err.message}`); }
+    // A fetch that failed before reaching a job (browser didn't start, …) still
+    // counts, or such a job would wait forever instead of being given up.
+    if (!isAborted()) for (const job of retry) if (!visited.has(job.id)) countAttempt(job);
   }
 
   let gaveUp = 0;
   for (const job of thin) {
     if (!isThinDescription(job.description, minChars)) continue;
     if ((job.desc_attempts ?? 0) >= MAX_DESC_ATTEMPTS) {
-      markAnalyzed(clientId, job.id, false, null, DESC_MISSING_SUMMARY);
-      gaveUp++;
+      try { markAnalyzed(clientId, job.id, false, null, DESC_MISSING_SUMMARY); gaveUp++; }
+      catch (err) { log(`ERROR marking "${job.title}": ${err.message}`); }
     }
   }
 
   const ready = jobs.filter(j => !isThinDescription(j.description, minChars));
-  const total = jobs.length - ready.length;
-  log(`Beschreibung zu kurz (< ${minChars} Zeichen): ${total} Stelle(n) nicht analysiert` +
+  const held = jobs.filter(j => isThinDescription(j.description, minChars));
+  // Per source, so a site whose postings are legitimately short (or that serves
+  // only a cookie wall) stands out instead of hiding in one total.
+  const bySource = {};
+  for (const j of held) bySource[j.source] = (bySource[j.source] || 0) + 1;
+  const sourceList = Object.entries(bySource).sort((a, b) => b[1] - a[1])
+    .map(([src, n]) => `${src} ${n}`).join(', ');
+  log(`Beschreibung zu kurz (< ${minChars} Zeichen): ${held.length} Stelle(n) nicht analysiert (${sourceList})` +
       `${recovered > 0 ? `, ${recovered} nach erneutem Abruf vollständig` : ''}` +
       `${gaveUp > 0 ? `, ${gaveUp} endgültig als „Beschreibung fehlt“ abgelegt` : ''}.`);
-  return { ready, total, recovered, gaveUp };
+  return { ready, held, total: held.length, recovered, gaveUp };
 }
 
 // German postings routinely wedge a gender marker into the middle of the title
@@ -309,6 +325,11 @@ async function runClientPipeline(client) {
   }
   const thin = await settleThinDescriptions(clientId, allUnanalyzed.filter(job => !isTitleBlocked(job.title)), savedIds);
   const toAnalyze = thin.ready;
+  // "Analysiert" in the overview counts new jobs that went to Claude — not the
+  // ones held back for a missing description.
+  for (const job of thin.held) {
+    if (newJobIds.has(job.id) && sourceStats[job.source]) sourceStats[job.source].newCount--;
+  }
   log(`Analyzing ${toAnalyze.length} unanalyzed job(s)...`);
 
   const isPriority = (title) => {

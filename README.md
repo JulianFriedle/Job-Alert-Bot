@@ -319,8 +319,11 @@ JavaScript shell instead of the posting) is **not sent to Claude**. Scored from 
 alone the result would be unreliable and the call wasted. The job stays unanalyzed and its
 detail page is fetched again on up to two later runs; if it is still too short after that, it
 is stored as not relevant with the summary *„Beschreibung fehlt – nicht bewertet“*. Each run
-logs how many jobs were held back, and the run overview shows the count.
-`npm run refetch-descriptions` uses the same threshold, so it also picks up these jobs.
+logs how many jobs were held back, per source, and the run overview shows the count.
+If one source shows up there on every run, its postings may simply be short (or its
+description area isn't recognized): lower `MIN_DESCRIPTION_CHARS` or set it to `0`, otherwise
+its jobs are never reported. `npm run refetch-descriptions` uses the same threshold for jobs
+that are empty, still unanalyzed or given up — jobs that were actually scored keep their score.
 
 ### AI prompts (`config/prompts.json`)
 
@@ -422,9 +425,10 @@ npm run test-notify
 # log) into a client — see "Tailored CV & Cover Letter". No API calls.
 npm run import-lebenslauf -- ../Lebenslauf
 
-# Re-fetch descriptions and re-analyze all DB entries whose description is empty or
-# shorter than MIN_DESCRIPTION_CHARS (useful when a source was returning 0 chars or a
-# cookie banner). Calls Claude once per job whose description is now long enough.
+# Re-fetch descriptions of jobs whose description is empty or shorter than
+# MIN_DESCRIPTION_CHARS and that are unanalyzed or were given up ("Beschreibung fehlt"),
+# then re-analyze them. Jobs that were already scored are left alone. Calls Claude once
+# per job whose description is now long enough.
 npm run refetch-descriptions
 
 # Run the test suite (node:test, offline — no network, no real DB, no API calls)

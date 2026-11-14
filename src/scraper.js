@@ -1094,6 +1094,8 @@ export function minDescriptionChars() {
 }
 export const isThinDescription = (description, minChars = minDescriptionChars()) =>
   String(description ?? '').trim().length < minChars;
+// Summary of a job given up for a missing description (see scheduler.js).
+export const DESC_MISSING_SUMMARY = 'Beschreibung fehlt – nicht bewertet';
 
 // Fetch full job descriptions for an array of jobs (in-place, mutates description
 // field). Called after deduplication so we only visit detail pages for genuinely

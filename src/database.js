@@ -661,24 +661,33 @@ export function markIrrelevant(clientId, id) {
     .run(new Date().toISOString(), clientId, id);
 }
 
-// Jobs whose description is missing or shorter than `minChars` characters
-// (after trimming). Default 1 = only truly empty ones.
-export function getJobsWithEmptyDescription(clientId, minChars = 1) {
+export function getJobsWithEmptyDescription(clientId) {
   return db.prepare(
     // Manual jobs ("+ Stelle") are never scraped or analyzed, not even here.
-    "SELECT * FROM jobs WHERE client_id = ? AND length(trim(COALESCE(description, ''))) < ? AND (expired = 0 OR expired IS NULL) AND source IS NOT 'Manuell'"
-  ).all(clientId, Math.max(1, minChars));
+    "SELECT * FROM jobs WHERE client_id = ? AND (description IS NULL OR description = '') AND (expired = 0 OR expired IS NULL) AND source IS NOT 'Manuell'"
+  ).all(clientId);
 }
 
-// Record one more attempt to fetch a job's description, keeping whatever text
-// is the longer of the stored one and the new one.
+// Candidates for `npm run refetch-descriptions`: every live scraped job that
+// is either empty, still unanalyzed, or was given up for a missing description.
+// Jobs that were really analyzed keep their score — the caller decides what
+// counts as too short (in JS, the same check the pipeline uses).
+export function getDescriptionRefetchCandidates(clientId, givenUpSummary) {
+  return db.prepare(`
+    SELECT * FROM jobs
+    WHERE client_id = ? AND (expired = 0 OR expired IS NULL) AND source IS NOT 'Manuell'
+      AND (description IS NULL OR description = '' OR relevant IS NULL OR summary = ?)
+  `).all(clientId, givenUpSummary);
+}
+
+// Record one more attempt to fetch a job's description. The caller passes the
+// text to keep (it never trades a stored description for a shorter one).
 export function recordDescriptionAttempt(clientId, id, description) {
   db.prepare(`
     UPDATE jobs
-    SET description = CASE WHEN length(?) > length(COALESCE(description, '')) THEN ? ELSE description END,
-        desc_attempts = COALESCE(desc_attempts, 0) + 1
+    SET description = ?, desc_attempts = COALESCE(desc_attempts, 0) + 1
     WHERE client_id = ? AND id = ?
-  `).run(description ?? '', description ?? '', clientId, id);
+  `).run(description ?? '', clientId, id);
 }
 
 export function updateJobDescription(clientId, id, description) {

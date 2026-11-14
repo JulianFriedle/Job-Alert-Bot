@@ -113,14 +113,33 @@ test('minChars 0 turns the check off', async () => {
   assert.equal(calls.length, 0);
 });
 
-test('the refetch script finds too-short descriptions, not only empty ones', () => {
+test('the refetch script never touches a job that was really scored', () => {
   const empty = seed('');
-  const thin = seed(BANNER);
-  const long = seed(LONG);
-  const found = (min) => db.getJobsWithEmptyDescription(C, min).map(j => j.id);
-  assert.ok(found(300).includes(empty) && found(300).includes(thin));
-  assert.ok(!found(300).includes(long));
-  assert.ok(found(0).includes(empty) && !found(0).includes(thin), '0 = only empty ones');
+  const pending = seed(BANNER);
+  const scored = seed(BANNER);
+  db.markAnalyzed(C, scored, true, 8, 'passt gut');
+  const givenUp = seed(BANNER);
+  db.markAnalyzed(C, givenUp, false, null, DESC_MISSING_SUMMARY);
+  const ids = db.getDescriptionRefetchCandidates(C, DESC_MISSING_SUMMARY).map(j => j.id);
+  assert.ok(ids.includes(empty) && ids.includes(pending) && ids.includes(givenUp));
+  assert.ok(!ids.includes(scored), 'a scored job keeps its score, however short its text');
+});
+
+test('a refetch that never reaches a job still counts, so it is given up eventually', async () => {
+  const id = seed(BANNER);
+  const broken = async () => { throw new Error('browser did not start'); };
+  for (let run = 1; run <= MAX_DESC_ATTEMPTS; run++) {
+    await settleThinDescriptions(C, unanalyzed([id]), new Set(), { fetch: broken, minChars: 300 });
+  }
+  assert.equal(db.getJobById(C, id).summary, DESC_MISSING_SUMMARY);
+});
+
+test('held-back jobs are reported in `held`, per job', async () => {
+  const a = seed(BANNER);
+  const b = seed(LONG);
+  const res = await settleThinDescriptions(C, unanalyzed([a, b]), new Set([a, b]), { fetch: fakeFetch({}).fetch, minChars: 300 });
+  assert.deepEqual(res.held.map(j => j.id), [a]);
+  assert.deepEqual(res.ready.map(j => j.id), [b]);
 });
 
 test('desc_attempts is scoped by client', () => {
