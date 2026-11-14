@@ -516,7 +516,7 @@ changed later.
 1. *(optional)* **Language** — interface language and the **language of AI texts** (job reasoning and cover letters)
 2. **Anthropic API key**
 3. **Telegram** *(optional)* — bot token + chat ID, with a *“send test message”* button to verify it works, or a toggle to skip notifications and use only the GUI; plus whether to report jobs that disappear
-4. **About you** — name, short profile, skills, education, work history, language skills
+4. **About you** — name, short profile, skills, programming, tools, education, work history, language skills
 5. **What you're looking for** — desired roles, locations, industries, contract types, minimum salary, dealbreakers
 6. *(optional)* **Job boards** — tick LinkedIn / StepStone / Indeed and enter one search term + location (pre-filled from your desired roles); no account needed
 7. **Career pages** — company sites to watch. At least one source is required overall; a job-board search from step 6 counts
@@ -532,6 +532,11 @@ The job-board step manages one search per platform and tags it `"managedBy": "wi
 source list; searches you add by hand in the **Quellen** tab are never touched by it. Saving
 the career-page step keeps every job-board search and all per-source extras
 (`paginationParam`, `extraWait`, …).
+
+The finish page offers to **start the first run right away**. That box is **unchecked by
+default**: a first run has Claude rate every job currently on your sources — with many career
+pages easily a thousand or more, each one an API call — so check the title filters first and
+start the run yourself with **▶ Lauf starten** when you're ready.
 
 #### Guided tour
 

@@ -83,3 +83,34 @@ test('saving career pages keeps every job-board search', () => {
   assert.deepEqual(merged.map(s => s.name), ['Firma neu', 'Meine LinkedIn-Suche', 'LinkedIn Suche']);
   assert.equal(merged[0].paginationParam, 'page', 'per-source extras survive a wizard save');
 });
+
+// ── Wizard fields and their English overrides ───────────────────────────────
+// Wizard labels are German; English comes from WIZARD_FIELDS_EN in i18n.js and
+// silently falls back to German when a key is missing. Catch that here.
+const { STEPS } = await import('../src/setup.js');
+const { readFileSync } = await import('node:fs');
+
+test('the "Über dich" step asks for programming skills', () => {
+  const profile = STEPS.find(s => s.id === 'profile');
+  assert.ok(profile.fields.some(f => f.key === 'cv.skills.programming' && f.type === 'list'));
+});
+
+test('every labelled wizard field has an English override', () => {
+  const i18n = readFileSync(new URL('../public/i18n.js', import.meta.url), 'utf8');
+  const start = i18n.indexOf('const WIZARD_FIELDS_EN = {');
+  const block = i18n.slice(start, i18n.indexOf('\n};', start));
+  const missing = STEPS.flatMap(s => s.fields)
+    .filter(f => f.label)
+    .map(f => f.key)
+    .filter(k => !new RegExp(`^\\s*(?:'${k.replace(/\./g, '\\.')}'|${k.replace(/\./g, '\\.')}):`, 'm').test(block));
+  assert.deepEqual(missing, []);
+});
+
+test('the wizard finish page never pre-checks the first run', () => {
+  // A pre-checked box made finishing the wizard start an analysis of every job
+  // found — 1,500+ API calls on a setup with many career pages.
+  const src = readFileSync(new URL('../public/setup.js', import.meta.url), 'utf8');
+  const tag = src.match(/<input[^>]*id="su-run-now"[^>]*>/)?.[0];
+  assert.ok(tag, 'su-run-now checkbox not found');
+  assert.doesNotMatch(tag, /checked/);
+});
