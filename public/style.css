@@ -864,3 +864,8 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .filters-preview h4 { margin: 10px 0 4px; font-size: .9rem; }
 .filters-preview ul { margin: 0; padding-left: 1.2em; }
 .filters-preview li { font-size: .85rem; overflow-wrap: anywhere; }
+
+/* Quellen: import preview */
+.sources-import { margin-bottom: 12px; }
+.sources-import ul:empty { display: none; }
+.sources-import li { font-size: .85rem; }

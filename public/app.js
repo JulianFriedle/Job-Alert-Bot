@@ -1121,17 +1121,19 @@ $('#add-source').addEventListener('click', () => {
   row.querySelector('.name').focus();
 });
 
-$('#save-sources').addEventListener('click', async () => {
+// The sources as the form shows them, or null (with a message) when a row is
+// incomplete. Used by Speichern and by the import's "Neue hinzufügen".
+function collectSourcesForm() {
   const rows = $$('#source-list .source-row');
   const sources = [];
   for (const row of rows) {
     const name = row.querySelector('.name').value.trim();
     const type = row.querySelector('.stype').value;
-    if (!name) { showSourcesMsg(t('sources.needName'), 'err'); return; }
+    if (!name) { showSourcesMsg(t('sources.needName'), 'err'); return null; }
 
     if (isPlatformType(type)) {
       const keywords = row.querySelector('.kw').value.trim();
-      if (!keywords) { showSourcesMsg(t('sources.needKeywords').replace('{name}', name), 'err'); return; }
+      if (!keywords) { showSourcesMsg(t('sources.needKeywords').replace('{name}', name), 'err'); return null; }
       const location = row.querySelector('.loc').value.trim();
       const radius = row.querySelector('.radius').value.trim();
       // Keep any hidden search fields (maxResults, maxPages, postedWithinDays).
@@ -1144,10 +1146,16 @@ $('#save-sources').addEventListener('click', async () => {
       sources.push({ ...row._extra, name, type, search });
     } else {
       const url = row.querySelector('.url').value.trim();
-      if (!url) { showSourcesMsg(t('sources.needNameUrl'), 'err'); return; }
+      if (!url) { showSourcesMsg(t('sources.needNameUrl'), 'err'); return null; }
       sources.push({ name, url, type: 'careers-page', ...row._extra });
     }
   }
+  return sources;
+}
+
+$('#save-sources').addEventListener('click', async () => {
+  const sources = collectSourcesForm();
+  if (!sources) return;
   try {
     cfgSeq.sources++;
     const r = await api('/api/sources', {
@@ -2236,6 +2244,7 @@ function switchClient(id) {
   // Invalidate per-client caches so the next tab visit refetches for this client.
   sourcesLoaded = profileLoaded = promptsLoaded = false;
   for (const k of Object.keys(cfgVersion)) { cfgVersion[k] = null; cfgDirty[k] = false; cfgSeq[k]++; }
+  closeSourcesImport();   // a file read for the previous client
   // Refresh whatever is on screen for the new client.
   loadJobs();
   const active = $('.tab.active')?.dataset.tab;
@@ -2519,3 +2528,81 @@ $('#filters-test')?.addEventListener('click', async () => {
       + `<p class="muted">${esc(t('filters.previewNote'))}</p>`;
   } catch (err) { showFiltersMsg(t('toast.error') + err.message, 'err'); }
 });
+
+// ── QUELLEN: JSON export / import (#31) ──────────────────────────────────────
+// Logic in sources-io.js (window.SourcesIO). The export is what is saved, as a
+// jobs.json-compatible file with every per-source field. An import only fills
+// the form — "Speichern" then saves it, with the usual stale-data check.
+let pendingImport = null;
+const sourcesIO = () => {
+  if (window.SourcesIO) return window.SourcesIO;
+  showSourcesMsg(t('sources.ioMissing'), 'err');
+  return null;
+};
+function closeSourcesImport() {
+  pendingImport = null;
+  const panel = $('#sources-import');
+  if (panel) panel.hidden = true;
+}
+
+$('#export-sources')?.addEventListener('click', async () => {
+  const io = sourcesIO();
+  if (!io) return;
+  try {
+    const { sources } = await api('/api/sources');
+    const client = (clientsList || []).find(c => c.id === currentClientId);
+    const blob = new Blob([JSON.stringify({ sources }, null, 2) + '\n'], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = io.exportFileName(client && client.id !== defaultClientId ? client.name : '');
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    showSourcesMsg(t('sources.exported').replace('{n}', sources.length), 'ok');
+  } catch (err) { showSourcesMsg(t('toast.error') + err.message, 'err'); }
+});
+
+$('#import-sources')?.addEventListener('click', () => $('#import-sources-file').click());
+
+$('#import-sources-file')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';   // the same file can be picked again
+  if (!file) return;
+  const io = sourcesIO();
+  if (!io) return;
+  // An incomplete row would make the counts wrong: say so instead.
+  const current = collectSourcesForm();
+  if (!current) { closeSourcesImport(); return; }
+  try {
+    const { valid, invalid } = io.parseSourcesFile(await file.text());
+    pendingImport = valid;
+    const fresh = io.countNew(current, valid);
+    $('#sources-import-summary').textContent = t('sources.importSummary')
+      .replace('{file}', file.name).replace('{n}', valid.length)
+      .replace('{new}', fresh).replace('{known}', valid.length - fresh)
+      .replace('{current}', current.length);
+    $('#sources-import-invalid').innerHTML = invalid.map(x =>
+      `<li>${esc(t('sources.importInvalid').replace('{i}', x.index).replace('{name}', x.name || '–').replace('{why}', x.problem))}</li>`).join('');
+    $('#sources-import-merge').disabled = fresh === 0;
+    $('#sources-import-replace').disabled = valid.length === 0;
+    $('#sources-import').hidden = false;
+  } catch (err) {
+    closeSourcesImport();
+    showSourcesMsg(t('toast.error') + err.message, 'err');
+  }
+});
+
+function applyImport(mode) {
+  const io = sourcesIO();
+  if (!pendingImport || !io) return;
+  const current = mode === 'merge' ? collectSourcesForm() : [];
+  if (!current) return;
+  const { sources, added, skipped } = io.combineSources(current, pendingImport, mode);
+  renderSources(sources);
+  cfgDirty.sources = true;
+  closeSourcesImport();
+  showSourcesMsg(t(mode === 'merge' ? 'sources.importedMerge' : 'sources.importedReplace')
+    .replace('{n}', added).replace('{skipped}', skipped).replace('{total}', sources.length), 'ok');
+}
+$('#sources-import-merge')?.addEventListener('click', () => applyImport('merge'));
+$('#sources-import-replace')?.addEventListener('click', () => applyImport('replace'));
+$('#sources-import-cancel')?.addEventListener('click', closeSourcesImport);
