@@ -23,8 +23,9 @@ services:
       # ── Shared keys (one for all clients) ──
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
-      ANALYZER_MODEL: "${ANALYZER_MODEL:-claude-haiku-4-5}"
-      COVER_LETTER_MODEL: "${COVER_LETTER_MODEL:-claude-opus-5}"
+      # Empty = the app's default model (src/models.js), so nothing here goes stale.
+      ANALYZER_MODEL: "${ANALYZER_MODEL:-}"
+      COVER_LETTER_MODEL: "${COVER_LETTER_MODEL:-}"
       # Auto-apply: the GUI encrypts credentials on save — the key must match
       # the scheduler's so both read/write the same rows.
       CREDENTIALS_KEY: "${CREDENTIALS_KEY}"
@@ -42,8 +43,9 @@ services:
       CRON_SCHEDULE: "${CRON_SCHEDULE:-0 * * * *}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
-      ANALYZER_MODEL: "${ANALYZER_MODEL:-claude-haiku-4-5}"
-      COVER_LETTER_MODEL: "${COVER_LETTER_MODEL:-claude-opus-5}"
+      # Empty = the app's default model (src/models.js), so nothing here goes stale.
+      ANALYZER_MODEL: "${ANALYZER_MODEL:-}"
+      COVER_LETTER_MODEL: "${COVER_LETTER_MODEL:-}"
       # ── Auto-apply (worker + interactive Telegram bot live in THIS service) ──
       AUTO_APPLY_ENABLED: "${AUTO_APPLY_ENABLED:-false}"
       CREDENTIALS_KEY: "${CREDENTIALS_KEY}"
