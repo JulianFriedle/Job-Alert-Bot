@@ -66,10 +66,13 @@ export function extractJobcards(mosaic) {
 
 // Why a search page yielded no job cards — so a run says "HTTP 403" or
 // "Consent-Seite" instead of a silent "0 Stellen" (#37). Pure, unit-tested.
-// `genuine` = Indeed itself says the search has no results; anything else
-// means this source's result is incomplete.
+// `genuine` = Indeed itself says the search has no results. `hard` = hard
+// evidence that the page was refused (error status, login redirect): only then
+// does the source count as incomplete — a guessed cause must not switch off
+// the expiry check for the whole run, run after run. The reason is a fixed
+// text: page title and URL go into the log only, never into stored errors.
 export function explainEmptyResult({ status = null, title = '', url = '', hasMosaic = false, domCards = 0,
-  consent = false, noResults = false, challenge = false } = {}) {
+  consent = false, noResults = false } = {}) {
   const facts = [
     status != null ? `HTTP ${status}` : 'HTTP ?',
     `Titel „${String(title).slice(0, 80)}“`,
@@ -78,14 +81,14 @@ export function explainEmptyResult({ status = null, title = '', url = '', hasMos
   ].join(', ');
   let reason;
   let genuine = false;
-  if (challenge) reason = 'Bot-Schutz (Challenge-Seite)';
-  else if (status != null && status >= 400) reason = `Indeed antwortet mit HTTP ${status}`;
-  else if (/\/(account\/login|auth)|secure\.indeed\./i.test(String(url))) reason = 'Weiterleitung auf die Login-Seite';
+  let hard = false;
+  if (status != null && status >= 400) { reason = `Indeed antwortet mit HTTP ${status}`; hard = true; }
+  else if (/\/account\/login\b|\/auth(\/|\?|$)|\/\/secure\.indeed\./i.test(String(url))) { reason = 'Weiterleitung auf die Login-Seite'; hard = true; }
   else if (noResults) { reason = 'Indeed meldet keine Treffer für diese Suche'; genuine = true; }
   else if (consent && domCards === 0) reason = 'Consent-Banner verdeckt die Ergebnisse';
   else if (hasMosaic || domCards > 0) reason = 'Jobkarten vorhanden, aber nicht lesbar (Seitenaufbau geändert?)';
   else reason = 'Keine Jobkarten und keine Trefferdaten (Seitenaufbau geändert oder Bot-Schutz?)';
-  return { reason, genuine, facts };
+  return { reason, genuine, hard, facts };
 }
 
 // Runs in the browser: the facts explainEmptyResult needs.
@@ -95,8 +98,10 @@ function collectEmptyPageFacts() {
     title: document.title || '',
     hasMosaic: typeof window.mosaic === 'object' && window.mosaic !== null,
     domCards: document.querySelectorAll('a.jcs-JobTitle, a[data-jk], [data-testid="slider_item"]').length,
-    consent: Boolean(document.querySelector(
-      '#onetrust-banner-sdk, #onetrust-consent-sdk, [id*="consent" i], [class*="consent" i], [data-testid*="consent" i]')),
+    // Only a banner that is actually shown: OneTrust keeps its markup in the
+    // page, hidden, after consent was given.
+    consent: [...document.querySelectorAll('#onetrust-banner-sdk, [id*="consent" i], [class*="consent" i], [data-testid*="consent" i]')]
+      .some(el => { const r = el.getBoundingClientRect(); return el.offsetParent !== null && r.width > 0 && r.height > 0; }),
     noResults: /did not match any jobs|no jobs found|keine (passenden )?(jobs|stellen|ergebnisse|stellenangebote)|ergab keine treffer/i.test(text),
   };
 }
@@ -166,7 +171,8 @@ export async function scrape(source) {
             const facts = await page.evaluate(collectEmptyPageFacts).catch(() => ({}));
             const d = explainEmptyResult({ ...facts, status: response?.status() ?? null, url: page.url() });
             log(`  Seite 1: keine Jobcards — ${d.reason} (${d.facts})`);
-            if (!d.genuine) { blocked = true; error = d.reason; }
+            if (!d.genuine) error = d.reason;   // shown in the run overview
+            if (d.hard) blocked = true;          // incomplete only on hard evidence
           } else {
             log(`  Seite ${pageNo + 1}: keine Jobcards — Ende.`);
           }

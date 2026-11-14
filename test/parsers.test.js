@@ -80,19 +80,24 @@ test('indeed: broken mosaic shapes yield an empty list', () => {
 import { explainEmptyResult } from '../src/scrapers/indeed.js';
 
 test('indeed: an empty search page says why, and only a real "no results" counts as genuine', () => {
+  // [facts, reason, genuine, hard]
   const cases = [
-    [{ status: 403 }, /HTTP 403/, false],
-    [{ status: 200, url: 'https://secure.indeed.com/account/login?hl=de' }, /Login/, false],
-    [{ status: 200, noResults: true }, /keine Treffer/, true],
-    [{ status: 200, consent: true, domCards: 0 }, /Consent/, false],
-    [{ status: 200, hasMosaic: true }, /nicht lesbar/, false],
-    [{ status: 200 }, /Keine Jobkarten/, false],
-    [{ challenge: true }, /Bot-Schutz/, false],
+    [{ status: 403 }, /HTTP 403/, false, true],
+    [{ status: 200, url: 'https://secure.indeed.com/account/login?hl=de' }, /Login/, false, true],
+    [{ status: 200, url: 'https://de.indeed.com/auth?continue=x' }, /Login/, false, true],
+    [{ status: 200, url: 'https://de.indeed.com/authors/jobs' }, /Keine Jobkarten/, false, false],
+    [{ status: 200, noResults: true }, /keine Treffer/, true, false],
+    [{ status: 200, consent: true, domCards: 0 }, /Consent/, false, false],
+    [{ status: 200, hasMosaic: true }, /nicht lesbar/, false, false],
+    [{ status: 200 }, /Keine Jobkarten/, false, false],
   ];
-  for (const [facts, reason, genuine] of cases) {
-    const d = explainEmptyResult(facts);
+  for (const [facts, reason, genuine, hard] of cases) {
+    const d = explainEmptyResult({ title: 'Ingenieur Jobs in Stuttgart | Indeed', ...facts });
     assert.match(d.reason, reason, JSON.stringify(facts));
     assert.equal(d.genuine, genuine, JSON.stringify(facts));
+    assert.equal(d.hard, hard, JSON.stringify(facts));
+    // The stored reason never carries the page title (it holds the search terms).
+    assert.ok(!/Ingenieur|Stuttgart/.test(d.reason), d.reason);
   }
   // The facts line names what was seen, for the log.
   assert.match(explainEmptyResult({ status: 200, title: 'Jobs | Indeed', domCards: 0 }).facts,
