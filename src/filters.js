@@ -151,3 +151,12 @@ export function previewFilters(filters, jobs, sampleSize = 8) {
   }
   return out;
 }
+
+// Lines of a filter-list textarea → keywords. Not trimmed: a padded keyword
+// like " hr " (shipped default) only matches the whole word — trimmed, "hr"
+// would block "Fahrer", "Lehrer", "mehr". Blank lines and \r are dropped.
+// The GUI (public/app.js filterLines, public/setup.js) applies the same rule.
+export function keywordLines(value) {
+  const lines = Array.isArray(value) ? value.map(x => String(x ?? '')) : String(value ?? '').split('\n');
+  return lines.map(x => x.replace(/\r/g, '')).filter(x => x.trim() !== '');
+}

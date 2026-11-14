@@ -329,7 +329,8 @@ Cheap pre-filters applied **before** any Claude call:
 
 The three title lists match case-insensitively as substrings, after gender forms are folded on both sides
 (*(m/w/d)* removed, *Referent:in* → *referentin*) — so prefer distinctive terms: a short one like
-`it` also matches inside *Qualität*. Both lists also apply **retroactively** to jobs that are
+`it` also matches inside *Qualität*. A keyword with a space before and after it (`" hr "`, as in
+the shipped blocklist) only matches the whole word; the editor and the wizard keep those spaces. Both lists also apply **retroactively** to jobs that are
 saved but not yet analyzed. A **blocklist** drop is final. An **allowlist** drop is stored with the
 summary *„Titel nicht in der Positivliste – nicht bewertet“* and is undone automatically: once a
 changed allowlist lets the title through (a typo fixed, a term added), the next runs put the job

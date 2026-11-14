@@ -2448,7 +2448,10 @@ document.addEventListener('visibilitychange', refreshActiveConfigTab);
 // The same lists as the wizard's Titel-Filter step, editable any time, with a
 // "Testen" preview against the client's recent jobs (nothing saved, no AI).
 const FILTER_KEYS = ['titleAllowlist', 'titleBlocklist', 'priorityKeywords', 'locationAllowlist'];
-const filterLines = (v) => String(v || '').split('\n').map(x => x.trim()).filter(Boolean);
+// Not trimmed: a padded keyword like " hr " only matches the whole word —
+// trimmed, it would block "Fahrer", "Lehrer", "mehr". Same rule as
+// keywordLines() in src/filters.js.
+const filterLines = (v) => String(v || '').split('\n').map(x => x.replace(/\r/g, '')).filter(x => x.trim() !== '');
 const filterDraft = () => Object.fromEntries(FILTER_KEYS.map(k => [k, filterLines($(`#flt-${k}`)?.value)]));
 
 function showFiltersMsg(msg, kind) {

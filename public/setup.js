@@ -296,7 +296,12 @@
         values[f.key] = cb ? cb.checked : true;
       } else if (f.type === 'list') {
         const ta = el.body.querySelector(`[data-key="${cssEsc(f.key)}"]`);
-        values[f.key] = (ta?.value || '').split('\n').map(x => x.trim()).filter(Boolean);
+        const lines = (ta?.value || '').split('\n');
+        // Filter keywords keep their padding (" hr " = whole word only) — same
+        // rule as keywordLines() in src/filters.js.
+        values[f.key] = f.store === 'filters'
+          ? lines.map(x => x.replace(/\r/g, '')).filter(x => x.trim() !== '')
+          : lines.map(x => x.trim()).filter(Boolean);
       } else {
         const inp = el.body.querySelector(`[data-key="${cssEsc(f.key)}"]`);
         values[f.key] = inp ? inp.value : '';

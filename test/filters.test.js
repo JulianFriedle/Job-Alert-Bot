@@ -4,7 +4,7 @@
 // throwaway file first so running the suite never touches the real data/jobs.db. Static
 // imports are hoisted above this assignment, so scheduler.js must be pulled in
 // dynamically, after the env var is set (same pattern as db.test.js).
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -235,4 +235,25 @@ test('the preview counts what a filter draft would drop, with examples', () => {
   assert.deepEqual(p.samples.blocked, ['Praktikum Assistenz — Stuttgart']);
   assert.deepEqual(p.samples['wrong-location'], ['Office Manager — São Paulo, Brazil']);
   assert.equal(previewFilters({}, []).total, 0);
+});
+
+test('saving a filter list keeps the padding of whole-word keywords', async () => {
+  const { keywordLines } = await import('../src/filters.js');
+  const { DEFAULT_TITLE_BLOCKLIST } = await import('../src/client-config.js');
+  // What the editor/wizard textarea holds for the shipped defaults, saved back.
+  const saved = keywordLines(DEFAULT_TITLE_BLOCKLIST.join('\n') + '\n\n  \r\n');
+  assert.deepEqual(saved, DEFAULT_TITLE_BLOCKLIST, 'round trip unchanged');
+  assert.ok(saved.includes(' hr ') && saved.includes(' sap ') && saved.includes(' erp '));
+  const f = createTitleFilter({ titleBlocklist: saved });
+  for (const title of ['Fahrer Nahverkehr', 'Lehrer Physik', 'Mehr Verantwortung', 'Verpackungsingenieur', 'Sapient Engineer']) {
+    assert.equal(f.reject(title), null, title);
+  }
+  assert.deepEqual(keywordLines(['a', ' b ', '', '  ']), ['a', ' b ']);
+});
+
+test('the GUI and the wizard use the same keyword-line rule', () => {
+  const rule = "map(x => x.replace(/\\r/g, '')).filter(x => x.trim() !== '')";
+  for (const file of ['../public/app.js', '../public/setup.js']) {
+    assert.ok(readFileSync(new URL(file, import.meta.url), 'utf8').includes(rule), file);
+  }
 });
