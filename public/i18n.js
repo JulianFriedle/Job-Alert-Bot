@@ -312,6 +312,26 @@ const I18N = {
     'settings.version': 'Version',
     'settings.revealTitle': 'Anzeigen/Verbergen',
 
+    // MCP-Server (KI-Assistent) in Einstellungen
+    'mcp.unlock': 'Kostenpflichtige KI-Aktionen freischalten',
+    'mcp.confirm': 'Kostenpflichtige KI-Aktionen für den KI-Assistenten freischalten?\n\nDanach darf er Läufe starten (Anthropic-Kosten pro analysiertem Job – bei großem Rückstand schnell mehrere Euro), Bewerbungsunterlagen und Anschreiben erstellen (stärkeres, teureres Modell), Telegram-Nachrichten senden und Bewerbungen vorbereiten.\n\nAbgesendet wird nie ohne deine Freigabe. Du kannst jederzeit wieder sperren.',
+    'mcp.unlocked': 'Freigeschaltet – der KI-Assistent kann Kosten verursachen',
+    'mcp.lock': 'Wieder sperren',
+    'mcp.toastUnlocked': 'KI-Aktionen freigeschaltet',
+    'mcp.toastLocked': 'KI-Aktionen gesperrt',
+    'mcp.state.locked': 'Status: gesperrt (nur Lesen und Pflegen)',
+    'mcp.state.unlocked': 'Status: freigeschaltet',
+    'mcp.endpoint': 'GUI-Adresse:',
+    'mcp.token.set': 'Zugangstoken gesetzt',
+    'mcp.token.unset': 'kein Zugangstoken',
+    'mcp.connectHint': 'So verbindest du Claude mit dieser App: Claude Desktop → Einstellungen → Entwickler → Konfiguration bearbeiten und den Block unten in claude_desktop_config.json einfügen (bei vorhandenem "mcpServers" nur den Eintrag "job-alert" ergänzen), oder in Claude Code den Befehl ausführen. Danach Claude neu starten.',
+    'mcp.desktopLabel': 'Claude Desktop (claude_desktop_config.json)',
+    'mcp.codeLabel': 'Claude Code (Terminal)',
+    'mcp.copy': 'Kopieren',
+    'mcp.copied': 'In die Zwischenablage kopiert',
+    'mcp.copyFailed': 'Kopieren nicht möglich – bitte von Hand markieren',
+    'mcp.loadError': 'MCP-Infos konnten nicht geladen werden: ',
+
     // Setup wizard – static (non-schema) strings
     'wiz.debugBadge': '🧪 Debug-Modus · Sandbox',
     'wiz.langLabel': 'Sprache / Language',
@@ -686,6 +706,26 @@ const I18N = {
     'settings.version': 'Version',
     'settings.revealTitle': 'Show/hide',
 
+    // MCP server (AI assistant) in settings
+    'mcp.unlock': 'Unlock paid AI actions',
+    'mcp.confirm': 'Unlock paid AI actions for the AI assistant?\n\nAfterwards it may start runs (Anthropic cost per analyzed job – quickly several euros on a large backlog), create application documents and cover letters (stronger, pricier model), send Telegram messages and prepare applications.\n\nNothing is ever submitted without your approval. You can lock it again at any time.',
+    'mcp.unlocked': 'Unlocked – the AI assistant can cause costs',
+    'mcp.lock': 'Lock again',
+    'mcp.toastUnlocked': 'AI actions unlocked',
+    'mcp.toastLocked': 'AI actions locked',
+    'mcp.state.locked': 'Status: locked (read and maintain only)',
+    'mcp.state.unlocked': 'Status: unlocked',
+    'mcp.endpoint': 'GUI address:',
+    'mcp.token.set': 'access token set',
+    'mcp.token.unset': 'no access token',
+    'mcp.connectHint': 'To connect Claude to this app: in Claude Desktop go to Settings → Developer → Edit config and paste the block below into claude_desktop_config.json (if "mcpServers" already exists, just add the "job-alert" entry), or run the command in Claude Code. Then restart Claude.',
+    'mcp.desktopLabel': 'Claude Desktop (claude_desktop_config.json)',
+    'mcp.codeLabel': 'Claude Code (terminal)',
+    'mcp.copy': 'Copy',
+    'mcp.copied': 'Copied to clipboard',
+    'mcp.copyFailed': 'Could not copy – please select it by hand',
+    'mcp.loadError': 'Could not load MCP info: ',
+
     // Setup wizard – static (non-schema) strings
     'wiz.debugBadge': '🧪 Debug mode · Sandbox',
     'wiz.langLabel': 'Language / Sprache',
@@ -769,6 +809,7 @@ const SETTINGS_GROUPS_EN = {
   'Klienten (Mehrbenutzer)': 'Clients (multi-user)',
   'Auto-Bewerbung': 'Auto-apply',
   'Sicherheit (SaaS)': 'Security (SaaS)',
+  'MCP-Server (KI-Assistent)': 'MCP server (AI assistant)',
 };
 const SETTINGS_LABELS_EN = {
   ANTHROPIC_API_KEY: 'Anthropic API Key',
@@ -802,6 +843,8 @@ const SETTINGS_LABELS_EN = {
   OPERATOR_USER: 'Operator user',
   OPERATOR_PASSWORD_HASH: 'Password hash',
   SESSION_SECRET: 'Session secret',
+  MCP_ALLOW_ACTIONS: 'Paid AI actions',
+  MCP_API_TOKEN: 'MCP access token',
 };
 const SETTINGS_HELP_EN = {
   ANTHROPIC_API_KEY: 'API key from console.anthropic.com',
@@ -835,6 +878,8 @@ const SETTINGS_HELP_EN = {
   OPERATOR_USER: 'Username for the GUI login (only when login is enabled)',
   OPERATOR_PASSWORD_HASH: 'scrypt hash of the operator password. Generate with: npm run hash-password -- "<password>"',
   SESSION_SECRET: 'Random string used to sign login sessions (otherwise regenerated on every restart → logout). Requires a restart.',
+  MCP_ALLOW_ACTIONS: 'Locked: the AI assistant (Claude Desktop / Claude Code via MCP) can read and maintain jobs, runs, profile and settings, but cannot trigger anything that costs money or reaches the outside world. Unlocked, it may start runs (Anthropic cost per job), create documents and cover letters, send Telegram messages and prepare applications. Nothing is ever submitted without your approval.',
+  MCP_API_TOKEN: 'Only needed when login is enabled (AUTH_ENABLED): the MCP server uses it to sign in to the GUI. Any long random string; the same value must be set as MCP_API_TOKEN in the MCP configuration.',
 };
 
 // English overrides for the backend PROMPT_FIELDS (src/prompts.js), keyed by group / field key.

@@ -28,6 +28,7 @@
     "test": "node --test 'test/*.test.js'",
     "gui": "node src/server.js",
     "gui:operator": "node scripts/operator-sandbox.js",
+    "mcp": "node src/mcp-server.js",
     "desktop": "electron desktop/main.js",
     "dist": "electron-builder --publish never"
   },

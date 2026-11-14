@@ -464,6 +464,25 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .bk-badge.bk-preimport { color: #b45309; background: var(--yellow-bg); border-color: transparent; }
 .bk-badge.bk-upload    { color: #1d4ed8; background: var(--blue-bg); border-color: transparent; }
 
+/* ── MCP (AI assistant) switch ─────────────────────────────────────────── */
+.btn-red { background: var(--red); border-color: var(--red); color: #fff; }
+.btn-red:hover { background: color-mix(in srgb, var(--red) 85%, #000); border-color: color-mix(in srgb, var(--red) 85%, #000); }
+.mcp-banner {
+  color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 40%, var(--border)); border-radius: var(--radius-sm);
+  padding: 9px 12px; font-size: .85rem; font-weight: 600; margin-bottom: 8px;
+}
+.mcp-info { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.mcp-state { font-size: .82rem; margin: 0 0 6px; }
+.mcp-state.on { color: var(--red); font-weight: 600; }
+.mcp-snippet { margin-top: 10px; }
+.mcp-snippet-head { display: flex; justify-content: space-between; align-items: center; font-size: .82rem; }
+.mcp-snippet pre {
+  margin: 4px 0 0; padding: 10px 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: .76rem;
+}
+
 /* ── Settings ──────────────────────────────────────────────────────────── */
 .settings-groups { display: flex; flex-direction: column; }
 .setting-list { display: flex; flex-direction: column; gap: 18px; }
