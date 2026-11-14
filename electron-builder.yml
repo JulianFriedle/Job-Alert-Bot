@@ -23,6 +23,9 @@ files:
   - templates/**/*
   - desktop/**/*
   - config/profile.example.json
+  # Example career pages the setup wizard offers on a fresh install (#30).
+  # Read-only seed data: the app's own sources live in APP_DATA_DIR.
+  - config/jobs.json
   - LICENSE
   # SQLite sources — only needed to compile, and the prebuilt binaries are used.
   - "!node_modules/better-sqlite3/{deps,src}/**"

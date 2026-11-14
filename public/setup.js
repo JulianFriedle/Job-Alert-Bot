@@ -433,15 +433,27 @@
       return;
     }
     if (e.target.closest('.su-examples-accept')) {
-      const box = e.target.closest('.su-examples');
+      const btn = e.target.closest('.su-examples-accept');
+      if (btn.disabled) return;
+      btn.disabled = true;   // a second click must not add them twice
+      const box = btn.closest('.su-examples');
+      // Bound to the page the click came from: "Weiter" during the request
+      // must not put the rows (or the flag) on another step.
+      const page = pages[idx];
+      const list = el.body.querySelector('.su-source-list');
       try {
         const { sources } = await api('/api/setup/examples');
-        const list = el.body.querySelector('.su-source-list');
-        list.insertAdjacentHTML('beforeend', (sources || []).map(sourceRow).join(''));
-        pages[idx].examplesDecided = true;
+        if (pages[idx] !== page || !list?.isConnected) return;
+        const have = new Set([...list.querySelectorAll('.su-url')].map(i => i.value.trim()));
+        const fresh = (sources || []).filter(s => !have.has(String(s.url).trim()));
+        list.insertAdjacentHTML('beforeend', fresh.map(sourceRow).join(''));
+        page.examplesDecided = true;
         box?.remove();
-        showMsg(t('wiz.examplesAdded').replace('{n}', (sources || []).length), 'ok');
-      } catch (err) { showMsg(t('wiz.error') + err.message, 'err'); }
+        showMsg(t('wiz.examplesAdded').replace('{n}', fresh.length), 'ok');
+      } catch (err) {
+        btn.disabled = false;
+        showMsg(t('wiz.error') + err.message, 'err');
+      }
       return;
     }
     if (e.target.closest('.su-add-source')) {

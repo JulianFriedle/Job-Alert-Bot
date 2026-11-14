@@ -559,8 +559,9 @@ async function buildStatus(debug) {
     });
   }
 
-  // Sources step without any career page yet: offer the shipped examples.
-  const sourcesStep = steps.find(s => s.id === 'sources');
+  // First run, no career page yet: offer the shipped examples. Not when an
+  // existing user reopens the wizard with only job-board searches.
+  const sourcesStep = firstRun ? steps.find(s => s.id === 'sources') : null;
   if (sourcesStep) {
     const career = (sourcesStep.values.sources || []).filter(s => !PLATFORM_TYPES.includes(s.type));
     if (career.length === 0) sourcesStep.examples = (await exampleSources()).length;

@@ -125,3 +125,11 @@ test('the shipped example career pages are offered, job-board searches are not',
   assert.equal(examples.length, shipped.filter(s => !['linkedin', 'stepstone', 'indeed'].includes(s.type)).length);
   assert.ok(examples.every(s => typeof s.name === 'string' && /^https?:\/\//.test(s.url)));
 });
+
+test('the desktop installer ships the example list the wizard offers', () => {
+  // electron-builder.yml is a whitelist: a file missing there doesn't exist in
+  // the installed app, and the offer would never appear.
+  const yml = readFileSync(new URL('../electron-builder.yml', import.meta.url), 'utf8');
+  const files = yml.slice(yml.indexOf('\nfiles:'), yml.indexOf('\n\n', yml.indexOf('\nfiles:')));
+  assert.match(files, /^\s*-\s*config\/jobs\.json\s*$/m);
+});
