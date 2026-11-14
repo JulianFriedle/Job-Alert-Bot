@@ -3,12 +3,12 @@ import cron from 'node-cron';
 import { createWriteStream, mkdirSync } from 'fs';
 import path from 'path';
 
-import { scrapeAll, fetchDescriptions } from './scraper.js';
+import { scrapeAll, fetchDescriptions, minDescriptionChars, isThinDescription } from './scraper.js';
 import {
   isNewJob, saveJob, markAnalyzed, markNotified, getUnanalyzedJobs,
   getRelevantUnnotifiedJobs, getRelevantCountBySource, updateLastSeenBatch,
   getJobsToExpire, markExpired, saveRunSnapshot, getEnabledClients, getClient,
-  checkpointWal, getJobById, createApplication,
+  checkpointWal, getJobById, createApplication, recordDescriptionAttempt,
 } from './database.js';
 import { analyzeJob } from './analyzer.js';
 import { notifyBatch, notifyExpired, isTelegramEnabled } from './notifier.js';
@@ -35,7 +35,7 @@ function log(msg) {
   console.log(`[${new Date().toISOString()}] [scheduler] ${msg}`);
 }
 
-function printOverview(clientName, sources, sourceStats, relevantBySource, expiredCount = 0) {
+function printOverview(clientName, sources, sourceStats, relevantBySource, expiredCount = 0, thin = null) {
   const C1 = 28, C2 = 10, CW = 10, C3 = 9, C4 = 10, C5 = 11, C6 = 10, C7 = 10, C8 = 10;
   const WIDTH = C1 + C2 + CW + C3 + C4 + C5 + C6 + C7 + C8 + 2;
   const SEP  = '─'.repeat(WIDTH);
@@ -100,7 +100,69 @@ function printOverview(clientName, sources, sourceStats, relevantBySource, expir
     console.log(`  ❌ ${expiredCount} Job(s) nicht mehr ausgeschrieben — Benachrichtigung versendet`);
     console.log(SEP);
   }
+  if (thin?.total > 0) {
+    console.log(`  📄 ${thin.total} Stelle(n) mit zu kurzer Beschreibung nicht analysiert` +
+      (thin.gaveUp > 0 ? ` (${thin.gaveUp} davon endgültig, „Beschreibung fehlt“)` : ' — neuer Abruf im nächsten Lauf'));
+    console.log(SEP);
+  }
   console.log('');
+}
+
+// ── Too-short descriptions (#40) ─────────────────────────────────────────────
+// A cookie banner or JS shell instead of the posting leaves a few dozen
+// characters; scored from the title alone the result is unreliable and the call
+// wasted. Such jobs stay unanalyzed and their detail page is fetched again on
+// later runs — at most MAX_DESC_ATTEMPTS times — before they are given up and
+// stored as not relevant with DESC_MISSING_SUMMARY.
+export const MAX_DESC_ATTEMPTS = 2;
+export const DESC_MISSING_SUMMARY = 'Beschreibung fehlt – nicht bewertet';
+
+// Returns the jobs that are ready for analysis plus counters for the overview.
+// `freshIds` are jobs whose detail page was fetched earlier in this very run:
+// fetching them again seconds later rarely helps, so they wait for the next run.
+// `fetch` and `minChars` are injectable for tests.
+export async function settleThinDescriptions(clientId, jobs, freshIds,
+  { fetch = fetchDescriptions, minChars = minDescriptionChars() } = {}) {
+  const none = { ready: jobs, total: 0, recovered: 0, gaveUp: 0 };
+  if (minChars <= 0) return none;
+  const thin = jobs.filter(j => isThinDescription(j.description, minChars));
+  if (thin.length === 0) return none;
+
+  let recovered = 0;
+  const retry = thin.filter(j => !freshIds.has(j.id) && (j.desc_attempts ?? 0) < MAX_DESC_ATTEMPTS);
+  if (retry.length > 0 && !isAborted()) {
+    log(`${retry.length} Stelle(n) mit zu kurzer Beschreibung — Detailseite wird erneut abgerufen…`);
+    const before = new Map(retry.map(j => [j.id, String(j.description ?? '')]));
+    const onJob = (job) => {
+      const old = before.get(job.id) ?? '';
+      // Never trade a stored text for a shorter one from a worse fetch.
+      if (String(job.description ?? '').length < old.length) job.description = old;
+      const improved = String(job.description ?? '').length > old.length;
+      // Cut off by a stop: that visit says nothing about the page.
+      if (!improved && isAborted()) return;
+      recordDescriptionAttempt(clientId, job.id, job.description);
+      job.desc_attempts = (job.desc_attempts ?? 0) + 1;
+      if (!isThinDescription(job.description, minChars)) recovered++;
+    };
+    try { await fetch(retry, { onJob }); }
+    catch (err) { log(`ERROR re-fetching descriptions: ${err.message}`); }
+  }
+
+  let gaveUp = 0;
+  for (const job of thin) {
+    if (!isThinDescription(job.description, minChars)) continue;
+    if ((job.desc_attempts ?? 0) >= MAX_DESC_ATTEMPTS) {
+      markAnalyzed(clientId, job.id, false, null, DESC_MISSING_SUMMARY);
+      gaveUp++;
+    }
+  }
+
+  const ready = jobs.filter(j => !isThinDescription(j.description, minChars));
+  const total = jobs.length - ready.length;
+  log(`Beschreibung zu kurz (< ${minChars} Zeichen): ${total} Stelle(n) nicht analysiert` +
+      `${recovered > 0 ? `, ${recovered} nach erneutem Abruf vollständig` : ''}` +
+      `${gaveUp > 0 ? `, ${gaveUp} endgültig als „Beschreibung fehlt“ abgelegt` : ''}.`);
+  return { ready, total, recovered, gaveUp };
 }
 
 // German postings routinely wedge a gender marker into the middle of the title
@@ -245,7 +307,8 @@ async function runClientPipeline(client) {
       markAnalyzed(clientId, job.id, false);
     }
   }
-  const toAnalyze = allUnanalyzed.filter(job => !isTitleBlocked(job.title));
+  const thin = await settleThinDescriptions(clientId, allUnanalyzed.filter(job => !isTitleBlocked(job.title)), savedIds);
+  const toAnalyze = thin.ready;
   log(`Analyzing ${toAnalyze.length} unanalyzed job(s)...`);
 
   const isPriority = (title) => {
@@ -389,7 +452,7 @@ async function runClientPipeline(client) {
 
   // 10. Print overview + persist a snapshot for the GUI stats page
   const relevantBySource = getRelevantCountBySource(clientId);
-  printOverview(client.name, sources, sourceStats, relevantBySource, expiredCount);
+  printOverview(client.name, sources, sourceStats, relevantBySource, expiredCount, thin);
 
   try {
     const snapshotRows = sources.map(source => {

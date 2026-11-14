@@ -66,7 +66,7 @@ scripts/migrate-to-multitenant.js ← One-time migration to the clients model (n
 scripts/hash-password.js  ← Generate OPERATOR_PASSWORD_HASH for SaaS login (npm run hash-password)
 scripts/generate-credentials-key.js ← Generate CREDENTIALS_KEY (npm run generate-credentials-key)
 scripts/operator-sandbox.js ← Throwaway operator GUI on :3001 (npm run gui:operator)
-scripts/refetch-descriptions.js  ← Re-fetch & re-analyze jobs saved with empty descriptions
+scripts/refetch-descriptions.js  ← Re-fetch & re-analyze jobs saved with empty or too-short descriptions
 scripts/import-lebenslauf.js ← One-off import of a Markdown CV repo (npm run import-lebenslauf)
 config/*.json             ← Default-client fallback (profile/jobs/filters/prompts); per-client config lives in the DB
 logs/                     ← Timestamped log file from each run (gitignored)
@@ -268,6 +268,7 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `DOCS_HUMANIZE` | `true` | Run tailored CVs / cover letters through a second "humanize" pass that removes AI phrasing (one extra API call per document) |
 | `CHROME_PATH` | — | Chrome/Chromium binary for the document PDFs, only needed when Playwright's bundled browser is missing (not in the settings form) |
 | `MIN_RELEVANCE_SCORE` | `4` | Min AI score (1–10) for a job to count as relevant |
+| `MIN_DESCRIPTION_CHARS` | `300` | Jobs with a shorter description are not sent to Claude (see [Pre-filters](#pre-filters-configfiltersjson)). `0` = off |
 | `CRON_SCHEDULE` | `0 * * * *` | Scheduler cadence (node-cron syntax) |
 | `EXPIRY_THRESHOLD_HOURS` | `72` | Hours unseen before a notified job is marked expired |
 | `ANALYSIS_CONCURRENCY` | `2` | Parallel Claude analysis requests |
@@ -311,6 +312,15 @@ Cheap title-based filters applied **before** any Claude call:
 - **`priorityKeywords`** — jobs whose title contains any of these get their score boosted to ≥ 7.
 
 Edit this file to tune what gets filtered. If the file is missing, built-in defaults are used.
+
+A third check needs no configuration file: a job whose description is shorter than
+**`MIN_DESCRIPTION_CHARS`** (default 300 — typically a cookie banner, an error page or a
+JavaScript shell instead of the posting) is **not sent to Claude**. Scored from the title
+alone the result would be unreliable and the call wasted. The job stays unanalyzed and its
+detail page is fetched again on up to two later runs; if it is still too short after that, it
+is stored as not relevant with the summary *„Beschreibung fehlt – nicht bewertet“*. Each run
+logs how many jobs were held back, and the run overview shows the count.
+`npm run refetch-descriptions` uses the same threshold, so it also picks up these jobs.
 
 ### AI prompts (`config/prompts.json`)
 
@@ -412,8 +422,9 @@ npm run test-notify
 # log) into a client — see "Tailored CV & Cover Letter". No API calls.
 npm run import-lebenslauf -- ../Lebenslauf
 
-# Re-fetch descriptions and re-analyze all DB entries saved with empty descriptions
-# (useful after fixing the networkidle bug, or when a source was returning 0 chars)
+# Re-fetch descriptions and re-analyze all DB entries whose description is empty or
+# shorter than MIN_DESCRIPTION_CHARS (useful when a source was returning 0 chars or a
+# cookie banner). Calls Claude once per job whose description is now long enough.
 npm run refetch-descriptions
 
 # Run the test suite (node:test, offline — no network, no real DB, no API calls)

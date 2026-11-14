@@ -196,6 +196,8 @@ const SETTINGS_SCHEMA = [
 
   { key: 'MIN_RELEVANCE_SCORE', group: 'Analyse & Filter', label: 'Min. Relevanz-Score', type: 'int', default: '4', min: 1, max: 10,
     help: 'Mindest-Score (1–10), ab dem ein Job als relevant gilt' },
+  { key: 'MIN_DESCRIPTION_CHARS', group: 'Analyse & Filter', label: 'Min. Beschreibungslänge', type: 'int', default: '300', min: 0, max: 4000,
+    help: 'Stellen mit kürzerer Beschreibung (Cookie-Banner, Fehlerseite) gehen nicht an die KI, sondern werden in den nächsten Läufen bis zu zweimal neu abgerufen und danach als „Beschreibung fehlt“ abgelegt. 0 = aus' },
   { key: 'EXPIRY_THRESHOLD_HOURS', group: 'Analyse & Filter', label: 'Ablauf-Schwelle (Std.)', type: 'int', default: '72', min: 1, max: 8760,
     help: 'Stunden ohne erneute Sichtung, bis ein gemeldeter Job als abgelaufen markiert wird' },
 

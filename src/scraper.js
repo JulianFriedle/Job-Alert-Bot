@@ -1083,6 +1083,18 @@ async function fetchDescriptionBatch(jobs, { gentle, concurrency, minGapMs, jitt
   }
 }
 
+// Descriptions shorter than this (cookie banner, error page, JS shell) are not
+// sent to Claude: scored from the title alone they're unreliable and waste a
+// call. MIN_DESCRIPTION_CHARS=0 turns the check off; blank/invalid → 300.
+export const DEFAULT_MIN_DESCRIPTION_CHARS = 300;
+export function minDescriptionChars() {
+  const raw = String(process.env.MIN_DESCRIPTION_CHARS ?? '').trim();
+  const n = Number(raw);
+  return raw !== '' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_MIN_DESCRIPTION_CHARS;
+}
+export const isThinDescription = (description, minChars = minDescriptionChars()) =>
+  String(description ?? '').trim().length < minChars;
+
 // Fetch full job descriptions for an array of jobs (in-place, mutates description
 // field). Called after deduplication so we only visit detail pages for genuinely
 // new jobs. Job-board jobs are fetched gently (they rate-limit); career pages fast.

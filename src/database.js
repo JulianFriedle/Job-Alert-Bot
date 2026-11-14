@@ -98,6 +98,7 @@ function createSchema(db) {
       status      TEXT,
       easy_apply  INTEGER,
       platform    TEXT,
+      desc_attempts INTEGER DEFAULT 0,
       PRIMARY KEY (client_id, id)
     );
   `);
@@ -350,6 +351,12 @@ function migrateSchema(db) {
       throw err;
     }
   }
+
+  // How often a too-short description was fetched again (after the rebuild
+  // above, so the rebuilt table gets it too).
+  const jobColsNow = db.prepare("PRAGMA table_info(jobs)").all().map(r => r.name);
+  if (!jobColsNow.includes('desc_attempts'))
+    db.exec('ALTER TABLE jobs ADD COLUMN desc_attempts INTEGER DEFAULT 0');
 
   // Per-source problem of a run (error | blocked | empty) + the error message,
   // behind the Run tab's GitHub problem report.
@@ -654,11 +661,24 @@ export function markIrrelevant(clientId, id) {
     .run(new Date().toISOString(), clientId, id);
 }
 
-export function getJobsWithEmptyDescription(clientId) {
+// Jobs whose description is missing or shorter than `minChars` characters
+// (after trimming). Default 1 = only truly empty ones.
+export function getJobsWithEmptyDescription(clientId, minChars = 1) {
   return db.prepare(
     // Manual jobs ("+ Stelle") are never scraped or analyzed, not even here.
-    "SELECT * FROM jobs WHERE client_id = ? AND (description IS NULL OR description = '') AND (expired = 0 OR expired IS NULL) AND source IS NOT 'Manuell'"
-  ).all(clientId);
+    "SELECT * FROM jobs WHERE client_id = ? AND length(trim(COALESCE(description, ''))) < ? AND (expired = 0 OR expired IS NULL) AND source IS NOT 'Manuell'"
+  ).all(clientId, Math.max(1, minChars));
+}
+
+// Record one more attempt to fetch a job's description, keeping whatever text
+// is the longer of the stored one and the new one.
+export function recordDescriptionAttempt(clientId, id, description) {
+  db.prepare(`
+    UPDATE jobs
+    SET description = CASE WHEN length(?) > length(COALESCE(description, '')) THEN ? ELSE description END,
+        desc_attempts = COALESCE(desc_attempts, 0) + 1
+    WHERE client_id = ? AND id = ?
+  `).run(description ?? '', description ?? '', clientId, id);
 }
 
 export function updateJobDescription(clientId, id, description) {
