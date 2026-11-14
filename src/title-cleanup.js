@@ -28,10 +28,15 @@ const LEADING_DATE = new RegExp(
 // A "Neu"/"New" badge: glued to the next word ("NeuTeamassistenz") or set off
 // by punctuation/brackets ("Neu: …", "[Neu] …"). The glued form is matched
 // case-sensitively — with /i the capital lookahead would also eat "Neubau…".
-const GLUED_BADGE = /^(?:Neu|NEU|New|NEW)(?=[A-ZÄÖÜ\d])/;
-// A badge in its own element reads "Neu Teamassistenz …". Only the German
-// "Neu" and an all-caps badge: "New Business Manager" is a real title.
-const SPACED_BADGE = /^(?:Neu|NEU|NEW)\s+(?=[A-ZÄÖÜ\d])/;
+// Glued means the next word starts right after it, capital then lowercase:
+// "NeuTeamassistenz", "NEUTeamassistenz" — but not "NEWSLETTER", "NEUBAU",
+// "NEUE STELLE" (all-caps words), and a date may follow ("NEU30.09.2026").
+const GLUED_BADGE = /^(?:Neu|NEU|New|NEW)(?=[A-ZÄÖÜ][a-zäöüß])|^(?:Neu|NEU)(?=\d)/;
+// A badge in its own element reads "NEU Teamassistenz …". Only the all-caps
+// form: "Neu Isenburg", "New Business Manager", "NEW YORK …" are real text.
+const SPACED_BADGE = /^(?:NEU|NEW)\s+(?=[A-ZÄÖÜ][a-zäöüß])/;
+// "Posted on 12.12.2026 Software Engineer"
+const LEADING_POSTED = /^posted on\s*\S+\s*/i;
 const MARKED_BADGE = /^(?:\[(?:neu|new)\]\s*|(?:neu|new)\s*[:!–-]\s+)/i;
 
 // "…CoordinatorLocationUnited States of America | Etowah, TNPosted on09.11.2026"
@@ -47,8 +52,8 @@ const LOCATION_LABEL = /^(einsatzort|standort|arbeitsort|dienstort)/i;
 
 // A dd.mm.yyyy date in the middle starts portal metadata ("… 13.11.2026
 // Sonstige Überlingen") — unless the title itself talks about a date.
-const INLINE_DATE = /\s+(\d{1,2}\.\d{1,2}\.\d{4})\b.*$/;
-const DATE_IS_PART_OF_TITLE = /\b(ab|bis|zum|vom|von|seit|from|until|starting|start|befristet|frühestens|spätestens)\s*$/i;
+const INLINE_DATE = /\s+(\d{1,2}\.\d{1,2}\.\d{4})\b(.*)$/;
+const DATE_IS_PART_OF_TITLE = /\b(ab|bis|zum|vom|von|seit|from|until|starting|start|befristet|frühestens|spätestens|beginn|eintritt|frist|bewerbungsfrist|stichtag)\s*$/i;
 
 const words = (s) => s.split(/\s+/).filter(Boolean).length;
 const tidy = (s) => s.replace(/\s+/g, ' ').replace(/^[\s\-–|·:,]+|[\s\-–|·:,]+$/g, '').trim();
@@ -65,6 +70,8 @@ export function cleanJobTitle(raw) {
     if (d && words(title.slice(d[0].length)) >= 2) { postedDate ||= d[1]; title = title.slice(d[0].length); }
     const b = title.match(GLUED_BADGE) || title.match(SPACED_BADGE) || title.match(MARKED_BADGE);
     if (b && words(title.slice(b[0].length)) >= 2) title = title.slice(b[0].length);
+    const p = title.match(LEADING_POSTED);
+    if (p && words(title.slice(p[0].length)) >= 2) { postedDate ||= p[0].replace(/^posted on\s*/i, '').trim(); title = title.slice(p[0].length); }
   }
 
   const lp = title.match(LOCATION_POSTED);
@@ -89,13 +96,16 @@ export function cleanJobTitle(raw) {
   }
 
   const inline = title.match(INLINE_DATE);
-  if (inline && !DATE_IS_PART_OF_TITLE.test(title.slice(0, inline.index))) {
+  // Metadata follows such a date; a lone "(m/w/d)" or nothing after it means
+  // the date belongs to the title ("Ausbildung … 01.09.2027 (m/w/d)").
+  const tailIsMeta = inline && !/^\s*(\([^)]*\))?\s*$/.test(inline[2]);
+  if (inline && tailIsMeta && !DATE_IS_PART_OF_TITLE.test(title.slice(0, inline.index))) {
     postedDate ||= inline[1];
     title = title.slice(0, inline.index);
   }
 
   title = tidy(title);
-  // Never trade a real title for a fragment.
-  if (words(title) < 2 && words(original) >= 2) return { title: original, location: '', postedDate: '' };
+  // Never trade a real title for a fragment (what was found still counts).
+  if (words(title) < 2 && words(original) >= 2) return { title: original, location, postedDate };
   return { title, location, postedDate };
 }

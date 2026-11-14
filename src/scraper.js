@@ -95,11 +95,15 @@ async function extractJobsAndPagination(page, source = {}) {
       // textContent stays the fallback for hidden or detached nodes.
       const textOf = (node) => ((node?.innerText || node?.textContent || '').replace(/\s+/g, ' ').trim());
       // An anchor that wraps the whole card also carries the date, badges and
-      // the location; a heading inside it is the title alone.
-      const ownHeading = el.querySelector('h1, h2, h3, h4, h5, h6, [class*="title" i]:not([class*="sub" i])');
-      const headingText = textOf(ownHeading);
+      // the location; a heading inside it is the title alone. Only when it is
+      // the one heading there (with several, the first may be a date or a
+      // location) and doesn't itself look like a date, badge or label.
+      const ownHeadings = el.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="title" i]:not([class*="sub" i])');
+      const headingText = ownHeadings.length === 1 ? textOf(ownHeadings[0]) : '';
+      const headingUsable = headingText.split(' ').length >= 2 &&
+        !/^(\d|posted\b|neu\b|new\b|standort|einsatzort|location|unternehmen)/i.test(headingText);
       let title = (
-        (headingText.split(' ').length >= 2 ? headingText : '') ||
+        (headingUsable ? headingText : '') ||
         textOf(el) ||
         el.getAttribute('aria-label') ||
         el.getAttribute('title') ||
@@ -129,7 +133,9 @@ async function extractJobsAndPagination(page, source = {}) {
       const card = el.closest(
         '[class*="job"], [class*="career"], [class*="position"], li, article'
       ) || el.parentElement;
-      const cardText = card?.textContent?.replace(/\s+/g, ' ').trim() || '';
+      // innerText with line breaks kept: the location pattern below stops at
+      // the end of its line instead of running into the next element.
+      const cardText = (card?.innerText || card?.textContent || '').replace(/[ \t\u00a0]+/g, ' ').trim();
 
       const locationMatch = cardText.match(/(?:📍|location|standort|ort)[:\s]+([^\n|•·]+)/i);
       const location = locationMatch?.[1]?.trim() || '';
@@ -598,7 +604,6 @@ export async function scrapeSource(source) {
         ...job,
         title: cleaned.title,
         location: job.location || cleaned.location,
-        postedDate: job.postedDate || cleaned.postedDate,
       };
       // Pagination, legal links, "Stellenanzeige merken" … — never a job, and each
       // one would cost a detail-page fetch and a Claude call.

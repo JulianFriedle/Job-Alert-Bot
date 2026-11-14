@@ -28,8 +28,10 @@ test('more date and badge variants', () => {
   assert.equal(title('September 30, 2026 Project Engineer'), 'Project Engineer');
   assert.equal(title('Neu: Projektleiter Bau (m/w/d)'), 'Projektleiter Bau (m/w/d)');
   assert.equal(title('[Neu] Projektleiter Bau'), 'Projektleiter Bau');
-  assert.equal(title('Neu Teamassistenz Vertrieb (m/w/d)'), 'Teamassistenz Vertrieb (m/w/d)');
+  assert.equal(title('NEU Teamassistenz Vertrieb (m/w/d)'), 'Teamassistenz Vertrieb (m/w/d)');
   assert.equal(title('NEW Senior Data Engineer'), 'Senior Data Engineer');
+  assert.equal(title('NEUTeamassistenz Vertrieb'), 'Teamassistenz Vertrieb');
+  assert.equal(title('Posted on 12.12.2026 Software Engineer'), 'Software Engineer');
   assert.equal(title('NEU30.09.2026 Projektleiter Bau'), 'Projektleiter Bau');
   assert.equal(title('Software Engineer Posted on 01.10.2026'), 'Software Engineer');
   assert.equal(title('Konstrukteur (m/w/d) Standort: Stuttgart'), 'Konstrukteur (m/w/d)');
@@ -43,6 +45,24 @@ test('real titles stay exactly as they are', () => {
     'Newsroom Editor',
     'New Business Development Manager',
     'Neu-Ulm Filialleitung (m/w/d)',
+    // All-caps words that start like a badge (review of #39)
+    'NEWSLETTER Redakteur Online',
+    'NEUBAU PROJEKTLEITER',
+    'NEUE STELLE Ingenieur',
+    'NEW YORK Account Manager',
+    // A spaced title-case "Neu" may be a place or a word, not a badge
+    'Neu Isenburg Teamleiter',
+    'Neu Aufbau Leiter Vertrieb',
+    // Dates that belong to the title
+    'Werkstudent (m/w/d) Beginn 01.12.2026 Marketing',
+    'Projektleiter Frist 31.12.2026 Bau',
+    'Ausbildung zum Industriekaufmann 01.09.2027 (m/w/d)',
+    '2026 Graduate Program Engineering',
+    '50% Teilzeit Sachbearbeiter (m/w/d)',
+    '1. Vorsitzender Beirat',
+    'March Networks Engineer',
+    'Relocation Specialist Europe',
+    'Allocation Manager Supply Chain',
     'Location Manager (m/w/d)',
     'Senior Location Manager Film',
     'Werkstudent ab 01.03.2027 im Controlling',
@@ -61,6 +81,9 @@ test('real titles stay exactly as they are', () => {
 test('a cleanup that would leave less than two words keeps the original', () => {
   assert.equal(title('30. September 2026Controller'), '30. September 2026Controller');
   assert.equal(title('NeuController'), 'NeuController');
+  // …but what it found is still reported
+  assert.deepEqual(cleanJobTitle('Ingenieur Einsatzort: Berlin'),
+    { title: 'Ingenieur Einsatzort: Berlin', location: 'Berlin', postedDate: '' });
 });
 
 test('total for odd input', () => {
