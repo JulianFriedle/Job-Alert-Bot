@@ -1096,6 +1096,7 @@ async function fetchDescriptionBatch(jobs, { gentle, concurrency, minGapMs, jitt
         if (!isAborted()) log(`  ${progress} Failed for "${job.title}": ${err.message.split('\n')[0]}`);
       } finally {
         await page.close().catch(() => {});
+        withSnippetFallback(job);
         // A failing callback must never take the rest of the batch down.
         if (onJob) {
           try { onJob(job); }
@@ -1182,6 +1183,43 @@ export async function fetchDescriptions(jobs, options = {}) {
       onJob,
     });
   }
+}
+
+// One posting reachable from two configured sources (a group career page and a
+// division's page, or a job board and the company site sharing a URL) yields
+// the same id twice; both copies would get a detail-page fetch and count as new.
+// Keep one, chosen deterministically — scrape order depends on timing: a
+// job-board copy first (it carries platform/easyApply for auto-apply), then the
+// source listed first in `sourceOrder` (names in config order).
+export function uniqueJobsById(jobs, sourceOrder = []) {
+  const rank = new Map(sourceOrder.map((name, i) => [name, i]));
+  const better = (a, b) => {
+    if (Boolean(a.platform) !== Boolean(b.platform)) return Boolean(a.platform);
+    return (rank.get(a.source) ?? Infinity) < (rank.get(b.source) ?? Infinity);
+  };
+  const best = new Map();
+  for (const job of jobs) {
+    const cur = best.get(job.id);
+    if (!cur || better(job, cur)) best.set(job.id, job);
+  }
+  const unique = [...best.values()];
+  const kept = new Set(unique);
+  return { unique, dropped: jobs.filter(job => !kept.has(job)) };
+}
+
+// A job-board card's snippet (Indeed) is a teaser, not the posting, so the
+// detail page is always fetched. Only when that fetch fails or comes back too
+// short does the snippet stand in, if it is the longer text. Never during a
+// stop: a fetch cut off by the abort says nothing about the page, and the
+// pipeline must keep such a job unsaved (empty) so the next run fetches it.
+export function withSnippetFallback(job, aborted = isAborted()) {
+  if (aborted) return job;
+  const snippet = String(job.snippet ?? '');
+  const description = String(job.description ?? '');
+  if (snippet && isThinDescription(description) && snippet.length > description.trim().length) {
+    job.description = snippet.slice(0, 4000);
+  }
+  return job;
 }
 
 export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE_CONCURRENCY) || 4) {

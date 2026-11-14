@@ -15,6 +15,20 @@ function log(msg) {
   console.log(`[${new Date().toISOString()}] [indeed] ${msg}`);
 }
 
+// The snippet arrives as HTML: tags are stripped, entities decoded.
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+  auml: 'ä', ouml: 'ö', uuml: 'ü', Auml: 'Ä', Ouml: 'Ö', Uuml: 'Ü', szlig: 'ß',
+  ndash: '–', mdash: '—', hellip: '…', bull: '•', euro: '€' };
+export function decodeEntities(s) {
+  return String(s ?? '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+    if (e[0] === '#') {
+      const code = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : m;
+    }
+    return ENTITIES[e] ?? m;
+  });
+}
+
 function buildSearchUrl(search, start) {
   const params = new URLSearchParams();
   params.set('q', search.keywords || '');
@@ -46,7 +60,7 @@ export function extractJobcards(mosaic) {
       easyApply: (r.indeedApplyEnabled ?? r.indeedApplyable) == null
         ? null
         : Boolean(r.indeedApplyEnabled ?? r.indeedApplyable),
-      snippet: String(r.snippet || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+      snippet: decodeEntities(String(r.snippet || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim(),
     }));
 }
 
@@ -134,6 +148,9 @@ export async function scrape(source) {
             location: c.location,
             company: c.company,
             description: '', // detail page text is fetched later (fetchDescriptions)
+            // Stands in when the detail fetch fails or comes back too short
+            // (withSnippetFallback in scraper.js) — never instead of the posting.
+            snippet: c.snippet,
             source: source.name,
             platform: 'indeed',
             easyApply: c.easyApply == null ? null : (c.easyApply ? 1 : 0),
