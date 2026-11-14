@@ -253,14 +253,16 @@ cp config/profile.example.json config/profile.json
 | `paginationParam` | Query param name for URL-based pagination (e.g. `"pageNumber"`) |
 | `paginationMode` | `"index"` = param counts pages (1, 2, 3…); default = row offset |
 | `paginationStep` | Items per page (used with `paginationParam`) |
-| `maxPages` | Most pages to read from this source (default `50`) |
+| `maxPages` | Most pages to read from this source. Unset = only the built-in caps (50 config-driven pages, 200 numbered pages, 100 load-more/next clicks) |
 | `gotoTimeout` | Ms one page load may take before it counts as failed (default `30000`); lower it for a slow site that otherwise stalls the run |
 
-Pagination also stops on its own after **3 pages in a row without new jobs** (the normal end of a
-list), after **3 failed pages in a row**, or once the host **refuses connections twice**
-(`ERR_CONNECTION_RESET` and the like — usually bot blocking). The last two leave the source's
-result incomplete: the log and the run overview say why, and the expiry check is skipped for that
-run so jobs that simply weren't reached aren't reported as gone.
+Pagination also stops on its own after **3 pages in a row without any jobs** (past the end of the
+list — a page that only repeats jobs already seen doesn't count), after **3 failed pages in a row**
+(e.g. timeouts; shown as the source's error in the run overview), or once the host **refuses
+connections twice** (`ERR_CONNECTION_RESET` and the like — usually bot blocking). Only the last one
+marks the source's result incomplete, which also skips the expiry check for that run, so jobs that
+simply weren't reached aren't reported as gone. A failing load-more or next-page click no longer
+discards the jobs already found on that source.
 
 ## Configuration
 

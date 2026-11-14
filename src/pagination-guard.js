@@ -2,47 +2,56 @@
 // Without a brake, one misbehaving site holds the whole scrape phase: Diehl
 // paginated past page 40 with 30-second timeouts, Liebherr reset every
 // connection from page 3 on. The guard counts pages, empty pages, failures and
-// refused connections and says when to stop — and whether stopping means the
-// source's result is incomplete (a problem worth showing in the run overview,
-// and a reason not to expire jobs that simply weren't reached).
+// refused connections and says when to stop.
+//
+// Stopping must not quietly cost jobs: there is no new default page limit (the
+// strategies keep their built-in caps; `maxPages` only applies when a source
+// sets it), an "empty" page is one that yielded no jobs at all (a page of
+// already-seen jobs is not empty), and only hard evidence — the host refusing
+// connections — marks the result incomplete (`problem`), which keeps the run
+// from expiring jobs that simply weren't reached. A failure streak (timeouts)
+// is reported as a `warning` only, like the soft causes in the Indeed scraper.
 // Pure, unit-tested in test/pagination-guard.test.js.
-
-export const DEFAULT_MAX_PAGES = 50;
 
 // Errors that mean "the host refuses us", not "this page is broken".
 const REFUSED = /ERR_CONNECTION_(RESET|REFUSED|CLOSED|ABORTED)|ERR_EMPTY_RESPONSE|ERR_HTTP2_PROTOCOL_ERROR|ECONNRESET|ECONNREFUSED|socket hang up/i;
 
-export function createPaginationGuard({ maxPages = DEFAULT_MAX_PAGES, maxEmpty = 3, maxErrors = 3, maxRefused = 2 } = {}) {
+export function createPaginationGuard({ maxPages = Infinity, maxEmpty = 3, maxErrors = 3, maxRefused = 2 } = {}) {
   let pages = 1;        // page 1 is already done when pagination starts
   let emptyStreak = 0;
   let errorStreak = 0;
   let refused = 0;
   let stopReason = null;
-  let problem = null;   // set when stopping leaves the result incomplete
+  let problem = null;   // hard: the result is incomplete
+  let warning = null;   // soft: worth showing, not worth skipping expiry for
 
-  const stop = (reason, isProblem = false) => {
+  const stop = (reason, kind = null) => {
     stopReason ||= reason;
-    if (isProblem) problem ||= reason;
+    if (kind === 'problem') problem ||= reason;
+    if (kind === 'warning') warning ||= reason;
   };
 
   return {
     get stopReason() { return stopReason; },
     get problem() { return problem; },
+    get warning() { return warning; },
     get pages() { return pages; },
 
     // Ask before each further page.
     canFetch() {
       if (stopReason) return false;
-      if (pages >= maxPages) { stop(`Seitenlimit erreicht (${maxPages})`); return false; }
+      if (pages >= maxPages) { stop(`Seitenlimit der Quelle erreicht (${maxPages})`); return false; }
       return true;
     },
 
-    // A page was read; `added` = new jobs it contributed.
-    page(added) {
+    // A page was read. `extracted` = jobs found on it (null: don't judge
+    // emptiness — load-more re-reads the whole list and has its own end rule).
+    page(added, extracted = added) {
       pages++;
       errorStreak = 0;
-      if (added > 0) emptyStreak = 0;
-      else if (++emptyStreak >= maxEmpty) stop(`${maxEmpty} Seiten in Folge ohne neue Stellen`);
+      if (extracted == null) return;
+      if (extracted > 0) emptyStreak = 0;
+      else if (++emptyStreak >= maxEmpty) stop(`${maxEmpty} Seiten in Folge ohne Stellen`);
     },
 
     // A page failed.
@@ -51,9 +60,9 @@ export function createPaginationGuard({ maxPages = DEFAULT_MAX_PAGES, maxEmpty =
       const msg = String(err?.message ?? err ?? '');
       const code = msg.match(REFUSED)?.[0];
       if (code && ++refused >= maxRefused) {
-        stop(`Host bricht Verbindungen ab (${code}) – Paginierung nach Seite ${pages} gestoppt`, true);
+        stop(`Host bricht Verbindungen ab (${code}) – Paginierung nach Seite ${pages} abgebrochen`, 'problem');
       } else if (++errorStreak >= maxErrors) {
-        stop(`${maxErrors} Seiten in Folge fehlgeschlagen – Paginierung nach Seite ${pages} gestoppt`, true);
+        stop(`${maxErrors} Seiten in Folge fehlgeschlagen – Paginierung nach Seite ${pages} beendet`, 'warning');
       }
     },
   };
