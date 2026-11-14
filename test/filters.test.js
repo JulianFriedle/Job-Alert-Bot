@@ -197,6 +197,8 @@ test('a country term keeps jobs that name no other country', () => {
   assert.equal(f.reject({ location: 'Etowah, TN, United States' }), 'wrong-location');
   assert.equal(f.reject({ location: 'Budapest, Hungary' }), 'wrong-location');
   assert.equal(f.reject({ location: 'Wien, Österreich' }), 'wrong-location');
+  assert.equal(f.reject({ location: 'Manila, Philippines' }), 'wrong-location');
+  assert.equal(f.reject({ location: 'Bogotá, Colombia' }), 'wrong-location');
   // Without a country term a city list is strict.
   assert.equal(createLocationFilter(['Stuttgart']).reject({ location: 'Berlin' }), 'wrong-location');
   // Country names match whole words only ("uk" is not in "Ukraine" … but Ukraine is its own country).

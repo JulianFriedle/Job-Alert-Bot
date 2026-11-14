@@ -258,6 +258,11 @@ const COUNTRIES = {
   sg: ['singapur', 'singapore'], my: ['malaysia'], th: ['thailand'], vn: ['vietnam'], au: ['australien', 'australia'],
   za: ['südafrika', 'south africa'], ae: ['vereinigte arabische emirate', 'united arab emirates', 'uae'],
   il: ['israel'], ma: ['marokko', 'morocco'], tn: ['tunesien', 'tunisia'], eg: ['ägypten', 'egypt'], ua: ['ukraine'],
+  ru: ['russland', 'russia'], ee: ['estland', 'estonia'], lv: ['lettland', 'latvia'], lt: ['litauen', 'lithuania'],
+  ph: ['philippinen', 'philippines'], id: ['indonesien', 'indonesia'], tw: ['taiwan'], hk: ['hongkong', 'hong kong'],
+  pk: ['pakistan'], bd: ['bangladesch', 'bangladesh'], nz: ['neuseeland', 'new zealand'],
+  sa: ['saudi-arabien', 'saudi arabia'], qa: ['katar', 'qatar'], co: ['kolumbien', 'colombia'], pe: ['peru'],
+  cr: ['costa rica'], ng: ['nigeria'], ke: ['kenia', 'kenya'],
 };
 const COUNTRY_RES = Object.entries(COUNTRIES).map(([code, names]) => ({
   code,
