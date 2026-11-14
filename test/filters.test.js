@@ -113,11 +113,25 @@ test('allowlist-dropped jobs can be found and put back into the queue, per clien
   db.saveJob('default', { id: 'block-1', title: 'Praktikum', company: 'A', url: 'https://a.example/2', location: '', description: '', source: 'A' });
   db.markAnalyzed('default', 'block-1', false);
 
-  const found = db.getJobsWithSummary('default', NOT_ALLOWED_SUMMARY).map(j => j.id);
+  const since = new Date(Date.now() - 3600 * 1000).toISOString();
+  const found = db.getJobsWithSummary('default', NOT_ALLOWED_SUMMARY, since).map(j => j.id);
   assert.deepEqual(found, ['allow-1'], 'blocklist drops are not reopened');
 
   db.reopenForAnalysis('default', found);
   assert.equal(db.getJobById('default', 'allow-1').relevant, null);
   assert.equal(db.getJobById('default', 'allow-1').summary, null);
   assert.equal(db.getJobById('other', 'allow-1').relevant, 0, 'other client untouched');
+});
+
+test('a job gone from its source is not reopened', () => {
+  db.saveJob('default', { id: 'allow-old', title: 'Assistenz', company: 'A', url: 'https://a.example/old', location: '', description: '', source: 'A' });
+  db.markAnalyzed('default', 'allow-old', false, null, NOT_ALLOWED_SUMMARY);
+  const future = new Date(Date.now() + 3600 * 1000).toISOString(); // "seen since" after its last sighting
+  assert.ok(!db.getJobsWithSummary('default', NOT_ALLOWED_SUMMARY, future).some(j => j.id === 'allow-old'));
+});
+
+test('a keyword ending in a gender marker matches the end of a title', () => {
+  const f = createTitleFilter({ titleBlocklist: ['Ingenieur (m/w/d)'], titleAllowlist: [] });
+  assert.equal(f.reject('Konstruktion Ingenieur (m/w/d)'), 'blocked');
+  assert.equal(createTitleFilter({ titleBlocklist: [' sap '] }).reject('Berater SAP Logistik'), 'blocked');
 });

@@ -201,13 +201,24 @@ export function normalizeTitle(title) {
 // whitespace — or "Praktikum" or "referent:in" could never match. Not trimmed:
 // a padded keyword like " sap " (config/filters.json) matches a whole word.
 const keywordList = (list) => (Array.isArray(list) ? list : [])
-  .map(foldTitle)
+  .map(k => {
+    const raw = String(k ?? '');
+    let folded = foldTitle(raw);
+    // Keep padding the user typed, drop padding the folding created
+    // ("Ingenieur (m/w/d)" → "ingenieur", not "ingenieur ").
+    if (!/^\s/.test(raw)) folded = folded.replace(/^\s+/, '');
+    if (!/\s$/.test(raw)) folded = folded.replace(/\s+$/, '');
+    return folded;
+  })
   .filter(k => k.trim() !== '');
 
 // Summary of a job dropped only because it matched no allowlist term. Unlike a
 // blocklist drop this is undone: once the allowlist lets the title through
 // (typo fixed, term added), the job goes back to the analysis queue.
 export const NOT_ALLOWED_SUMMARY = 'Titel nicht in der Positivliste – nicht bewertet';
+// At most this many such jobs go back per run: one broad new term could
+// otherwise release thousands of detail-page fetches and Claude calls at once.
+export const MAX_REOPEN_PER_RUN = 100;
 
 // The title pre-filters of one client. `reject(title)` says why a job never
 // reaches Claude: 'blocked' (blocklist hit) or 'not-allowed' (an allowlist is
@@ -300,15 +311,19 @@ async function runClientPipeline(client) {
 
   // Jobs an earlier allowlist dropped, which the current one lets through
   // (a typo fixed, a term added): back into the analysis queue. Only while an
-  // allowlist is set — clearing it would release every job it ever dropped,
-  // possibly thousands of Claude calls in one run.
-  const reopen = titleFilter.hasAllowlist
-    ? getJobsWithSummary(clientId, NOT_ALLOWED_SUMMARY).filter(job => !isTitleBlocked(job.title))
+  // allowlist is set — clearing it would release every job it ever dropped —
+  // only postings still seen within the expiry window, and capped per run.
+  const seenSince = new Date(Date.now() - EXPIRY_THRESHOLD_HOURS * 3600 * 1000).toISOString();
+  const reopenable = titleFilter.hasAllowlist
+    ? getJobsWithSummary(clientId, NOT_ALLOWED_SUMMARY, seenSince).filter(job => !isTitleBlocked(job.title))
     : [];
+  const reopen = reopenable.slice(0, MAX_REOPEN_PER_RUN);
   if (reopen.length > 0) {
     try {
       reopenForAnalysis(clientId, reopen.map(job => job.id));
-      log(`Positivliste geändert: ${reopen.length} früher aussortierte Stelle(n) werden jetzt bewertet`);
+      const later = reopenable.length - reopen.length;
+      log(`Positivliste geändert: ${reopen.length} früher aussortierte Stelle(n) werden jetzt bewertet` +
+          (later > 0 ? `, ${later} weitere in den nächsten Läufen` : ''));
     } catch (err) { log(`ERROR reopening allowlist-filtered jobs: ${err.message}`); }
   }
 

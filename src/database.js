@@ -690,11 +690,17 @@ export function recordDescriptionAttempt(clientId, id, description) {
   `).run(description ?? '', clientId, id);
 }
 
-// Jobs stored as not relevant with a given marker summary (live ones only).
-export function getJobsWithSummary(clientId, summary) {
-  return db.prepare(
-    'SELECT * FROM jobs WHERE client_id = ? AND relevant = 0 AND summary = ? AND (expired = 0 OR expired IS NULL)'
-  ).all(clientId, summary);
+// Jobs stored as not relevant with a given marker summary that were still seen
+// on their source at or after `seenSince` (ISO timestamp). Expiry only ever
+// marks notified jobs, so last_seen_at is what tells a live posting from a
+// long-gone one here.
+export function getJobsWithSummary(clientId, summary, seenSince) {
+  return db.prepare(`
+    SELECT * FROM jobs
+    WHERE client_id = ? AND relevant = 0 AND summary = ? AND (expired = 0 OR expired IS NULL)
+      AND last_seen_at >= ?
+    ORDER BY last_seen_at DESC
+  `).all(clientId, summary, seenSince);
 }
 
 // Put jobs back into the analysis queue (relevant = NULL), e.g. once a loosened

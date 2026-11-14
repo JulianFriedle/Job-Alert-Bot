@@ -318,9 +318,11 @@ All three match case-insensitively as substrings, after gender forms are folded 
 `it` also matches inside *Qualität*. Both lists also apply **retroactively** to jobs that are
 saved but not yet analyzed. A **blocklist** drop is final. An **allowlist** drop is stored with the
 summary *„Titel nicht in der Positivliste – nicht bewertet“* and is undone automatically: once a
-changed allowlist lets the title through (a typo fixed, a term added), the next run puts the job
-back into the analysis queue. Clearing the allowlist completely does *not* do that — it could
-release thousands of jobs at once; new jobs are then analyzed again as usual.
+changed allowlist lets the title through (a typo fixed, a term added), the next runs put the job
+back into the analysis queue — only postings still seen on their source within
+`EXPIRY_THRESHOLD_HOURS`, and at most 100 per run, since each one costs a detail-page fetch and a
+Claude call (and may trigger a notification). Clearing the allowlist completely does *not* do
+that — it could release thousands of jobs at once; new jobs are then analyzed again as usual.
 Edit this file (or the wizard's *Titel-Filter* step) to tune what gets filtered. If the file is
 missing, built-in defaults are used.
 
