@@ -309,10 +309,22 @@ Behavior is controlled by environment variables (all optional — defaults shown
 
 Cheap title-based filters applied **before** any Claude call:
 
-- **`titleBlocklist`** — jobs whose title contains any of these substrings (case-insensitive) are dropped as irrelevant.
+- **`titleAllowlist`** — if not empty, **only** jobs whose title contains at least one of these substrings go to Claude; all others are dropped as irrelevant (log: `Positivliste: X neue Stelle(n) behalten, Y aussortiert`). Made for a narrow target role on broad career pages — a handful of terms like `assistenz`, `office manager` instead of hundreds of blocklist entries. A title that matches a `priorityKeywords` entry counts as allowed. Empty (the default) = no restriction.
+- **`titleBlocklist`** — jobs whose title contains any of these substrings are dropped as irrelevant. Wins over the allowlist.
 - **`priorityKeywords`** — jobs whose title contains any of these get their score boosted to ≥ 7.
 
-Edit this file to tune what gets filtered. If the file is missing, built-in defaults are used.
+All three match case-insensitively as substrings, after gender forms are folded on both sides
+(*(m/w/d)* removed, *Referent:in* → *referentin*) — so prefer distinctive terms: a short one like
+`it` also matches inside *Qualität*. Both lists also apply **retroactively** to jobs that are
+saved but not yet analyzed. A **blocklist** drop is final. An **allowlist** drop is stored with the
+summary *„Titel nicht in der Positivliste – nicht bewertet“* and is undone automatically: once a
+changed allowlist lets the title through (a typo fixed, a term added), the next runs put the job
+back into the analysis queue — only postings still seen on their source within
+`EXPIRY_THRESHOLD_HOURS`, and at most 100 per run, since each one costs a detail-page fetch and a
+Claude call (and may trigger a notification). Clearing the allowlist completely does *not* do
+that — it could release thousands of jobs at once; new jobs are then analyzed again as usual.
+Edit this file (or the wizard's *Titel-Filter* step) to tune what gets filtered. If the file is
+missing, built-in defaults are used.
 
 A third check needs no configuration file: a job whose description is shorter than
 **`MIN_DESCRIPTION_CHARS`** (default 300 — typically a cookie banner, an error page or a
@@ -536,7 +548,7 @@ changed later.
 5. **What you're looking for** — desired roles, locations, industries, contract types, minimum salary, dealbreakers
 6. *(optional)* **Job boards** — tick LinkedIn / StepStone / Indeed and enter one search term + location (pre-filled from your desired roles); no account needed
 7. **Career pages** — company sites to watch. At least one source is required overall; a job-board search from step 6 counts
-8. *(optional)* **Title filters** — blocklist and priority keywords
+8. *(optional)* **Title filters** — allowlist, blocklist and priority keywords
 9. *(optional)* **How often & how strict** — schedule as a plain choice (hourly … once a day) and the score threshold
 
 On a first run every step is shown once (optional ones can be skipped). After that, only the

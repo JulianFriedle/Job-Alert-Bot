@@ -690,6 +690,29 @@ export function recordDescriptionAttempt(clientId, id, description) {
   `).run(description ?? '', clientId, id);
 }
 
+// Jobs stored as not relevant with a given marker summary that were still seen
+// on their source at or after `seenSince` (ISO timestamp). Expiry only ever
+// marks notified jobs, so last_seen_at is what tells a live posting from a
+// long-gone one here.
+export function getJobsWithSummary(clientId, summary, seenSince) {
+  return db.prepare(`
+    SELECT * FROM jobs
+    WHERE client_id = ? AND relevant = 0 AND summary = ? AND (expired = 0 OR expired IS NULL)
+      AND last_seen_at >= ?
+    ORDER BY last_seen_at DESC
+  `).all(clientId, summary, seenSince);
+}
+
+// Put jobs back into the analysis queue (relevant = NULL), e.g. once a loosened
+// title allowlist lets them through again.
+export function reopenForAnalysis(clientId, ids) {
+  const stmt = db.prepare(`
+    UPDATE jobs SET relevant = NULL, analyzed_at = NULL, score = NULL, summary = NULL
+    WHERE client_id = ? AND id = ?
+  `);
+  db.transaction(() => { for (const id of ids) stmt.run(clientId, id); })();
+}
+
 export function updateJobDescription(clientId, id, description) {
   db.prepare(`
     UPDATE jobs

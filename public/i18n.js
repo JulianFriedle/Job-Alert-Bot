@@ -909,6 +909,7 @@ const WIZARD_FIELDS_EN = {
   location: { label: 'Location', placeholder: 'e.g. Stuttgart' },
   radiusKm: { label: 'Radius (km)', placeholder: '30' },
   sources: { label: 'Sources' },
+  titleAllowlist: { label: 'Only these titles (allowlist)', help: 'If filled in, only jobs whose title contains one of these keywords go to the AI – e.g. assistant, office manager. Ideal for a narrowly defined target role. Empty = no restriction' },
   titleBlocklist: { label: 'Blocklist (skip titles)', help: 'One keyword per line, e.g. internship' },
   priorityKeywords: { label: 'Priority keywords', help: 'Titles containing these words are preferred' },
   CRON_SCHEDULE: { label: 'How often to search?', help: 'Applies to the background service (npm start or the “scheduler” Docker container). If only the interface is running, start runs by hand with “Start run”.',

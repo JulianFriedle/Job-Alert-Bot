@@ -1,5 +1,6 @@
 {
-  "_comment": "Title-based pre-filters applied BEFORE Claude analysis. titleBlocklist: jobs whose title contains any of these substrings (case-insensitive) are skipped as irrelevant — cheap way to drop structurally-wrong postings. priorityKeywords: jobs whose title contains any of these get their score boosted to >=7. Both are tuned for a German engineering search — adjust for your language/field.",
+  "_comment": "Title-based pre-filters applied BEFORE Claude analysis. titleAllowlist: if not empty, ONLY jobs whose title contains one of these substrings are analyzed (priorityKeywords count as allowed). titleBlocklist: jobs whose title contains any of these substrings (case-insensitive) are skipped as irrelevant — cheap way to drop structurally-wrong postings. priorityKeywords: jobs whose title contains any of these get their score boosted to >=7. The lists are tuned for a German engineering search — adjust for your language/field.",
+  "titleAllowlist": [],
   "titleBlocklist": [
     "praktikum", "ausbildung", "berufsausbildung", "schulpraktikum", "logistik", "buchhaltung", " sap ", "accounting", "werkschutz", "küche",
     "duales studium", "dualer student", "kooperatives studium", "sales", " hr ", "elektroniker", "koch", "facility", "praktikant", " erp ", "schulpraktikant",

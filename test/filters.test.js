@@ -13,7 +13,8 @@ process.env.JOBS_DB_PATH = path.join(mkdtempSync(path.join(tmpdir(), 'jobbot-fil
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const { normalizeTitle } = await import('../src/scheduler.js');
+const { normalizeTitle, createTitleFilter, NOT_ALLOWED_SUMMARY } = await import('../src/scheduler.js');
+const db = await import('../src/database.js');
 
 test('normalizeTitle strips a gender marker wherever it sits', () => {
   assert.equal(normalizeTitle('Entwickler (m/w/d) für Embedded Systeme'), 'entwickler für embedded systeme');
@@ -45,4 +46,92 @@ test('a keyword hits a title it would otherwise miss', () => {
   const title = 'Entwickler (m/w/d) für Embedded Systeme';
   assert.equal(title.toLowerCase().includes(keyword), false, 'precondition: raw match fails');
   assert.equal(normalizeTitle(title).includes(keyword), true);
+});
+
+// ── Title allowlist (#34) and the shared title filter ────────────────────────
+
+test('an empty allowlist restricts nothing', () => {
+  const f = createTitleFilter({ titleBlocklist: ['praktikum'], priorityKeywords: [], titleAllowlist: [] });
+  assert.equal(f.hasAllowlist, false);
+  assert.equal(f.reject('Konstrukteur (m/w/d)'), null);
+  assert.equal(f.reject('Praktikum Konstruktion'), 'blocked');
+});
+
+test('with an allowlist only matching titles go on', () => {
+  const f = createTitleFilter({ titleBlocklist: [], priorityKeywords: [], titleAllowlist: ['assistenz', 'office manager'] });
+  assert.equal(f.reject('Assistenz der Geschäftsführung (m/w/d)'), null);
+  assert.equal(f.reject('Office Manager*in'), null);
+  assert.equal(f.reject('Konstrukteur (m/w/d)'), 'not-allowed');
+});
+
+test('the blocklist wins over the allowlist', () => {
+  const f = createTitleFilter({ titleBlocklist: ['praktikum'], priorityKeywords: [], titleAllowlist: ['assistenz'] });
+  assert.equal(f.reject('Praktikum Assistenz'), 'blocked');
+});
+
+test('a priority keyword counts as allowed', () => {
+  const f = createTitleFilter({ titleBlocklist: [], priorityKeywords: ['initiativbewerbung'], titleAllowlist: ['assistenz'] });
+  assert.equal(f.reject('Initiativbewerbung'), null);
+  assert.equal(f.isPriority('Initiativbewerbung'), true);
+});
+
+test('keywords match regardless of how they were capitalized', () => {
+  // A "Praktikum" typed into the wizard used to match nothing, because only the
+  // title was lowercased.
+  const f = createTitleFilter({ titleBlocklist: ['Praktikum'], priorityKeywords: ['PhD'], titleAllowlist: ['Executive Assistant'] });
+  assert.equal(f.reject('Praktikum im Vertrieb'), 'blocked');
+  assert.equal(f.isPriority('PhD position'), true);
+  assert.equal(f.reject('executive assistant to the CEO'), null);
+});
+
+test('padded keywords still match whole words only', () => {
+  const f = createTitleFilter({ titleBlocklist: [' sap '], priorityKeywords: [], titleAllowlist: [] });
+  assert.equal(f.reject('Berater SAP Logistik'), 'blocked');
+  assert.equal(f.reject('Sapient Engineer'), null);
+});
+
+test('blank entries and missing lists are ignored', () => {
+  const f = createTitleFilter({ titleBlocklist: ['', '  ', null], titleAllowlist: ['  '] });
+  assert.equal(f.hasAllowlist, false);
+  assert.equal(f.reject('Irgendein Job'), null);
+  assert.equal(createTitleFilter().reject('Irgendein Job'), null);
+});
+
+test('keywords are folded like the title (gender forms, spacing)', () => {
+  const f = createTitleFilter({ titleBlocklist: ['Referent:in', 'office  manager', 'Ingenieur*in'], titleAllowlist: [] });
+  assert.equal(f.reject('Referent:in Marketing'), 'blocked');
+  assert.equal(f.reject('Referent*in Marketing'), 'blocked');
+  assert.equal(f.reject('Office Manager (m/w/d)'), 'blocked');
+  assert.equal(f.reject('Ingenieurin Fertigung'), 'blocked');
+});
+
+test('allowlist-dropped jobs can be found and put back into the queue, per client', () => {
+  for (const c of ['default', 'other']) {
+    db.saveJob(c, { id: 'allow-1', title: 'Konstrukteur', company: 'A', url: 'https://a.example/1', location: '', description: '', source: 'A' });
+    db.markAnalyzed(c, 'allow-1', false, null, NOT_ALLOWED_SUMMARY);
+  }
+  db.saveJob('default', { id: 'block-1', title: 'Praktikum', company: 'A', url: 'https://a.example/2', location: '', description: '', source: 'A' });
+  db.markAnalyzed('default', 'block-1', false);
+
+  const since = new Date(Date.now() - 3600 * 1000).toISOString();
+  const found = db.getJobsWithSummary('default', NOT_ALLOWED_SUMMARY, since).map(j => j.id);
+  assert.deepEqual(found, ['allow-1'], 'blocklist drops are not reopened');
+
+  db.reopenForAnalysis('default', found);
+  assert.equal(db.getJobById('default', 'allow-1').relevant, null);
+  assert.equal(db.getJobById('default', 'allow-1').summary, null);
+  assert.equal(db.getJobById('other', 'allow-1').relevant, 0, 'other client untouched');
+});
+
+test('a job gone from its source is not reopened', () => {
+  db.saveJob('default', { id: 'allow-old', title: 'Assistenz', company: 'A', url: 'https://a.example/old', location: '', description: '', source: 'A' });
+  db.markAnalyzed('default', 'allow-old', false, null, NOT_ALLOWED_SUMMARY);
+  const future = new Date(Date.now() + 3600 * 1000).toISOString(); // "seen since" after its last sighting
+  assert.ok(!db.getJobsWithSummary('default', NOT_ALLOWED_SUMMARY, future).some(j => j.id === 'allow-old'));
+});
+
+test('a keyword ending in a gender marker matches the end of a title', () => {
+  const f = createTitleFilter({ titleBlocklist: ['Ingenieur (m/w/d)'], titleAllowlist: [] });
+  assert.equal(f.reject('Konstruktion Ingenieur (m/w/d)'), 'blocked');
+  assert.equal(createTitleFilter({ titleBlocklist: [' sap '] }).reject('Berater SAP Logistik'), 'blocked');
 });
