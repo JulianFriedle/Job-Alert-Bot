@@ -49,17 +49,23 @@ test('refused connections stop the source and mark the result incomplete', () =>
   const g = createPaginationGuard({ maxRefused: 2 });
   assert.equal(walk(g, [[5, 5], reset(), [4, 4], reset(), [7, 7]]), 4);
   assert.match(g.problem, /Host bricht Verbindungen ab \(ERR_CONNECTION_RESET\)/);
-  assert.equal(g.warning, null);
 });
 
-test('a timeout streak stops with a warning only — not an incomplete result', () => {
+test('a failure streak ends pagination with unread pages: incomplete; a recovered failure is not', () => {
   const g = createPaginationGuard({ maxErrors: 3 });
   assert.equal(walk(g, [timeout(), timeout(), [2, 2], timeout(), timeout(), [1, 1]]), 6, 'never three in a row');
   assert.equal(g.stopReason, null);
+  assert.equal(g.problem, null);
   const h = createPaginationGuard({ maxErrors: 3 });
   assert.equal(walk(h, [timeout(), timeout(), timeout(), [1, 1]]), 3);
-  assert.match(h.warning, /3 Seiten in Folge fehlgeschlagen/);
-  assert.equal(h.problem, null);
+  assert.match(h.problem, /3 Seiten in Folge fehlgeschlagen/);
+});
+
+test('giving up after a failure marks the result incomplete', () => {
+  const g = createPaginationGuard();
+  g.giveUp('Azure-Seite 3 fehlgeschlagen');
+  assert.equal(g.canFetch(), false);
+  assert.match(g.problem, /Azure-Seite 3/);
 });
 
 test('the first reason sticks', () => {

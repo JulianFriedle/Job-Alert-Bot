@@ -812,8 +812,10 @@ export async function scrapeSource(source) {
             await page.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
           } catch (err) {
             if (isAborted()) break;
-            // One slow page must not throw away the whole source.
+            // One slow page must not throw away the whole source — but the
+            // pages after it are unread, so the result is incomplete.
             log(`  Azure API page ${pg}: ERROR — ${err.message.split('\n')[0]} — stopping`);
+            guard.giveUp(`Azure-Seite ${pg} fehlgeschlagen – weitere Seiten nicht gelesen`);
             break;
           }
           await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
@@ -923,6 +925,7 @@ export async function scrapeSource(source) {
       log(`  No href-based pagination — trying load-more / next-button...`);
       let anyStrategyWorked = false;
       let consecutiveZeros = 0;
+      let lastStepFailed = false;
       const MAX_ACTIONS = 100;
 
       for (let action = 1; action <= MAX_ACTIONS; action++) {
@@ -943,6 +946,7 @@ export async function scrapeSource(source) {
             if (apiJobsMap.size > 0)     added += addJobs([...apiJobsMap.values()], false, true);
             log(`  Load-more ${action}: +${added} new (${allJobs.length} total)`);
             guard.page(added, null);
+            lastStepFailed = false;
             if (added === 0) { consecutiveZeros++; if (consecutiveZeros >= 2) { log(`  Load-more: end of results`); break; } }
             else { consecutiveZeros = 0; }
 
@@ -977,6 +981,7 @@ export async function scrapeSource(source) {
             if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
             log(`  Next-click ${action}: +${added} new (${allJobs.length} total)`);
             guard.page(added, null);
+            lastStepFailed = false;
 
             if (added === 0) {
               consecutiveZeros = (consecutiveZeros ?? 0) + 1;
@@ -996,8 +1001,14 @@ export async function scrapeSource(source) {
           if (isAborted()) break;
           log(`  Pagination step ${action}: ERROR — ${err.message.split('\n')[0]}`);
           guard.error(err);
+          lastStepFailed = true;
           if (guard.stopReason) break;
         }
+      }
+      // Ended right after a failed step (the next try found no button, or the
+      // limit hit): what came after it was never read.
+      if (lastStepFailed && !isAborted()) {
+        guard.giveUp('Letzter Paginierungsschritt fehlgeschlagen – weitere Seiten evtl. nicht gelesen');
       }
     }
 
@@ -1019,12 +1030,12 @@ export async function scrapeSource(source) {
   if (guard.problem) log(`  FEHLER: Paginierung abgebrochen – ${guard.problem}`);
   else if (guard.stopReason) log(`  Paginierung beendet: ${guard.stopReason}`);
   log(`Finished ${source.name}: ${allJobs.length} unique job(s)${duplicateCount > 0 ? `, ${duplicateCount} duplicate(s) skipped` : ''}${siteTotal ? ` (site announced ${siteTotal})` : ''}`);
-  // A host refusing connections leaves the result incomplete (blocked): the
-  // run must not expire jobs that simply weren't reached. A failure streak is
-  // only reported (error text in the run overview).
+  // Pagination ended by failures leaves the result incomplete (blocked): the
+  // run must not expire jobs that simply weren't reached. The reason is shown
+  // in the run overview.
   return {
     jobs: allJobs, duplicates: duplicateCount, siteTotal: siteTotal ?? null,
-    blocked: Boolean(guard.problem), error: guard.problem ?? guard.warning,
+    blocked: Boolean(guard.problem), error: guard.problem,
   };
 }
 

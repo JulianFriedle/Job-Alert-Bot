@@ -6,11 +6,12 @@
 //
 // Stopping must not quietly cost jobs: there is no new default page limit (the
 // strategies keep their built-in caps; `maxPages` only applies when a source
-// sets it), an "empty" page is one that yielded no jobs at all (a page of
-// already-seen jobs is not empty), and only hard evidence — the host refusing
-// connections — marks the result incomplete (`problem`), which keeps the run
-// from expiring jobs that simply weren't reached. A failure streak (timeouts)
-// is reported as a `warning` only, like the soft causes in the Indeed scraper.
+// sets it), and an "empty" page is one that yielded no jobs at all (a page of
+// already-seen jobs is not empty). When failures end the pagination — the
+// host refusing connections, or a streak of failed pages — pages are known to
+// be unread: that is a `problem`, the result is incomplete, and the run must
+// not expire jobs that simply weren't reached. A single failure the walk
+// recovers from, and the normal end of a list, are not.
 // Pure, unit-tested in test/pagination-guard.test.js.
 
 // Errors that mean "the host refuses us", not "this page is broken".
@@ -22,20 +23,20 @@ export function createPaginationGuard({ maxPages = Infinity, maxEmpty = 3, maxEr
   let errorStreak = 0;
   let refused = 0;
   let stopReason = null;
-  let problem = null;   // hard: the result is incomplete
-  let warning = null;   // soft: worth showing, not worth skipping expiry for
+  let problem = null;   // pagination ended by failures: the result is incomplete
 
-  const stop = (reason, kind = null) => {
+  const stop = (reason, isProblem = false) => {
     stopReason ||= reason;
-    if (kind === 'problem') problem ||= reason;
-    if (kind === 'warning') warning ||= reason;
+    if (isProblem) problem ||= reason;
   };
 
   return {
     get stopReason() { return stopReason; },
     get problem() { return problem; },
-    get warning() { return warning; },
     get pages() { return pages; },
+
+    // A failure the caller can't continue after (one loop gives up on it).
+    giveUp(reason) { stop(reason, true); },
 
     // Ask before each further page.
     canFetch() {
@@ -60,9 +61,9 @@ export function createPaginationGuard({ maxPages = Infinity, maxEmpty = 3, maxEr
       const msg = String(err?.message ?? err ?? '');
       const code = msg.match(REFUSED)?.[0];
       if (code && ++refused >= maxRefused) {
-        stop(`Host bricht Verbindungen ab (${code}) – Paginierung nach Seite ${pages} abgebrochen`, 'problem');
+        stop(`Host bricht Verbindungen ab (${code}) – Paginierung nach Seite ${pages} abgebrochen`, true);
       } else if (++errorStreak >= maxErrors) {
-        stop(`${maxErrors} Seiten in Folge fehlgeschlagen – Paginierung nach Seite ${pages} beendet`, 'warning');
+        stop(`${maxErrors} Seiten in Folge fehlgeschlagen – Paginierung nach Seite ${pages} abgebrochen`, true);
       }
     },
   };
