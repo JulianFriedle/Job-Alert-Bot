@@ -80,7 +80,7 @@ test('parseQuestions: tolerates broken/missing JSON', () => {
 // A required consent checkbox had no producer: it was never harvested, so the
 // application went to review "complete" and failed at submit every time.
 const { hasChoices, isTickAnswer, CHECKBOX_OPTIONS } = await import('../src/questions.js');
-const { fieldsToQuestions, fillAnswerInPage } = await import('../src/appliers/common.js');
+const { fieldsToQuestions, fillAnswerInPage, fillAnswers } = await import('../src/appliers/common.js');
 
 test('a harvested checkbox becomes a Ja/Nein choice question', () => {
   const qs = fieldsToQuestions([
@@ -122,4 +122,21 @@ test('isTickAnswer and the in-page fill agree on what ticks a box', () => {
   // its yes-pattern identical.
   assert.ok(fillAnswerInPage.toString().includes('/^(ja|yes|y|true|1|x|✓|✔|checked|an|on)$/i'));
   assert.ok(isTickAnswer.toString().includes('/^(ja|yes|y|true|1|x|✓|✔|checked|an|on)$/i'));
+});
+
+test('fillAnswers hands each question its type, so only checkbox questions touch checkboxes', async () => {
+  const calls = [];
+  const page = {
+    evaluate: async (fn, args) => { calls.push(args); return true; },
+    waitForTimeout: async () => {},
+  };
+  await fillAnswers(page, [
+    { label: 'Berufserfahrung (Jahre)', type: 'number', answer: '1' },
+    { label: 'Ich akzeptiere die AGB', type: 'checkbox', answer: 'Ja' },
+    { label: 'Ohne Antwort', type: 'text', answer: null },
+  ]);
+  assert.deepEqual(calls.map(c => [c.label, c.type, c.value]), [
+    ['Berufserfahrung (Jahre)', 'number', '1'],
+    ['Ich akzeptiere die AGB', 'checkbox', 'Ja'],
+  ]);
 });

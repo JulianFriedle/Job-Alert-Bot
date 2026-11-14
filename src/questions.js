@@ -23,8 +23,9 @@ export function hasChoices(q) {
   return CHOICE_TYPES.includes(q?.type) && Array.isArray(q.options) && q.options.length > 0;
 }
 
-// Whether a checkbox answer means "tick it" — tolerant of how it was typed
-// (GUI option, Telegram reply, an older library entry).
+// Whether a checkbox answer means "tick it". Stored answers are "Ja"/"Nein"
+// (applyAnswer only accepts an option); the in-page fill uses the same
+// pattern, so keep them identical (a test checks it).
 export function isTickAnswer(value) {
   return /^(ja|yes|y|true|1|x|✓|✔|checked|an|on)$/i.test(String(value ?? '').trim());
 }
