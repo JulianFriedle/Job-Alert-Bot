@@ -670,8 +670,11 @@ By hand it looks like this (paths are examples; the desktop app additionally nee
 ```
 
 The desktop app picks a free port and writes its address to `mcp-endpoint.json` in its data
-folder on start, which the MCP process reads. Elsewhere the MCP process uses
-`http://127.0.0.1:$GUI_PORT` from `.env`; override either with `JOB_ALERT_URL`. Tools take an optional
+folder on start, which the MCP process reads; while the desktop app is closed the tools answer
+"Job-Alert-App läuft nicht" rather than guessing a port. Elsewhere the MCP process uses
+`http://127.0.0.1:$GUI_PORT` from `.env`; override either with `JOB_ALERT_URL`. For the Linux
+AppImage the snippet starts the `.AppImage` file itself (its mount point changes on every launch),
+so it keeps working after a restart. Tools take an optional
 `clientId` (default: `MCP_CLIENT_ID`, else the default client).
 
 **Tools, by tier**
@@ -692,20 +695,21 @@ sends the version it read, so a concurrent edit is reported as a conflict instea
 **Einstellungen → MCP-Server**. Unlocked, the assistant may start runs (Anthropic cost per
 analyzed job — a large backlog is quickly several euros), generate tailored documents and cover
 letters (stronger model, up to 4 calls per click), send Telegram test messages and *prepare*
-applications. The same button guards the settings that make every later run cost more:
-`ANALYZER_MODEL`, `COVER_LETTER_MODEL`, `DOCS_HUMANIZE` and `CRON_SCHEDULE` — while locked, the
-assistant can read but not change them (also not through the wizard). **Wieder sperren** locks it
+applications. The same button guards the settings that make every later run cost more or send more
+messages: `ANALYZER_MODEL`, `COVER_LETTER_MODEL`, `DOCS_HUMANIZE`, `CRON_SCHEDULE`,
+`MIN_DESCRIPTION_CHARS`, `MIN_RELEVANCE_SCORE`, `TELEGRAM_NOTIFICATIONS` and
+`EXPIRY_NOTIFICATIONS` — while locked, the assistant can read but not change them (also not
+through the wizard, where leaving such a field out counts as a change, since the wizard would reset it). **Wieder sperren** locks it
 again; the switch is checked on every call, so it applies immediately. The GUI server refuses
 these requests from the MCP process itself (403), not only the MCP tools.
 
 What stays open while locked: sources, filters, profile and the other settings are setup work and
 free to change — but the next **scheduled** run acts on them. A long list of new sources or a broad
-job-board search means more jobs to analyze; a lower `MIN_RELEVANCE_SCORE` means more Telegram
-alerts to your own chat. Look over what the assistant changed (it tells you; the server logs
+job-board search means more jobs to analyze. Look over what the assistant changed (it tells you; the server logs
 `MCP: …` lines for refused attempts).
 
 **Never exposed** — not even when unlocked, because they stay with you: approving, discarding
-or retrying applications (submission always needs your explicit go-ahead in the GUI/Telegram;
+or retrying applications (`enqueue_application` also cannot bring back one you discarded; submission always needs your explicit go-ahead in the GUI/Telegram;
 `APPLY_DRY_RUN` and the daily caps are untouched), platform credentials, CV upload/delete,
 backups and restore, updates, restart, creating/deleting clients, deleting or re-humanizing
 documents. The assistant also cannot change `MCP_ALLOW_ACTIONS` itself, nor the auto-apply

@@ -11,7 +11,7 @@ import {
   secretFieldsInStepBody, redactSetupSecrets, ACTIONS_REFUSAL,
   settingsRefusal, costFieldsInStepBody, COST_SETTINGS_KEYS, pinGuardedStepFields,
 } from '../src/mcp-policy.js';
-import { candidateBases } from '../src/mcp-tools.js';
+import { candidateBases, mcpLaunchCommand, summarizeSetupStatus } from '../src/mcp-tools.js';
 import { STEPS as WIZARD_STEPS } from '../src/setup.js';
 
 // ── fake api ────────────────────────────────────────────────────────────────
@@ -276,8 +276,13 @@ test('get_profile_template reads the injected template', async () => {
 });
 
 // ── action tools: locked vs unlocked ────────────────────────────────────────
-test('action tools are refused while locked — and make no POST', async () => {
-  const { call, api } = setup({ 'GET /api/mcp/info': { actionsEnabled: false } });
+test('action tools pass on the server\'s refusal while locked — one call, no extra check', async () => {
+  // What createHttpApi throws for the server's 403 { error: ACTIONS_REFUSAL }.
+  const refuse = () => { throw new Error(ACTIONS_REFUSAL); };
+  const { call, api } = setup({
+    'POST /api/run': refuse, 'POST /api/run/stop': refuse, 'POST /api/jobs/j/documents': refuse,
+    'POST /api/jobs/j/cover-letter': refuse, 'POST /api/clients/default/telegram-test': refuse, 'POST /api/applications': refuse,
+  });
   for (const [name, args] of [
     ['start_run', {}], ['stop_run', {}], ['generate_documents', { jobId: 'j' }],
     ['generate_cover_letter', { jobId: 'j' }], ['send_telegram_test', {}], ['enqueue_application', { jobId: 'j' }],
@@ -287,12 +292,12 @@ test('action tools are refused while locked — and make no POST', async () => {
     assert.equal(r.text, ACTIONS_REFUSAL);
     assert.match(r.text, /Einstellungen → MCP-Server/);
   }
-  assert.ok(api.calls.every(c => c.method === 'GET'));
+  assert.equal(api.calls.length, 6);
+  assert.ok(!api.calls.some(c => c.path === '/api/mcp/info'));
 });
 
 test('action tools post to the right path with the client once unlocked', async () => {
   const { call, api } = setup({
-    'GET /api/mcp/info': { actionsEnabled: true },
     'POST /api/run': { started: true },
     'POST /api/jobs/j%201/documents': { status: {} },
     'POST /api/applications': { application: {} },
@@ -416,12 +421,13 @@ test('setup status hides values the settings schema marks secret', () => {
 });
 
 test('cost-relevant settings need the red button; harmless ones do not', () => {
-  for (const k of ['ANALYZER_MODEL', 'COVER_LETTER_MODEL', 'DOCS_HUMANIZE', 'CRON_SCHEDULE']) {
+  for (const k of ['ANALYZER_MODEL', 'COVER_LETTER_MODEL', 'DOCS_HUMANIZE', 'CRON_SCHEDULE',
+    'MIN_DESCRIPTION_CHARS', 'MIN_RELEVANCE_SCORE', 'TELEGRAM_NOTIFICATIONS', 'EXPIRY_NOTIFICATIONS']) {
     assert.ok(COST_SETTINGS_KEYS.includes(k), k);
     assert.match(settingsRefusal([k], {}, false).error, /freischalten/);
     assert.equal(settingsRefusal([k], {}, true), null, `${k} allowed when unlocked`);
   }
-  assert.equal(settingsRefusal(['MIN_RELEVANCE_SCORE'], {}, false), null);
+  for (const k of ['SCRAPE_CONCURRENCY', 'EXPIRY_THRESHOLD_HOURS', 'CLIENTS_ENABLED']) assert.equal(settingsRefusal([k], {}, false), null, k);
   // A secret in the schema is refused like a protected key.
   assert.ok(settingsRefusal(['ANTHROPIC_API_KEY'], { ANTHROPIC_API_KEY: { type: 'secret' } }, true));
 });
@@ -429,23 +435,85 @@ test('cost-relevant settings need the red button; harmless ones do not', () => {
 test('a wizard step may keep the schedule unchanged while locked, not change it', () => {
   const tuning = WIZARD_STEPS.find(s => s.fields.some(f => f.key === 'CRON_SCHEDULE'));
   assert.ok(tuning);
-  const current = (k) => ({ CRON_SCHEDULE: '0 * * * *' })[k];
+  const current = (k) => ({ CRON_SCHEDULE: '0 * * * *', MIN_RELEVANCE_SCORE: '5' })[k];
   assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '0 * * * *', MIN_RELEVANCE_SCORE: 5 } }, WIZARD_STEPS, current, false), []);
-  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '* * * * *' } }, WIZARD_STEPS, current, false), ['CRON_SCHEDULE']);
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '0 * * * *', MIN_RELEVANCE_SCORE: 3 } }, WIZARD_STEPS, current, false), ['MIN_RELEVANCE_SCORE']);
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '* * * * *', MIN_RELEVANCE_SCORE: '5' } }, WIZARD_STEPS, current, false), ['CRON_SCHEDULE']);
   assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '* * * * *' } }, WIZARD_STEPS, current, true), []);
   // Fresh install: nothing stored, the status shows '' — empty on either side means the default.
-  const def = (k) => ({ CRON_SCHEDULE: '0 * * * *' })[k];
-  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '', MIN_RELEVANCE_SCORE: '6' } }, WIZARD_STEPS, () => undefined, false, def), []);
+  const def = (k) => ({ CRON_SCHEDULE: '0 * * * *', MIN_RELEVANCE_SCORE: '4' })[k];
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '', MIN_RELEVANCE_SCORE: '4' } }, WIZARD_STEPS, () => undefined, false, def), []);
   assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '0 * * * *' } }, WIZARD_STEPS, () => '', false, def), []);
-  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '' } }, WIZARD_STEPS, () => '0 8 * * *', false, def), ['CRON_SCHEDULE'],
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '' } }, WIZARD_STEPS, (k) => ({ CRON_SCHEDULE: '0 8 * * *' })[k], false, def), ['CRON_SCHEDULE'],
     'clearing a custom schedule is a change too');
+  // The wizard saves a missing or null field as empty, i.e. resets it: a change as well.
+  const custom = (k) => ({ CRON_SCHEDULE: '0 8 * * *', MIN_RELEVANCE_SCORE: '4' })[k];
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: null } }, WIZARD_STEPS, custom, false, def), ['CRON_SCHEDULE']);
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: {} }, WIZARD_STEPS, custom, false, def), ['CRON_SCHEDULE']);
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: {}, skip: true }, WIZARD_STEPS, custom, false, def), [], 'skipping saves nothing');
 });
 
-test('a stale endpoint file (its process is gone) is not used', async () => {
+test('Telegram on/off is gated in the wizard; an unchanged toggle is not', () => {
+  const tg = WIZARD_STEPS.find(s => s.fields.some(f => f.key === 'TELEGRAM_NOTIFICATIONS'));
+  const off = (k) => ({ TELEGRAM_NOTIFICATIONS: 'off', EXPIRY_NOTIFICATIONS: 'off' })[k];
+  const unset = () => '';
+  assert.deepEqual(costFieldsInStepBody({ id: tg.id, values: { TELEGRAM_NOTIFICATIONS: 'on', EXPIRY_NOTIFICATIONS: 'off' } }, WIZARD_STEPS, off, false), ['TELEGRAM_NOTIFICATIONS']);
+  assert.deepEqual(costFieldsInStepBody({ id: tg.id, values: { TELEGRAM_NOTIFICATIONS: 'off', EXPIRY_NOTIFICATIONS: false } }, WIZARD_STEPS, off, false), []);
+  // Unset = default on: 'on' / true is no change.
+  assert.deepEqual(costFieldsInStepBody({ id: tg.id, values: { TELEGRAM_NOTIFICATIONS: true, EXPIRY_NOTIFICATIONS: 'on' } }, WIZARD_STEPS, unset, false), []);
+});
+
+test('the setup-step response is redacted like the status', () => {
+  const status = { steps: [{ id: 'telegram', fields: [{ key: 'TELEGRAM_BOT_TOKEN', type: 'secret' }, { key: 'TELEGRAM_CHAT_ID', type: 'text' }],
+    values: { TELEGRAM_BOT_TOKEN: '123:LEAK', TELEGRAM_CHAT_ID: '987654' } }] };
+  const red = redactSetupSecrets({ ok: true, status }, { TELEGRAM_CHAT_ID: { type: 'secret' } });
+  assert.equal(red.ok, true);
+  assert.ok(!JSON.stringify(red).includes('LEAK'));
+  assert.ok(!JSON.stringify(red).includes('987654'));
+  assert.deepEqual(red.status.steps[0].secretsSet, { TELEGRAM_BOT_TOKEN: true, TELEGRAM_CHAT_ID: true });
+  assert.deepEqual(redactSetupSecrets({ error: 'x' }), { error: 'x' });
+});
+
+test('a redacted chat id counts as set, not as a missing field', () => {
+  const s = summarizeSetupStatus({ steps: [{ id: 'telegram', pending: true,
+    fields: [{ key: 'TELEGRAM_CHAT_ID', type: 'text', required: true }],
+    values: { TELEGRAM_CHAT_ID: '' }, secretsSet: { TELEGRAM_CHAT_ID: true } }] });
+  const f = s.steps[0].fields[0];
+  assert.equal(f.filled, true);
+  assert.equal(f.value, undefined);
+  assert.deepEqual(s.steps[0].missingRequired, []);
+});
+
+test('the AppImage snippet starts the AppImage file, not its per-launch mount', () => {
+  const env = { APPIMAGE: '/home/u/Apps/Job-Alert-Bot.AppImage', APPDIR: '/tmp/.mount_JobAbc' };
+  const r = mcpLaunchCommand({ execPath: '/tmp/.mount_JobAbc/job-alert-bot', scriptPath: '/tmp/.mount_JobAbc/resources/app/src/mcp-server.js', env });
+  assert.equal(r.command, env.APPIMAGE);
+  assert.equal(r.args[0], '-e');
+  assert.ok(!r.args[1].includes('.mount_'), 'no mount path baked in');
+  assert.match(r.args[1], /process\.env\.APPDIR/);
+  assert.match(r.args[1], /resources\/app\/src\/mcp-server\.js/);
+  assert.deepEqual(mcpLaunchCommand({ execPath: '/usr/bin/node', scriptPath: '/x/src/mcp-server.js', env: {} }),
+    { command: '/usr/bin/node', args: ['/x/src/mcp-server.js'] });
+});
+
+test('a stale endpoint file means the app is closed — no guessed port gets the token', async () => {
   const file = async () => JSON.stringify({ url: 'http://127.0.0.1:5123', pid: 999999 });
-  assert.deepEqual(await candidateBases({ GUI_PORT: '3000' }, file, () => false), ['http://127.0.0.1:3000']);
-  assert.deepEqual(await candidateBases({ GUI_PORT: '3000' }, file, () => true), ['http://127.0.0.1:5123', 'http://127.0.0.1:3000']);
+  const none = async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.deepEqual(await candidateBases({ GUI_PORT: '3000' }, file, () => false), []);
+  assert.deepEqual(await candidateBases({ GUI_PORT: '3000' }, file, () => true), ['http://127.0.0.1:5123']);
+  assert.deepEqual(await candidateBases({ GUI_PORT: '3000' }, none), ['http://127.0.0.1:3000']);
   assert.deepEqual(await candidateBases({ JOB_ALERT_URL: 'http://x:1/' }, file, () => true), ['http://x:1']);
+});
+
+test('createHttpApi with a stale endpoint file makes no request', async () => {
+  let fetched = 0;
+  const api = createHttpApi({
+    env: { MCP_API_TOKEN: 'tok' },
+    readFileImpl: async () => JSON.stringify({ url: 'http://127.0.0.1:5123', pid: -1 }),
+    fetchImpl: async () => { fetched++; return { ok: true, status: 200, text: async () => '{}' }; },
+  });
+  await assert.rejects(() => api.get('/api/stats'), /Job-Alert-App läuft nicht/);
+  assert.equal(fetched, 0);
 });
 
 test('wizard save from the assistant keeps secret and protected fields as stored', () => {

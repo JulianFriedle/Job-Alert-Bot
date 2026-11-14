@@ -33,6 +33,7 @@ import {
   pinGuardedStepFields,
   secretFieldsInStepBody, redactSetupSecrets,
 } from './mcp-policy.js';
+import { mcpLaunchCommand } from './mcp-tools.js';
 import { DEFAULT_PROMPTS, PROMPT_FIELDS, minimizePromptOverrides } from './prompts.js';
 import { getProfile, getSources, getFilters, getPrompts } from './client-config.js';
 import { PLATFORM_TYPES } from './scrapers/index.js';
@@ -268,7 +269,7 @@ const SETTINGS_SCHEMA = [
     help: 'Zufälliger String zum Signieren der Login-Sitzungen (sonst bei jedem Neustart neu → Logout). Neustart nötig.' },
 
   { key: 'MCP_ALLOW_ACTIONS', group: 'MCP-Server (KI-Assistent)', label: 'Kostenpflichtige KI-Aktionen', type: 'danger', default: 'false',
-    help: 'Gesperrt: Der KI-Assistent (Claude Desktop / Claude Code über MCP) kann Jobs, Läufe, Profil und Einstellungen lesen und pflegen, aber nichts auslösen, das Geld kostet oder nach außen wirkt. Freigeschaltet darf er Läufe starten (Anthropic-Kosten pro Job), Unterlagen und Anschreiben erstellen, Telegram-Nachrichten senden, Bewerbungen vorbereiten sowie Modelle und Zeitplan ändern. Abgesendet wird nie ohne deine Freigabe.' },
+    help: 'Gesperrt: Der KI-Assistent (Claude Desktop / Claude Code über MCP) kann Jobs, Läufe, Profil und Einstellungen lesen und pflegen, aber nichts auslösen, das Geld kostet oder nach außen wirkt. Freigeschaltet darf er Läufe starten (Anthropic-Kosten pro Job), Unterlagen und Anschreiben erstellen, Telegram-Nachrichten senden, Bewerbungen vorbereiten sowie Modelle, Zeitplan, Relevanz-Schwellen und Telegram-Benachrichtigungen ändern. Abgesendet wird nie ohne deine Freigabe.' },
   { key: 'MCP_API_TOKEN', group: 'MCP-Server (KI-Assistent)', label: 'MCP-Zugangstoken', type: 'secret',
     help: 'Nur nötig, wenn das Login aktiv ist (AUTH_ENABLED): Der MCP-Server meldet sich damit an der GUI an. Beliebiger langer Zufallsstring; derselbe Wert muss in der MCP-Konfiguration als MCP_API_TOKEN stehen.' },
 ];
@@ -620,11 +621,12 @@ function mcpLaunchInfo() {
   if (IS_DESKTOP) env.ELECTRON_RUN_AS_NODE = '1';
   env.APP_DATA_DIR = DATA_HOME;
   if (process.env.ENV_FILE_PATH) env.ENV_FILE_PATH = process.env.ENV_FILE_PATH;
-  const entry = { command: process.execPath, args: [scriptPath], env };
+  const { command, args } = mcpLaunchCommand({ execPath: process.execPath, scriptPath });
+  const entry = { command, args, env };
   const envFlags = Object.entries(env).map(([k, v]) => `-e ${k}=${shellQuote(v)}`).join(' ');
   return {
     desktopConfig: { mcpServers: { 'job-alert': entry } },
-    claudeCodeCommand: `claude mcp add job-alert ${envFlags} -- ${shellQuote(process.execPath)} ${shellQuote(scriptPath)}`,
+    claudeCodeCommand: `claude mcp add job-alert ${envFlags} -- ${[command, ...args].map(shellQuote).join(' ')}`,
   };
 }
 
@@ -1167,6 +1169,11 @@ const server = http.createServer(async (req, res) => {
         // it returns the EXISTING row when one exists. Answer honestly instead
         // of claiming "queued" while a terminal row silently blocked the insert.
         const app = createApplication(clientId, job.id, job.platform);
+        // Discarding is the user's decision (approve/discard/retry are closed to
+        // the assistant), so the assistant must not undo it by re-enqueuing.
+        if (app.state === 'discarded' && fromMcp) {
+          return sendJson(res, 409, { error: 'Diese Bewerbung hat der Nutzer verworfen. Wieder aufnehmen kann er sie nur selbst in der GUI.', application: app });
+        }
         if (app.state === 'discarded') {
           claimApplication(app.id, 'discarded', 'queued');
           updateApplication(app.id, { error: null });
