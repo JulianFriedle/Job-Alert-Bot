@@ -574,14 +574,16 @@ export async function scrapeSource(source) {
 
   // countDupes=false for infinite-scroll/load-more, where each extraction re-reads the
   // full visible list and the "duplicates" are expected re-reads, not real duplicate postings.
-  const addJobs = (jobs, countDupes = true) => {
+  // fromApi: jobs read from an intercepted JSON API carry real titles — the
+  // link filter is only for anchors picked off the page.
+  const addJobs = (jobs, countDupes = true, fromApi = false) => {
     let added = 0, dupes = 0;
     for (const job of jobs) {
       if (seenJobUrls.has(job.url)) { dupes++; continue; }
       seenJobUrls.add(job.url);
       // Pagination, legal links, "Stellenanzeige merken" … — never a job, and each
       // one would cost a detail-page fetch and a Claude call.
-      if (isNonJobLink(job.title, source.name)) { nonJobLinks.add(job.title); continue; }
+      if (!fromApi && isNonJobLink(job.title, source.name)) { nonJobLinks.add(job.title); continue; }
       allJobs.push({ ...job, id: generateId(job.url, job.title, job.company), source: source.name });
       added++;
     }
@@ -701,7 +703,7 @@ export async function scrapeSource(source) {
 
     // Merge general API-intercepted jobs
     if (generalApiJobs.size > 0) {
-      const genAdded = addJobs([...generalApiJobs.values()]);
+      const genAdded = addJobs([...generalApiJobs.values()], true, true);
       log(`  General API: ${generalApiJobs.size} intercepted (${genAdded} new)`);
     }
 
@@ -719,7 +721,7 @@ export async function scrapeSource(source) {
         if (json) {
           const before = generalApiJobs.size;
           extractJobsFromJson(json, source.url, source.name, generalApiJobs);
-          const added = addJobs([...generalApiJobs.values()]);
+          const added = addJobs([...generalApiJobs.values()], true, true);
           log(`  Config API (${source.apiUrl.slice(0, 70)}): ${generalApiJobs.size - before} parsed, ${added} new`);
         } else {
           log(`  Config API: request failed — falling back to DOM pagination`);
@@ -746,7 +748,7 @@ export async function scrapeSource(source) {
           if (!json) { log(`  API replay page ${pg}: fetch failed — stopping`); break; }
           extractJobsFromJson(json, source.url, source.name, generalApiJobs);
           // countDupes=false: re-reading the cumulative map isn't a real duplicate signal
-          const added = addJobs([...generalApiJobs.values()], false);
+          const added = addJobs([...generalApiJobs.values()], false, true);
           log(`  API replay page ${pg}: +${added} new (${allJobs.length} total)`);
           await page.waitForTimeout(400);
         } catch (err) { log(`  API replay page ${pg}: ERROR — ${err.message}`); break; }
@@ -755,7 +757,7 @@ export async function scrapeSource(source) {
 
     // Merge Azure Search API-intercepted jobs (e.g. Schaeffler)
     if (apiJobsMap.size > 0) {
-      const apiAdded = addJobs([...apiJobsMap.values()]);
+      const apiAdded = addJobs([...apiJobsMap.values()], true, true);
       log(`  Azure API-intercepted ${apiJobsMap.size} job(s) (${apiAdded} new)`);
 
       // If the source URL has a currentPage param, paginate by URL to capture remaining API pages
@@ -775,7 +777,7 @@ export async function scrapeSource(source) {
           await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
           await page.waitForTimeout(1500);
           if (apiJobsMap.size > prevSize) {
-            const pgAdded = addJobs([...apiJobsMap.values()]);
+            const pgAdded = addJobs([...apiJobsMap.values()], true, true);
             log(`  Azure API page ${pg}: ${apiJobsMap.size - prevSize} new job(s) (${pgAdded} added)`);
           } else {
             log(`  Azure API page ${pg}: no new jobs — stopping`);
@@ -820,7 +822,7 @@ export async function scrapeSource(source) {
               await waitForFirstJob(page);
               const { jobs: pgJobs } = await extractJobsAndPagination(page, source);
               let pgAdded = addJobs(pgJobs);
-              if (generalApiJobs.size > 0) pgAdded += addJobs([...generalApiJobs.values()], false);
+              if (generalApiJobs.size > 0) pgAdded += addJobs([...generalApiJobs.values()], false, true);
               log(`  Config-page ${pg + 1}: ${pgJobs.length} found, ${pgAdded} new`);
               if (pgAdded === 0 && pg > 1) { log(`  Config-page: no new jobs — stopping`); break; }
             } catch (err) {
@@ -858,7 +860,7 @@ export async function scrapeSource(source) {
 
           const { jobs: pageJobs } = await extractJobsAndPagination(page, source);
           let added = addJobs(pageJobs);
-          if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false);
+          if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
           log(`  Page ${i + 2}: ${pageJobs.length} job(s) found, ${added} new`);
         } catch (err) {
           // On abort Playwright tears the browser down under us, so the in-flight
@@ -889,8 +891,8 @@ export async function scrapeSource(source) {
           let added = source.apiOnly ? 0 : addJobs(visible, false);
           // Also merge jobs from API responses fired by the click (e.g. Bosch /api/filter/query?page=N).
           // Re-reading the cumulative maps is cheap — addJobs dedupes, so only genuinely new postings count.
-          if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false);
-          if (apiJobsMap.size > 0)     added += addJobs([...apiJobsMap.values()], false);
+          if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
+          if (apiJobsMap.size > 0)     added += addJobs([...apiJobsMap.values()], false, true);
           log(`  Load-more ${action}: +${added} new (${allJobs.length} total)`);
           if (added === 0) { consecutiveZeros++; if (consecutiveZeros >= 2) { log(`  Load-more: end of results`); break; } }
           else { consecutiveZeros = 0; }
@@ -923,7 +925,7 @@ export async function scrapeSource(source) {
 
           const { jobs: pageJobs } = await extractJobsAndPagination(page, source);
           let added = addJobs(pageJobs);
-          if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false);
+          if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
           log(`  Next-click ${action}: +${added} new (${allJobs.length} total)`);
 
           if (added === 0) {
@@ -951,7 +953,8 @@ export async function scrapeSource(source) {
   }
 
   if (nonJobLinks.size > 0) {
-    const shown = [...nonJobLinks].slice(0, 5).map(t => `"${t}"`).join(', ');
+    const shown = [...nonJobLinks].slice(0, 5)
+      .map(t => `"${t.length > 60 ? `${t.slice(0, 57)}…` : t}"`).join(', ');
     log(`  ${nonJobLinks.size} Navigations-/UI-Link(s) ausgelassen: ${shown}${nonJobLinks.size > 5 ? ', …' : ''}`);
   }
   log(`Finished ${source.name}: ${allJobs.length} unique job(s)${duplicateCount > 0 ? `, ${duplicateCount} duplicate(s) skipped` : ''}${siteTotal ? ` (site announced ${siteTotal})` : ''}`);

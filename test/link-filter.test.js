@@ -52,7 +52,28 @@ test('real job titles that share words with the chrome survive', () => {
     'Werkstudent Accessibility Testing',
     'Betreuer Lieferantenqualität',
     'Executive Assistant to the Board',
+    // Start like marketing links, but are listings (review of #38)
+    'Arbeiten bei Bosch als Softwareentwickler (m/w/d)',
+    'Arbeiten für die Zukunft: Software Engineer',
+    'Alle Stellen Controlling',
+    'Weitere Angebote Mitarbeiter (m/w/d)',
+    'Alle Angebote Kundenservice',
+    'Weitere Stellen im Bereich Vertrieb',
   ]) assert.equal(isNonJobLink(text, 'Diehl'), false, text);
+});
+
+test('a gender marker always means a job title', () => {
+  for (const text of [
+    'Impressum (m/w/d)', 'Seite 2 (w/m/d)', 'Karriere bei Diehl (m/f/d)',
+    'Initiativbewerbung (m/w/d)', 'Stelle merken (all genders)', 'Kontakt (gn)', 'Datenschutz (m|w|d)',
+  ]) assert.equal(isNonJobLink(text, 'Diehl'), false, text);
+});
+
+test('the current-page suffix and invisible characters do not hide pagination', () => {
+  assert.equal(isNonJobLink('Gehe zu Seite 1 (aktuelle Seite)'), true);
+  assert.equal(isNonJobLink('Page 3 (current)'), true);
+  assert.equal(isNonJobLink('Gehe zu\u200b Seite 3'), true);
+  assert.equal(isNonJobLink('Impres\u00adsum'), true);
 });
 
 test('empty link text is never a job', () => {
