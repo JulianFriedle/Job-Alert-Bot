@@ -28,7 +28,19 @@ const api = async (url, opts) => {
 // throw away what the user is typing.
 const cfgVersion = { sources: null, profile: null, prompts: null };
 const cfgDirty = { sources: false, profile: false, prompts: false };
-const cfgLoading = { sources: false, profile: false, prompts: false };
+// Per-tab load sequence: only the newest request for the current client may
+// render. Starting a load, saving and switching clients all move it on, so a
+// slower, older response (another client's, or from before a save) is dropped.
+const cfgSeq = { sources: 0, profile: 0, prompts: 0 };
+const cfgInFlight = { sources: 0, profile: 0, prompts: 0 };
+// Start a load for `name`. A background (quiet) load is skipped while another
+// one is running; a normal load always goes ahead and wins.
+function beginCfgLoad(name, quiet) {
+  if (quiet && cfgInFlight[name] > 0) return null;
+  cfgInFlight[name]++;
+  return { seq: ++cfgSeq[name], client: currentClientId };
+}
+const cfgLoadCurrent = (name, ticket) => ticket.seq === cfgSeq[name] && ticket.client === currentClientId;
 const CFG_FORMS = { sources: '#source-list', profile: '#profile-groups', prompts: '#prompts-groups' };
 for (const [name, sel] of Object.entries(CFG_FORMS)) {
   const el = document.querySelector(sel);
@@ -1024,11 +1036,11 @@ let sourcesLoaded = false;
 // `quiet`: a background refresh (focus, reopened tab) — no error toast, and
 // never over edits the user started while the request was in flight.
 async function loadSources({ quiet = false } = {}) {
-  if (cfgLoading.sources) return false;
-  cfgLoading.sources = true;
+  const ticket = beginCfgLoad('sources', quiet);
+  if (!ticket) return false;
   try {
     const cfg = await api('/api/sources');
-    if (quiet && cfgDirty.sources) return false;
+    if (!cfgLoadCurrent('sources', ticket) || (quiet && cfgDirty.sources)) return false;
     renderSources(cfg.sources || []);
     cfgVersion.sources = cfg.version ?? null;
     cfgDirty.sources = false;
@@ -1037,7 +1049,7 @@ async function loadSources({ quiet = false } = {}) {
   } catch (err) {
     if (!quiet) toast(t('toast.error') + err.message);
     return false;
-  } finally { cfgLoading.sources = false; }
+  } finally { cfgInFlight.sources--; }
 }
 
 const SOURCE_TYPES = ['careers-page', 'linkedin', 'stepstone', 'indeed'];
@@ -1134,6 +1146,7 @@ $('#save-sources').addEventListener('click', async () => {
     }
   }
   try {
+    cfgSeq.sources++;
     const r = await api('/api/sources', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sources, baseVersion: cfgVersion.sources }, null, 2),
@@ -1701,12 +1714,12 @@ function setPath(o, dotted, value) {
 // are not part of the stale-data tracking, so a background refresh must not
 // rebuild them under the user.
 async function loadProfile({ quiet = false, formOnly = false } = {}) {
-  if (cfgLoading.profile) return false;
-  cfgLoading.profile = true;
+  const ticket = beginCfgLoad('profile', quiet);
+  if (!ticket) return false;
   let ok = false;
   try {
     const { profile, version } = await api('/api/profile');
-    if (!(quiet && cfgDirty.profile)) {
+    if (cfgLoadCurrent('profile', ticket) && !(quiet && cfgDirty.profile)) {
       profileData = profile || {};
       renderProfile();
       cfgVersion.profile = version ?? null;
@@ -1716,8 +1729,10 @@ async function loadProfile({ quiet = false, formOnly = false } = {}) {
     }
   } catch (err) {
     if (!quiet) toast(t('toast.error') + err.message);
-  } finally { cfgLoading.profile = false; }
-  if (!formOnly) {
+  } finally { cfgInFlight.profile--; }
+  // The other cards follow the client, not the form: only for the request
+  // that is still current.
+  if (!formOnly && cfgLoadCurrent('profile', ticket)) {
     loadCredentials();   // Plattform-Zugänge card lives on the same tab
     loadDocsSetup();     // Bewerbungsunterlagen card too
   }
@@ -1775,6 +1790,7 @@ $('#save-profile').addEventListener('click', async () => {
     }
   }
   try {
+    cfgSeq.profile++;
     const r = await api('/api/profile', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profile: next, baseVersion: cfgVersion.profile }),
@@ -2062,11 +2078,11 @@ let promptsLoaded = false;
 let promptDefaults = {};
 
 async function loadPrompts({ quiet = false } = {}) {
-  if (cfgLoading.prompts) return false;
-  cfgLoading.prompts = true;
+  const ticket = beginCfgLoad('prompts', quiet);
+  if (!ticket) return false;
   try {
     const { fields, prompts, defaults, version } = await api('/api/prompts');
-    if (quiet && cfgDirty.prompts) return false;
+    if (!cfgLoadCurrent('prompts', ticket) || (quiet && cfgDirty.prompts)) return false;
     promptDefaults = defaults || {};
     renderPrompts(fields, prompts);
     cfgVersion.prompts = version ?? null;
@@ -2076,7 +2092,7 @@ async function loadPrompts({ quiet = false } = {}) {
   } catch (err) {
     if (!quiet) toast(t('toast.error') + err.message);
     return false;
-  } finally { cfgLoading.prompts = false; }
+  } finally { cfgInFlight.prompts--; }
 }
 
 function renderPrompts(fields, values) {
@@ -2114,6 +2130,7 @@ $('#save-prompts').addEventListener('click', async () => {
   const prompts = {};
   for (const ta of $$('#prompts-groups textarea[data-key]')) prompts[ta.dataset.key] = ta.value;
   try {
+    cfgSeq.prompts++;
     const r = await api('/api/prompts', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompts, baseVersion: cfgVersion.prompts }),
@@ -2178,7 +2195,7 @@ onLangChange(() => {
   // A form with unsaved edits keeps its old-language labels until it is
   // saved or reloaded — rebuilding it would drop what was typed.
   if (profileLoaded && !cfgDirty.profile) renderProfile();
-  if (promptsLoaded && !cfgDirty.prompts) loadPrompts({ quiet: true });
+  if (promptsLoaded && !cfgDirty.prompts) loadPrompts();
   if ($('#backup-list')?.querySelector('table')) loadBackups();
 });
 
@@ -2214,7 +2231,7 @@ function switchClient(id) {
   try { localStorage.setItem('clientId', id); } catch { /* ignore */ }
   // Invalidate per-client caches so the next tab visit refetches for this client.
   sourcesLoaded = profileLoaded = promptsLoaded = false;
-  for (const k of Object.keys(cfgVersion)) { cfgVersion[k] = null; cfgDirty[k] = false; }
+  for (const k of Object.keys(cfgVersion)) { cfgVersion[k] = null; cfgDirty[k] = false; cfgSeq[k]++; }
   // Refresh whatever is on screen for the new client.
   loadJobs();
   const active = $('.tab.active')?.dataset.tab;
