@@ -1184,6 +1184,22 @@ export async function fetchDescriptions(jobs, options = {}) {
   }
 }
 
+// One posting reachable from two configured sources (a group career page and a
+// division's page, or a job board and the company site sharing a URL) yields
+// the same id twice. Keep the first: the second copy would cost another
+// detail-page fetch and be counted as new for both sources.
+export function uniqueJobsById(jobs) {
+  const seen = new Set();
+  const unique = [];
+  const dropped = [];
+  for (const job of jobs) {
+    if (seen.has(job.id)) { dropped.push(job); continue; }
+    seen.add(job.id);
+    unique.push(job);
+  }
+  return { unique, dropped };
+}
+
 export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE_CONCURRENCY) || 4) {
   const allJobs = [];
   const stats = {};
@@ -1231,6 +1247,15 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
     jitterMs: 2000,
     stopWhen: isAborted,
   });
+
+  const { unique, dropped } = uniqueJobsById(allJobs);
+  if (dropped.length > 0) {
+    // Counted as duplicates of the source that lost its copy.
+    for (const job of dropped) if (stats[job.source]) stats[job.source].duplicates++;
+    log(`${dropped.length} Stelle(n) über mehrere Quellen doppelt gefunden — jeweils nur einmal übernommen`);
+    allJobs.length = 0;
+    allJobs.push(...unique);
+  }
 
   // The run's "seen" picture is incomplete when a source was blocked or crashed,
   // when the queue was dropped by an abort, or when a source never reported at

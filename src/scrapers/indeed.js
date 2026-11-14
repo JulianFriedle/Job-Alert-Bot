@@ -3,7 +3,7 @@
 // including the `indeedApplyEnabled` flag → easyApply is known at scrape time.
 // Indeed sits behind Cloudflare: challenges are detected and reported as a
 // blocked (empty) result instead of throwing, so the run continues.
-import { generateId } from '../scraper.js';
+import { generateId, isThinDescription, minDescriptionChars, DEFAULT_MIN_DESCRIPTION_CHARS } from '../scraper.js';
 import { launchPlatformBrowser, newHardenedContext, humanDelay, isChallengePage } from './browser.js';
 import { isAborted } from '../run-control.js';
 
@@ -13,6 +13,15 @@ const MAX_PAGES_CAP = 10;
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [indeed] ${msg}`);
+}
+
+// The search card's snippet saves the detail-page visit when it is a real
+// description; a short teaser (the usual case) is dropped so fetchDescriptions
+// still loads the full posting. Never below the default floor: with
+// MIN_DESCRIPTION_CHARS=0 every teaser would otherwise replace the posting.
+export function snippetAsDescription(snippet) {
+  const floor = Math.max(minDescriptionChars(), DEFAULT_MIN_DESCRIPTION_CHARS);
+  return isThinDescription(snippet, floor) ? '' : String(snippet).slice(0, 4000);
 }
 
 function buildSearchUrl(search, start) {
@@ -133,7 +142,7 @@ export async function scrape(source) {
             url: jobUrl,
             location: c.location,
             company: c.company,
-            description: '', // detail page text is fetched later (fetchDescriptions)
+            description: snippetAsDescription(c.snippet),
             source: source.name,
             platform: 'indeed',
             easyApply: c.easyApply == null ? null : (c.easyApply ? 1 : 0),
