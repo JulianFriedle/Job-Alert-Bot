@@ -11,6 +11,7 @@ import { runHostLimited, registrableDomain } from './host-limiter.js';
 import { isAborted } from './run-control.js';
 import { isNonJobLink } from './link-filter.js';
 import { cleanJobTitle } from './title-cleanup.js';
+import { createPaginationGuard, DEFAULT_MAX_PAGES } from './pagination-guard.js';
 import { CONFIG_DIR } from './paths.js';
 
 
@@ -590,6 +591,11 @@ export async function scrapeSource(source) {
   const visitedUrls = new Set();
   const seenJobUrls = new Set();
   const nonJobLinks = new Set(); // link texts dropped as navigation/UI chrome
+  // Per-source knobs (config): how many pages at most, how long one page load
+  // may take. The guard also stops on empty streaks, failures and refused
+  // connections (see pagination-guard.js).
+  const guard = createPaginationGuard({ maxPages: Number(source.maxPages) > 0 ? Number(source.maxPages) : DEFAULT_MAX_PAGES });
+  const gotoTimeout = Number(source.gotoTimeout) > 0 ? Number(source.gotoTimeout) : 30000;
   let duplicateCount = 0;
   let siteTotal = null; // job entries skipped because their URL was already seen this run
 
@@ -708,11 +714,11 @@ export async function scrapeSource(source) {
     // Some sites (e.g. Rheinmetall) block domcontentloaded indefinitely via consent scripts.
     // Fall back to 'commit' (first bytes received) so the goto never hangs.
     try {
-      await page.goto(source.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.goto(source.url, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
     } catch (e) {
       if (e.message.includes('Timeout')) {
         log(`  domcontentloaded timed out — retrying with commit`);
-        await page.goto(source.url, { waitUntil: 'commit', timeout: 15000 });
+        await page.goto(source.url, { waitUntil: 'commit', timeout: Math.min(15000, gotoTimeout) });
         await page.waitForTimeout(4000); // give JS time to render content
       } else {
         throw e;
@@ -802,7 +808,7 @@ export async function scrapeSource(source) {
           visitedUrls.add(pgUrl);
           const prevSize = apiJobsMap.size;
           await page.waitForTimeout(1500);
-          await page.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          await page.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
           await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
           await page.waitForTimeout(1500);
           if (apiJobsMap.size > prevSize) {
@@ -835,8 +841,8 @@ export async function scrapeSource(source) {
         // Page 1 (offset 0) was already scraped; the remaining pages are
         // 1..numPages-1 — `pg < numPages`, not numPages+1, or the last request
         // points one full page past the end.
-        for (let pg = 1; pg < Math.min(numPages, 50); pg++) {
-          if (isAborted()) break;
+        for (let pg = 1; pg < numPages; pg++) {
+          if (isAborted() || !guard.canFetch()) break;
           const pgUrl = new URL(source.url);
           // 'index' mode: param is a 0-based page index (page,1,2,…). Default 'offset' mode: param is a row offset (step,2·step,…).
           const value = source.paginationMode === 'index' ? pg : pg * step;
@@ -846,16 +852,19 @@ export async function scrapeSource(source) {
             visitedUrls.add(pgStr);
             await page.waitForTimeout(1500);
             try {
-              await page.goto(pgStr, { waitUntil: 'domcontentloaded', timeout: 30000 });
+              await page.goto(pgStr, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
               await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
               await waitForFirstJob(page);
               const { jobs: pgJobs } = await extractJobsAndPagination(page, source);
               let pgAdded = addJobs(pgJobs);
               if (generalApiJobs.size > 0) pgAdded += addJobs([...generalApiJobs.values()], false, true);
               log(`  Config-page ${pg + 1}: ${pgJobs.length} found, ${pgAdded} new`);
+              guard.page(pgAdded);
               if (pgAdded === 0 && pg > 1) { log(`  Config-page: no new jobs — stopping`); break; }
             } catch (err) {
+              if (isAborted()) { log(`  Config-page ${pg + 1}: abgebrochen`); break; }
               log(`  Config-page ${pg + 1}: ERROR — ${err.message}`);
+              guard.error(err);
             }
           }
         }
@@ -876,14 +885,14 @@ export async function scrapeSource(source) {
       log(`  Visiting ${remainingPages.length} more page(s)...`);
 
       for (let i = 0; i < remainingPages.length; i++) {
-        if (isAborted()) break;
+        if (isAborted() || !guard.canFetch()) break;
         const pageUrl = remainingPages[i];
         if (visitedUrls.has(pageUrl)) continue;
         visitedUrls.add(pageUrl);
 
         await page.waitForTimeout(2000);
         try {
-          await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
           await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
           await waitForFirstJob(page);
 
@@ -891,11 +900,13 @@ export async function scrapeSource(source) {
           let added = addJobs(pageJobs);
           if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
           log(`  Page ${i + 2}: ${pageJobs.length} job(s) found, ${added} new`);
+          guard.page(added);
         } catch (err) {
           // On abort Playwright tears the browser down under us, so the in-flight
           // navigation always throws — that's the stop working, not a failure.
           if (isAborted()) { log(`  Page ${i + 2}: abgebrochen`); break; }
           log(`  Page ${i + 2}: ERROR — ${err.message}`);
+          guard.error(err);
         }
       }
 
@@ -908,7 +919,7 @@ export async function scrapeSource(source) {
       const MAX_ACTIONS = 100;
 
       for (let action = 1; action <= MAX_ACTIONS; action++) {
-        if (isAborted()) break;
+        if (isAborted() || !guard.canFetch()) break;
         // Try load-more first (infinite scroll), then next-button (paginated SPA)
         const loadMoreClicked = await clickLoadMore(page);
 
@@ -923,6 +934,7 @@ export async function scrapeSource(source) {
           if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
           if (apiJobsMap.size > 0)     added += addJobs([...apiJobsMap.values()], false, true);
           log(`  Load-more ${action}: +${added} new (${allJobs.length} total)`);
+          guard.page(added);
           if (added === 0) { consecutiveZeros++; if (consecutiveZeros >= 2) { log(`  Load-more: end of results`); break; } }
           else { consecutiveZeros = 0; }
 
@@ -956,6 +968,7 @@ export async function scrapeSource(source) {
           let added = addJobs(pageJobs);
           if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
           log(`  Next-click ${action}: +${added} new (${allJobs.length} total)`);
+          guard.page(added);
 
           if (added === 0) {
             consecutiveZeros = (consecutiveZeros ?? 0) + 1;
@@ -986,8 +999,14 @@ export async function scrapeSource(source) {
       .map(t => `"${t.length > 60 ? `${t.slice(0, 57)}…` : t}"`).join(', ');
     log(`  ${nonJobLinks.size} Navigations-/UI-Link(s) ausgelassen: ${shown}${nonJobLinks.size > 5 ? ', …' : ''}`);
   }
+  if (guard.stopReason) log(`  Paginierung beendet: ${guard.stopReason}`);
   log(`Finished ${source.name}: ${allJobs.length} unique job(s)${duplicateCount > 0 ? `, ${duplicateCount} duplicate(s) skipped` : ''}${siteTotal ? ` (site announced ${siteTotal})` : ''}`);
-  return { jobs: allJobs, duplicates: duplicateCount, siteTotal: siteTotal ?? null };
+  // A pagination cut short by failures leaves the result incomplete: say why,
+  // and keep the run from expiring jobs that simply weren't reached.
+  return {
+    jobs: allJobs, duplicates: duplicateCount, siteTotal: siteTotal ?? null,
+    blocked: Boolean(guard.problem), error: guard.problem,
+  };
 }
 
 // Extract the main description text from an already-loaded detail page.
