@@ -139,7 +139,7 @@ Every release is published as a multi-arch image (amd64 + arm64):
 docker pull ghcr.io/julianfriedle/job-alert-bot:latest
 ```
 
-Tags: `latest`, the exact version (`2.1.0`) and the minor line (`2.1`). To use it with
+Tags: `latest`, the exact version (`2.2.0`) and the minor line (`2.2`). To use it with
 the bundled `docker-compose.yml`, replace `build: .` / `image: job-alert-bot` in both
 services with `image: ghcr.io/julianfriedle/job-alert-bot:latest`. See [DEPLOY.md](DEPLOY.md).
 
@@ -635,7 +635,7 @@ pm2 save         # persist across reboots
 A version tag builds everything — `.github/workflows/release.yml`:
 
 ```bash
-npm version minor          # bumps package.json, commits, tags v2.1.0
+npm version minor          # bumps package.json, commits, tags v2.3.0
 git push --follow-tags
 ```
 
