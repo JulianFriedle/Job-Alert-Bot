@@ -569,7 +569,7 @@ changed later.
 4. **About you** — name, short profile, skills, programming, tools, education, work history, language skills
 5. **What you're looking for** — desired roles, locations, industries, contract types, minimum salary, dealbreakers
 6. *(optional)* **Job boards** — tick LinkedIn / StepStone / Indeed and enter one search term + location (pre-filled from your desired roles); no account needed
-7. **Career pages** — company sites to watch. At least one source is required overall; a job-board search from step 6 counts
+7. **Career pages** — company sites to watch. At least one source is required overall; a job-board search from step 6 counts. On a first run with no career page yet (the desktop app always starts that way: it keeps its data in its own folder, apart from the example list `config/jobs.json` that ships with it), the step offers those example companies to **accept or decline**, and points to *Quellen → Importieren* and *Backups → Wiederherstellen* for moving over from another installation
 8. *(optional)* **Title filters** — allowlist, blocklist, priority keywords and locations
 9. *(optional)* **How often & how strict** — schedule as a plain choice (hourly … once a day) and the score threshold
 
