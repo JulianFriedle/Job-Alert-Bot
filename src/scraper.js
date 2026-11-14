@@ -12,6 +12,7 @@ import { isAborted } from './run-control.js';
 import { isNonJobLink } from './link-filter.js';
 import { cleanJobTitle } from './title-cleanup.js';
 import { createPaginationGuard } from './pagination-guard.js';
+import { isPersonioUrl, fetchPersonioJobs } from './scrapers/personio.js';
 import { CONFIG_DIR } from './paths.js';
 
 
@@ -1273,6 +1274,57 @@ export function withSnippetFallback(job, aborted = isAborted()) {
   return job;
 }
 
+// Personio sites (#41): the public XML feed when the source asks for it
+// (`personioFeed: true`), and as the fallback when the page scrape fails or
+// finds nothing (APworks timed out on every run). Not by default for a page
+// that works: the feed's job URLs need not match the scraped ones, and new
+// ids would report every job as new and the old ones as expired.
+async function personioJobs(source) {
+  const jobs = await fetchPersonioJobs(source);
+  const seen = new Set();
+  const out = [];
+  for (const job of jobs) {
+    if (seen.has(job.url)) continue;
+    seen.add(job.url);
+    const title = cleanJobTitle(job.title).title;
+    out.push({ ...job, title, id: generateId(job.url, title, job.company), source: source.name });
+  }
+  log(`Personio-Feed ${source.name}: ${out.length} Stelle(n) inkl. Beschreibung`);
+  return { jobs: out, duplicates: 0, siteTotal: out.length };
+}
+
+// Exported with injectable page/feed readers for tests.
+export async function scrapeCareerSource(source, { scrapePage = scrapeSource, readFeed = personioJobs } = {}) {
+  if (!isPersonioUrl(source.url)) return scrapePage(source);
+  if (source.personioFeed === true) {
+    try { return await readFeed(source); }
+    catch (err) {
+      if (isAborted()) throw err;
+      log(`Personio-Feed ${source.name}: ${err.message} — versuche die Seite`);
+      return scrapePage(source);
+    }
+  }
+  let result;
+  try {
+    result = await scrapePage(source);
+    if (result.jobs.length > 0) return result;
+  } catch (err) {
+    if (isAborted()) throw err;
+    log(`${source.name}: Seite fehlgeschlagen (${err.message.split('\n')[0]}) — versuche den Personio-Feed`);
+    try { return await readFeed(source); }
+    catch (feedErr) { log(`Personio-Feed ${source.name}: ${feedErr.message}`); throw err; }
+  }
+  if (isAborted()) return result;
+  log(`${source.name}: 0 Stellen auf der Seite — versuche den Personio-Feed`);
+  try {
+    const feed = await readFeed(source);
+    return feed.jobs.length > 0 ? feed : result;
+  } catch (feedErr) {
+    log(`Personio-Feed ${source.name}: ${feedErr.message}`);
+    return result;
+  }
+}
+
 export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE_CONCURRENCY) || 4) {
   const allJobs = [];
   const stats = {};
@@ -1292,7 +1344,7 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
       // everything else goes through the generic career-page heuristics.
       const { jobs, duplicates, siteTotal, blocked, error: reported } = isPlatformSource(source)
         ? await scrapePlatform(source)
-        : await scrapeSource(source);
+        : await scrapeCareerSource(source);
       allJobs.push(...jobs);
       stats[source.name] = {
         duplicates: (stats[source.name]?.duplicates || 0) + duplicates,
