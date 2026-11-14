@@ -114,3 +114,22 @@ test('the wizard finish page never pre-checks the first run', () => {
   assert.ok(tag, 'su-run-now checkbox not found');
   assert.doesNotMatch(tag, /checked/);
 });
+
+// ── Example companies on a fresh install (#30) ──────────────────────────────
+const { exampleSources } = await import('../src/setup.js');
+
+test('the shipped example career pages are offered, job-board searches are not', async () => {
+  const shipped = JSON.parse(readFileSync(new URL('../config/jobs.json', import.meta.url), 'utf8')).sources;
+  const examples = await exampleSources();
+  assert.ok(examples.length > 0);
+  assert.equal(examples.length, shipped.filter(s => !['linkedin', 'stepstone', 'indeed'].includes(s.type)).length);
+  assert.ok(examples.every(s => typeof s.name === 'string' && /^https?:\/\//.test(s.url)));
+});
+
+test('the desktop installer ships the example list the wizard offers', () => {
+  // electron-builder.yml is a whitelist: a file missing there doesn't exist in
+  // the installed app, and the offer would never appear.
+  const yml = readFileSync(new URL('../electron-builder.yml', import.meta.url), 'utf8');
+  const files = yml.slice(yml.indexOf('\nfiles:'), yml.indexOf('\n\n', yml.indexOf('\nfiles:')));
+  assert.match(files, /^\s*-\s*config\/jobs\.json\s*$/m);
+});

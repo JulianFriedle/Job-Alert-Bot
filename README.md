@@ -143,7 +143,7 @@ Every release is published as a multi-arch image (amd64 + arm64):
 docker pull ghcr.io/julianfriedle/job-alert-bot:latest
 ```
 
-Tags: `latest`, the exact version (`2.1.0`) and the minor line (`2.1`). To use it with
+Tags: `latest`, the exact version (`2.2.0`) and the minor line (`2.2`). To use it with
 the bundled `docker-compose.yml`, replace `build: .` / `image: job-alert-bot` in both
 services with `image: ghcr.io/julianfriedle/job-alert-bot:latest`. See [DEPLOY.md](DEPLOY.md).
 
@@ -282,7 +282,7 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `TELEGRAM_NOTIFICATIONS` | `on` | Set to `off` to disable Telegram push notifications entirely |
 | `EXPIRY_NOTIFICATIONS` | `on` | Set to `off` to silence Telegram alerts for expired jobs (new-job alerts still fire) |
 | `ANALYZER_MODEL` | `claude-haiku-5-5` | Model that scores job relevance. An ID Anthropic doesn't know is reported once in the run log, and jobs stay unrated (retried next run) until it's fixed |
-| `COVER_LETTER_MODEL` | `claude-opus-5-5` | Model that writes cover letters and tailored CVs |
+| `COVER_LETTER_MODEL` | `claude-opus-5-5` | Model that writes cover letters and tailored CVs. In **Einstellungen → KI-Modelle** a picker next to each field lists the models your API key can use (newest first, fetched from Anthropic's Models API — no tokens, cached for an hour) and fills the field; any model ID can still be typed. If the list can't be fetched (no key yet, offline), the reason is shown under the field |
 | `DOCS_HUMANIZE` | `true` | Run tailored CVs / cover letters through a second "humanize" pass that removes AI phrasing (one extra API call per document) |
 | `CHROME_PATH` | — | Chrome/Chromium binary for the document PDFs, only needed when Playwright's bundled browser is missing (not in the settings form) |
 | `MIN_RELEVANCE_SCORE` | `4` | Min AI score (1–10) for a job to count as relevant |
@@ -337,7 +337,8 @@ Cheap pre-filters applied **before** any Claude call:
 
 The three title lists match case-insensitively as substrings, after gender forms are folded on both sides
 (*(m/w/d)* removed, *Referent:in* → *referentin*) — so prefer distinctive terms: a short one like
-`it` also matches inside *Qualität*. Both lists also apply **retroactively** to jobs that are
+`it` also matches inside *Qualität*. A keyword with a space before and after it (`" hr "`, as in
+the shipped blocklist) only matches the whole word; the editor and the wizard keep those spaces. Both lists also apply **retroactively** to jobs that are
 saved but not yet analyzed. A **blocklist** drop is final. An **allowlist** drop is stored with the
 summary *„Titel nicht in der Positivliste – nicht bewertet“* and is undone automatically: once a
 changed allowlist lets the title through (a typo fixed, a term added), the next runs put the job
@@ -345,7 +346,9 @@ back into the analysis queue — only postings still seen on their source within
 `EXPIRY_THRESHOLD_HOURS`, and at most 100 per run, since each one costs a detail-page fetch and a
 Claude call (and may trigger a notification). Clearing the allowlist completely does *not* do
 that — it could release thousands of jobs at once; new jobs are then analyzed again as usual.
-Edit this file (or the wizard's *Titel-Filter* step) to tune what gets filtered. If the file is
+Edit them in **Profil → Vorfilter** (with a **Testen** button that shows what a draft would drop
+from your most recent jobs, without saving anything or calling the AI), in the wizard's
+*Titel-Filter* step, or in this file, to tune what gets filtered. If the file is
 missing, built-in defaults are used.
 
 A third check needs no configuration file: a job whose description is shorter than
@@ -530,7 +533,7 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 | Tab | What it does |
 |---|---|
 | **Jobs** | All relevant jobs as cards with score badge, summary, and live filters (search, source, status, min score). Sort by relevance or by **date found** (oldest / newest first). Set application status or hide a job with one click. The **✎** button (or a click on the card) opens the job window with the **tailored CV & cover letter** (see [Tailored CV & Cover Letter](#tailored-cv--cover-letter)); a 📄 badge marks jobs that already have documents. **+ Stelle** adds a posting by hand (pasted text) so documents can be tailored to jobs the bot didn't find. In the desktop app, a banner with an **Aktualisieren** button appears at the top when a new release is available. |
-| **Quellen** | Edit the active client's job sources visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. |
+| **Quellen** | Edit the active client's job sources visually — add, edit, or remove career sites, then Save. Extra per-source fields (`paginationParam`, `extraWait`, …) are preserved. **Exportieren** downloads the saved sources as a `jobs.json`-compatible file with every field; **Importieren** reads such a file (or a plain list), skips invalid entries with the reason, and either adds the sources the list doesn't have yet (same URL / same portal search = same source) or replaces the list with exactly the file's entries — shown in the form first, kept with *Speichern*. |
 | | **Saving from a stale window is caught** (Quellen, Profil, Prompts): if the data was changed in the meantime — another window, the wizard, another client — Save asks to reload instead of overwriting it; *Cancel* keeps your edits, and saving again then overwrites on purpose. A tab with no unsaved edits refreshes itself when reopened or when the window regains focus (in Profil only the profile form, not the Plattform-Zugänge and Bewerbungsunterlagen cards). |
 | **Profil** | Edit the active client's CV & preferences in a structured form — this is what the AI matches jobs against. **Sprache der KI-Texte** sets the language of the AI's job reasoning and of cover letters (Deutsch / English; unset = as before, i.e. German cover letters). The **Bewerbungsunterlagen** card holds the Markdown **fact base**, the **base templates** for CV and cover letter (with preview) and the **photo / signature** used in the PDFs. |
 | **Prompts** | Edit the prompts sent to Claude for the active client (relevance scoring, tailored documents incl. the humanize pass, auto-apply cover letter). Per-field “↺ Standard” restores the default. Changes take effect on the next run. |
@@ -574,7 +577,7 @@ changed later.
 4. **About you** — name, short profile, skills, programming, tools, education, work history, language skills
 5. **What you're looking for** — desired roles, locations, industries, contract types, minimum salary, dealbreakers
 6. *(optional)* **Job boards** — tick LinkedIn / StepStone / Indeed and enter one search term + location (pre-filled from your desired roles); no account needed
-7. **Career pages** — company sites to watch. At least one source is required overall; a job-board search from step 6 counts
+7. **Career pages** — company sites to watch. At least one source is required overall; a job-board search from step 6 counts. On a first run with no career page yet (the desktop app always starts that way: it keeps its data in its own folder, apart from the example list `config/jobs.json` that ships with it), the step offers those example companies to **accept or decline**, and points to *Quellen → Importieren* and *Backups → Wiederherstellen* for moving over from another installation
 8. *(optional)* **Title filters** — allowlist, blocklist, priority keywords and locations
 9. *(optional)* **How often & how strict** — schedule as a plain choice (hourly … once a day) and the score threshold
 
@@ -712,7 +715,7 @@ server's output (`MCP: …`).
 A version tag builds everything — `.github/workflows/release.yml`:
 
 ```bash
-npm version minor          # bumps package.json, commits, tags v2.1.0
+npm version minor          # bumps package.json, commits, tags v2.3.0
 git push --follow-tags
 ```
 

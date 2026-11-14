@@ -4,7 +4,7 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 // The active tenant. Data requests are auto-scoped with ?clientId=…; a handful of
 // global/operator endpoints (below) are exempt.
 let currentClientId = null;
-const CLIENT_AGNOSTIC = ['/api/clients', '/api/login', '/api/logout', '/api/auth', '/api/settings', '/api/mcp', '/api/setup', '/api/update', '/api/restart', '/api/backups'];
+const CLIENT_AGNOSTIC = ['/api/clients', '/api/login', '/api/logout', '/api/auth', '/api/settings', '/api/mcp', '/api/setup', '/api/update', '/api/restart', '/api/backups', '/api/models'];
 const api = async (url, opts) => {
   if (currentClientId && url.startsWith('/api/') && !CLIENT_AGNOSTIC.some(p => url.startsWith(p))) {
     url += (url.includes('?') ? '&' : '?') + 'clientId=' + encodeURIComponent(currentClientId);
@@ -26,13 +26,13 @@ const api = async (url, opts) => {
 // the wizard, another client). Unsaved edits are tracked so a tab can quietly
 // refresh itself when reopened or when the window regains focus — but never
 // throw away what the user is typing.
-const cfgVersion = { sources: null, profile: null, prompts: null };
-const cfgDirty = { sources: false, profile: false, prompts: false };
+const cfgVersion = { sources: null, profile: null, prompts: null, filters: null };
+const cfgDirty = { sources: false, profile: false, prompts: false, filters: false };
 // Per-tab load sequence: only the newest request for the current client may
 // render. Starting a load, saving and switching clients all move it on, so a
 // slower, older response (another client's, or from before a save) is dropped.
-const cfgSeq = { sources: 0, profile: 0, prompts: 0 };
-const cfgInFlight = { sources: 0, profile: 0, prompts: 0 };
+const cfgSeq = { sources: 0, profile: 0, prompts: 0, filters: 0 };
+const cfgInFlight = { sources: 0, profile: 0, prompts: 0, filters: 0 };
 // Start a load for `name`. A background (quiet) load is skipped while another
 // one is running; a normal load always goes ahead and wins.
 function beginCfgLoad(name, quiet) {
@@ -41,7 +41,7 @@ function beginCfgLoad(name, quiet) {
   return { seq: ++cfgSeq[name], client: currentClientId };
 }
 const cfgLoadCurrent = (name, ticket) => ticket.seq === cfgSeq[name] && ticket.client === currentClientId;
-const CFG_FORMS = { sources: '#source-list', profile: '#profile-groups', prompts: '#prompts-groups' };
+const CFG_FORMS = { sources: '#source-list', profile: '#profile-groups', prompts: '#prompts-groups', filters: '#filters-card .filters-grid' };
 for (const [name, sel] of Object.entries(CFG_FORMS)) {
   const el = document.querySelector(sel);
   ['input', 'change'].forEach(ev => el?.addEventListener(ev, () => { cfgDirty[name] = true; }));
@@ -91,7 +91,10 @@ $('#tabs').addEventListener('click', (e) => {
   if (name === 'settings') loadBackups();
   if (name === 'profile') {
     if (!profileLoaded) loadProfile();
-    else if (!cfgDirty.profile) loadProfile({ quiet: true, formOnly: true });
+    else {
+      if (!cfgDirty.profile) loadProfile({ quiet: true, formOnly: true });
+      if (!cfgDirty.filters) loadFilters({ quiet: true });
+    }
   }
   if (name === 'prompts') {
     if (!promptsLoaded) loadPrompts();
@@ -1118,17 +1121,19 @@ $('#add-source').addEventListener('click', () => {
   row.querySelector('.name').focus();
 });
 
-$('#save-sources').addEventListener('click', async () => {
+// The sources as the form shows them, or null (with a message) when a row is
+// incomplete. Used by Speichern and by the import's "Neue hinzufügen".
+function collectSourcesForm() {
   const rows = $$('#source-list .source-row');
   const sources = [];
   for (const row of rows) {
     const name = row.querySelector('.name').value.trim();
     const type = row.querySelector('.stype').value;
-    if (!name) { showSourcesMsg(t('sources.needName'), 'err'); return; }
+    if (!name) { showSourcesMsg(t('sources.needName'), 'err'); return null; }
 
     if (isPlatformType(type)) {
       const keywords = row.querySelector('.kw').value.trim();
-      if (!keywords) { showSourcesMsg(t('sources.needKeywords').replace('{name}', name), 'err'); return; }
+      if (!keywords) { showSourcesMsg(t('sources.needKeywords').replace('{name}', name), 'err'); return null; }
       const location = row.querySelector('.loc').value.trim();
       const radius = row.querySelector('.radius').value.trim();
       // Keep any hidden search fields (maxResults, maxPages, postedWithinDays).
@@ -1141,10 +1146,16 @@ $('#save-sources').addEventListener('click', async () => {
       sources.push({ ...row._extra, name, type, search });
     } else {
       const url = row.querySelector('.url').value.trim();
-      if (!url) { showSourcesMsg(t('sources.needNameUrl'), 'err'); return; }
+      if (!url) { showSourcesMsg(t('sources.needNameUrl'), 'err'); return null; }
       sources.push({ name, url, type: 'careers-page', ...row._extra });
     }
   }
+  return sources;
+}
+
+$('#save-sources').addEventListener('click', async () => {
+  const sources = collectSourcesForm();
+  if (!sources) return;
   try {
     cfgSeq.sources++;
     const r = await api('/api/sources', {
@@ -1192,6 +1203,7 @@ function renderSettings() {
     </div>`).join('');
   $('#settings-msg').textContent = '';
   if ($('#mcp-info')) loadMcpInfo();
+  if (settingsSchema.some(s => s.models)) fillModelOptions();
 }
 
 // The settings group that holds the AI-assistant (MCP) switch + connection info.
@@ -1253,6 +1265,42 @@ $('#settings-groups').addEventListener('click', async (e) => {
   }
 });
 
+// Fill the model pickers. The list is kept for the page (the server caches it
+// for an hour); a failure is remembered for a minute so reopening the tab
+// doesn't wait on it again, and its reason is shown under the field.
+let modelOptions = null;
+let modelOptionsError = null;
+let modelOptionsFailedAt = 0;
+async function fillModelOptions() {
+  if (!modelOptions && Date.now() - modelOptionsFailedAt > 60_000) {
+    try {
+      const r = await api('/api/models');
+      if (r.models?.length) { modelOptions = r.models; modelOptionsError = null; }
+      else { modelOptionsError = r.error || null; modelOptionsFailedAt = Date.now(); }
+    } catch (err) { modelOptionsError = err.message; modelOptionsFailedAt = Date.now(); }
+  }
+  for (const sel of $$('#settings-groups .model-pick')) {
+    const note = $(`#settings-groups .model-pick-note[data-for="${sel.dataset.for}"]`);
+    if (!modelOptions) {
+      sel.hidden = true;
+      if (note) { note.hidden = !modelOptionsError; note.textContent = modelOptionsError ? t('settings.modelListError').replace('{why}', modelOptionsError) : ''; }
+      continue;
+    }
+    sel.innerHTML = `<option value="">${esc(t('settings.modelPick'))}</option>` +
+      modelOptions.map(m => `<option value="${esc(m.id)}">${esc(m.name)} — ${esc(m.id)}</option>`).join('');
+    sel.hidden = false;
+    if (note) note.hidden = true;
+  }
+}
+
+$('#settings-groups').addEventListener('change', (e) => {
+  const sel = e.target.closest('.model-pick');
+  if (!sel || !sel.value) return;
+  const input = document.getElementById(sel.dataset.for);
+  if (input) { input.value = sel.value; input.dispatchEvent(new Event('input', { bubbles: true })); }
+  sel.value = '';
+});
+
 function settingField(s) {
   const id = `set-${s.key}`;
   const req = s.required ? `<span class="req">${esc(t('settings.required'))}</span>` : '';
@@ -1284,6 +1332,14 @@ function settingField(s) {
   } else {
     control = `<input id="${id}" class="set-input" type="text" ${da}
       value="${esc(s.value)}" placeholder="${esc(s.default)}" spellcheck="false">`;
+    // Model fields: a picker next to the text field fills it with one of the
+    // models the key can use; any ID can still be typed. (Not .set-input, so
+    // the save handler ignores it.)
+    if (s.models) {
+      control = `<div class="model-pick-wrap">${control}
+        <select class="model-pick" data-for="${id}" hidden><option value="">${esc(t('settings.modelPick'))}</option></select>
+      </div><p class="set-help model-pick-note" data-for="${id}" hidden></p>`;
+    }
   }
   const def = (s.type !== 'secret' && s.type !== 'bool' && s.type !== 'danger' && s.default) ? ` <span class="set-default">${esc(t('settings.defaultPrefix'))}<code>${esc(s.default)}</code></span>` : '';
   return `<div class="setting">
@@ -1323,6 +1379,7 @@ $('#save-settings').addEventListener('click', async () => {
     // Reflect the clients toggle immediately — no page reload needed.
     const clientsCb = $('#set-CLIENTS_ENABLED');
     if (clientsCb) applyClientsVisibility(clientsCb.checked);
+    modelOptions = null; modelOptionsFailedAt = 0;   // the key may have changed
     loadSettings();   // refresh: clears secret fields, updates "gesetzt"-Status
   } catch (err) { showSettingsMsg(t('toast.error') + err.message, 'err'); }
 });
@@ -1804,6 +1861,7 @@ async function loadProfile({ quiet = false, formOnly = false } = {}) {
   if (!formOnly && cfgLoadCurrent('profile', ticket)) {
     loadCredentials();   // Plattform-Zugänge card lives on the same tab
     loadDocsSetup();     // Bewerbungsunterlagen card too
+    loadFilters();       // and the Vorfilter card
   }
   return ok;
 }
@@ -2301,6 +2359,7 @@ function switchClient(id) {
   // Invalidate per-client caches so the next tab visit refetches for this client.
   sourcesLoaded = profileLoaded = promptsLoaded = false;
   for (const k of Object.keys(cfgVersion)) { cfgVersion[k] = null; cfgDirty[k] = false; cfgSeq[k]++; }
+  closeSourcesImport();   // a file read for the previous client
   // Refresh whatever is on screen for the new client.
   loadJobs();
   const active = $('.tab.active')?.dataset.tab;
@@ -2500,8 +2559,165 @@ function refreshActiveConfigTab() {
   if (document.hidden) return;
   const active = $('.tab.active')?.dataset.tab;
   if (active === 'sources' && sourcesLoaded && !cfgDirty.sources) loadSources({ quiet: true });
-  else if (active === 'profile' && profileLoaded && !cfgDirty.profile) loadProfile({ quiet: true, formOnly: true });
+  else if (active === 'profile' && profileLoaded) {
+    if (!cfgDirty.profile) loadProfile({ quiet: true, formOnly: true });
+    if (!cfgDirty.filters) loadFilters({ quiet: true });
+  }
   else if (active === 'prompts' && promptsLoaded && !cfgDirty.prompts) loadPrompts({ quiet: true });
 }
 window.addEventListener('focus', refreshActiveConfigTab);
 document.addEventListener('visibilitychange', refreshActiveConfigTab);
+
+// ── VORFILTER (Profil tab, #33) ──────────────────────────────────────────────
+// The same lists as the wizard's Titel-Filter step, editable any time, with a
+// "Testen" preview against the client's recent jobs (nothing saved, no AI).
+const FILTER_KEYS = ['titleAllowlist', 'titleBlocklist', 'priorityKeywords', 'locationAllowlist'];
+// Not trimmed: a padded keyword like " hr " only matches the whole word —
+// trimmed, it would block "Fahrer", "Lehrer", "mehr". Same rule as
+// keywordLines() in src/filters.js.
+const filterLines = (v) => String(v || '').split('\n').map(x => x.replace(/\r/g, '')).filter(x => x.trim() !== '');
+const filterDraft = () => Object.fromEntries(FILTER_KEYS.map(k => [k, filterLines($(`#flt-${k}`)?.value)]));
+
+function showFiltersMsg(msg, kind) {
+  const el = $('#filters-msg');
+  if (!el) return;
+  el.textContent = msg; el.className = 'save-hint ' + kind;
+  if (kind === 'ok') setTimeout(() => { el.textContent = ''; }, 4000);
+}
+
+async function loadFilters({ quiet = false } = {}) {
+  const ticket = beginCfgLoad('filters', quiet);
+  if (!ticket) return false;
+  try {
+    const { filters, version } = await api('/api/filters');
+    if (!cfgLoadCurrent('filters', ticket) || (quiet && cfgDirty.filters)) return false;
+    for (const k of FILTER_KEYS) {
+      const ta = $(`#flt-${k}`);
+      if (ta) ta.value = (filters?.[k] || []).join('\n');
+    }
+    cfgVersion.filters = version ?? null;
+    cfgDirty.filters = false;
+    return true;
+  } catch (err) {
+    if (!quiet) toast(t('toast.error') + err.message);
+    return false;
+  } finally { cfgInFlight.filters--; }
+}
+
+$('#filters-save')?.addEventListener('click', async () => {
+  try {
+    cfgSeq.filters++;
+    const r = await api('/api/filters', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filters: filterDraft(), baseVersion: cfgVersion.filters }),
+    });
+    cfgVersion.filters = r.version ?? null;
+    cfgDirty.filters = false;
+    showFiltersMsg(t('filters.saved'), 'ok');
+    toast(t('filters.saved'));
+  } catch (err) {
+    if (await handleSaveConflict('filters', err, loadFilters, showFiltersMsg)) return;
+    showFiltersMsg(t('toast.error') + err.message, 'err');
+  }
+});
+
+$('#filters-test')?.addEventListener('click', async () => {
+  const out = $('#filters-preview');
+  try {
+    const p = await api('/api/filters/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filters: filterDraft() }),
+    });
+    if (!p.total) { out.innerHTML = `<p class="muted">${esc(t('filters.previewEmpty'))}</p>`; return; }
+    const d = p.dropped || {};
+    const summary = t('filters.previewSummary')
+      .replace('{total}', p.total).replace('{kept}', p.kept)
+      .replace('{dropped}', p.total - p.kept)
+      .replace('{blocked}', d.blocked || 0).replace('{notAllowed}', d['not-allowed'] || 0)
+      .replace('{location}', d['wrong-location'] || 0);
+    const list = (key, label) => (p.samples?.[key] || []).length
+      ? `<h4>${esc(t(label))}</h4><ul>${p.samples[key].map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+    out.innerHTML = `<p>${esc(summary)}</p>`
+      + list('kept', 'filters.previewKept') + list('blocked', 'filters.previewBlocked')
+      + list('not-allowed', 'filters.previewNotAllowed') + list('wrong-location', 'filters.previewLocation')
+      + `<p class="muted">${esc(t('filters.previewNote'))}</p>`;
+  } catch (err) { showFiltersMsg(t('toast.error') + err.message, 'err'); }
+});
+
+// ── QUELLEN: JSON export / import (#31) ──────────────────────────────────────
+// Logic in sources-io.js (window.SourcesIO). The export is what is saved, as a
+// jobs.json-compatible file with every per-source field. An import only fills
+// the form — "Speichern" then saves it, with the usual stale-data check.
+let pendingImport = null;
+const sourcesIO = () => {
+  if (window.SourcesIO) return window.SourcesIO;
+  showSourcesMsg(t('sources.ioMissing'), 'err');
+  return null;
+};
+function closeSourcesImport() {
+  pendingImport = null;
+  const panel = $('#sources-import');
+  if (panel) panel.hidden = true;
+}
+
+$('#export-sources')?.addEventListener('click', async () => {
+  const io = sourcesIO();
+  if (!io) return;
+  try {
+    const { sources } = await api('/api/sources');
+    const client = (clientsList || []).find(c => c.id === currentClientId);
+    const blob = new Blob([JSON.stringify({ sources }, null, 2) + '\n'], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = io.exportFileName(client && client.id !== defaultClientId ? client.name : '');
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    showSourcesMsg(t('sources.exported').replace('{n}', sources.length), 'ok');
+  } catch (err) { showSourcesMsg(t('toast.error') + err.message, 'err'); }
+});
+
+$('#import-sources')?.addEventListener('click', () => $('#import-sources-file').click());
+
+$('#import-sources-file')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';   // the same file can be picked again
+  if (!file) return;
+  const io = sourcesIO();
+  if (!io) return;
+  // An incomplete row would make the counts wrong: say so instead.
+  const current = collectSourcesForm();
+  if (!current) { closeSourcesImport(); return; }
+  try {
+    const { valid, invalid } = io.parseSourcesFile(await file.text());
+    pendingImport = valid;
+    const fresh = io.countNew(current, valid);
+    $('#sources-import-summary').textContent = t('sources.importSummary')
+      .replace('{file}', file.name).replace('{n}', valid.length)
+      .replace('{new}', fresh).replace('{known}', valid.length - fresh)
+      .replace('{current}', current.length);
+    $('#sources-import-invalid').innerHTML = invalid.map(x =>
+      `<li>${esc(t('sources.importInvalid').replace('{i}', x.index).replace('{name}', x.name || '–').replace('{why}', x.problem))}</li>`).join('');
+    $('#sources-import-merge').disabled = fresh === 0;
+    $('#sources-import-replace').disabled = valid.length === 0;
+    $('#sources-import').hidden = false;
+  } catch (err) {
+    closeSourcesImport();
+    showSourcesMsg(t('toast.error') + err.message, 'err');
+  }
+});
+
+function applyImport(mode) {
+  const io = sourcesIO();
+  if (!pendingImport || !io) return;
+  const current = mode === 'merge' ? collectSourcesForm() : [];
+  if (!current) return;
+  const { sources, added, skipped } = io.combineSources(current, pendingImport, mode);
+  renderSources(sources);
+  cfgDirty.sources = true;
+  closeSourcesImport();
+  showSourcesMsg(t(mode === 'merge' ? 'sources.importedMerge' : 'sources.importedReplace')
+    .replace('{n}', added).replace('{skipped}', skipped).replace('{total}', sources.length), 'ok');
+}
+$('#sources-import-merge')?.addEventListener('click', () => applyImport('merge'));
+$('#sources-import-replace')?.addEventListener('click', () => applyImport('replace'));
+$('#sources-import-cancel')?.addEventListener('click', closeSourcesImport);

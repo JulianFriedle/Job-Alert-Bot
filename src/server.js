@@ -19,10 +19,11 @@ import {
   createBackup, listBackups, resolveBackupPath, ingestUpload,
   maybeRunDailyBackup, isDailyEnabled, retentionDays, BACKUP_DIR,
 } from './backup.js';
-import { restoreFromBackup } from './database.js';
+import { restoreFromBackup, getRecentJobsForFilterPreview } from './database.js';
 import { generateCoverLetter } from './cover-letter.js';
 import { versionOf, isStale, CONFLICT_ERROR } from './config-version.js';
-import { DEFAULT_ANALYZER_MODEL, DEFAULT_WRITER_MODEL } from './models.js';
+import { previewFilters } from './filters.js';
+import { DEFAULT_ANALYZER_MODEL, DEFAULT_WRITER_MODEL, listAvailableModels } from './models.js';
 import { buildJobsCsv, filterJobs, csvFileName } from './csv-export.js';
 import { sendTelegramTest } from './notifier.js';
 import { handleSetupApi, STEPS as SETUP_STEPS } from './setup.js';
@@ -205,9 +206,9 @@ const SETTINGS_SCHEMA = [
   { key: 'EXPIRY_NOTIFICATIONS', group: 'Schlüssel & Telegram', label: 'Ablauf-Benachrichtigungen', type: 'text', default: 'on',
     help: "Auf 'off' setzen, um keine Telegram-Nachrichten für ausgelaufene Jobs zu senden – neue Jobs werden weiterhin gemeldet" },
 
-  { key: 'ANALYZER_MODEL', group: 'KI-Modelle', label: 'Analyse-Modell', type: 'text', default: DEFAULT_ANALYZER_MODEL,
+  { key: 'ANALYZER_MODEL', group: 'KI-Modelle', label: 'Analyse-Modell', type: 'text', default: DEFAULT_ANALYZER_MODEL, models: true,
     help: 'Claude-Modell zur Relevanz-Bewertung (günstig/schnell empfohlen)' },
-  { key: 'COVER_LETTER_MODEL', group: 'KI-Modelle', label: 'Anschreiben-Modell', type: 'text', default: DEFAULT_WRITER_MODEL,
+  { key: 'COVER_LETTER_MODEL', group: 'KI-Modelle', label: 'Anschreiben-Modell', type: 'text', default: DEFAULT_WRITER_MODEL, models: true,
     help: 'Claude-Modell für Anschreiben und angepasste Lebensläufe (stärkeres Modell empfohlen)' },
   { key: 'DOCS_HUMANIZE', group: 'KI-Modelle', label: 'Humanize-Durchgang', type: 'bool', default: 'true',
     help: 'An = Lebenslauf und Anschreiben laufen nach dem Erstellen durch einen zweiten KI-Durchgang, der KI-Floskeln entfernt. Natürlicher, kostet aber einen zusätzlichen Aufruf pro Dokument.' },
@@ -1348,6 +1349,22 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, version: versionOf(getFilters(clientId)) });
       }
 
+      // POST /api/filters/preview — what a filter draft would drop from this
+      // client's most recent jobs (nothing is saved, no API call).
+      if (method === 'POST' && pathname === '/api/filters/preview') {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        const f = body && body.filters;
+        if (!f || typeof f !== 'object') return sendJson(res, 400, { error: 'Erwarte { filters: { … } }' });
+        const list = (l) => (Array.isArray(l) ? l.filter(x => typeof x === 'string' && x.trim() !== '').slice(0, 5000) : []);
+        const draft = {
+          titleBlocklist: list(f.titleBlocklist), priorityKeywords: list(f.priorityKeywords),
+          titleAllowlist: list(f.titleAllowlist), locationAllowlist: list(f.locationAllowlist),
+        };
+        return sendJson(res, 200, previewFilters(draft, getRecentJobsForFilterPreview(clientId, 1000)));
+      }
+
       // GET /api/prompts — editable prompt fields + this client's current/default values
       if (method === 'GET' && pathname === '/api/prompts') {
         const prompts = getPrompts(clientId);
@@ -1376,6 +1393,17 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, version: versionOf(getPrompts(clientId)) });
       }
 
+      // GET /api/models — the models the configured key can use, for the
+      // settings dropdown (cached, no tokens). An error still answers 200 with
+      // an empty list: the fields then simply stay free text.
+      if (method === 'GET' && pathname === '/api/models') {
+        try {
+          return sendJson(res, 200, { models: await listAvailableModels() });
+        } catch (err) {
+          return sendJson(res, 200, { models: [], error: String(err?.message || err).split('\n')[0].slice(0, 200) });
+        }
+      }
+
       // GET /api/settings — schema + current values.
       // Secrets: on a localhost self-host (no auth) the operator owns these keys
       // and wants to view/copy them, so they're returned (behind the UI's reveal
@@ -1390,7 +1418,7 @@ const server = http.createServer(async (req, res) => {
           const out = {
             key: s.key, group: s.group, label: s.label, type: s.type,
             default: s.default ?? '', required: !!s.required, help: s.help,
-            min: s.min, max: s.max,
+            min: s.min, max: s.max, models: !!s.models,
           };
           if (s.type === 'secret') { out.isSet = hasValue; out.value = (hasValue && !AUTH_ENABLED && !fromMcp) ? raw : ''; }
           else out.value = hasValue ? raw : (s.default ?? '');   // prefill effective value

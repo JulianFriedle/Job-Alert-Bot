@@ -873,3 +873,27 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   .docs-preview { height: 60vh; }
   .docs-spacer { display: none; }
 }
+
+/* Vorfilter card (Profil tab) */
+.filters-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.filters-grid .setting { display: flex; flex-direction: column; gap: 4px; }
+.filters-grid textarea { width: 100%; min-height: 7.5em; resize: vertical; }
+.filters-preview:empty { display: none; }
+.filters-preview { margin-top: 10px; }
+.filters-preview h4 { margin: 10px 0 4px; font-size: .9rem; }
+.filters-preview ul { margin: 0; padding-left: 1.2em; }
+.filters-preview li { font-size: .85rem; overflow-wrap: anywhere; }
+
+/* Quellen: import preview */
+.sources-import { margin-bottom: 12px; }
+.sources-import ul:empty { display: none; }
+.sources-import li { font-size: .85rem; }
+
+/* Model picker next to the model ID field (Einstellungen → KI-Modelle) */
+.model-pick-wrap { display: flex; gap: 8px; flex-wrap: wrap; }
+.model-pick-wrap .set-input { flex: 1 1 200px; min-width: 0; }
+.model-pick { flex: 0 1 260px; max-width: 100%; }
+
+/* Setup wizard: example companies offer (sources step) */
+.su-examples { border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.su-examples p { margin: 0 0 8px; }

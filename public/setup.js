@@ -121,7 +121,18 @@
       const boardNote = boards.length
         ? `<p class="su-board-note">${esc(t('wiz.boardsKept').replace('{list}', boards.map(b => b.name).join(', ')))}</p>`
         : '';
+      // Fresh install, no career page yet: offer the shipped examples (#30).
+      const step = pages[idx];
+      const offer = (step?.examples > 0 && !rows && !step.examplesDecided) ? `<div class="su-examples">
+          <p>${esc(t('wiz.examplesOffer').replace('{n}', step.examples))}</p>
+          <div class="su-test">
+            <button type="button" class="btn btn-primary su-examples-accept">${esc(t('wiz.examplesAccept'))}</button>
+            <button type="button" class="btn su-examples-decline">${esc(t('wiz.examplesDecline'))}</button>
+          </div>
+          <p class="muted">${esc(t('wiz.migrateHint'))}</p>
+        </div>` : '';
       control = `<div class="su-sources" ${da}>
+        ${offer}
         <div class="su-source-list">${rows}</div>
         <button type="button" class="btn su-add-source">${esc(t('wiz.addSource'))}</button>
         ${boardNote}
@@ -296,7 +307,12 @@
         values[f.key] = cb ? cb.checked : true;
       } else if (f.type === 'list') {
         const ta = el.body.querySelector(`[data-key="${cssEsc(f.key)}"]`);
-        values[f.key] = (ta?.value || '').split('\n').map(x => x.trim()).filter(Boolean);
+        const lines = (ta?.value || '').split('\n');
+        // Filter keywords keep their padding (" hr " = whole word only) — same
+        // rule as keywordLines() in src/filters.js.
+        values[f.key] = f.store === 'filters'
+          ? lines.map(x => x.replace(/\r/g, '')).filter(x => x.trim() !== '')
+          : lines.map(x => x.trim()).filter(Boolean);
       } else {
         const inp = el.body.querySelector(`[data-key="${cssEsc(f.key)}"]`);
         values[f.key] = inp ? inp.value : '';
@@ -405,11 +421,40 @@
     if (!firstRun || debug || confirm(t('wiz.closeConfirm'))) close();
   });
 
-  el.body.addEventListener('click', (e) => {
+  el.body.addEventListener('click', async (e) => {
     if (e.target.closest('.su-reveal')) {
       const inp = e.target.closest('.secret-wrap').querySelector('input');
       inp.type = inp.type === 'password' ? 'text' : 'password';
       e.target.classList.toggle('on', inp.type === 'text');
+    }
+    if (e.target.closest('.su-examples-decline')) {
+      pages[idx].examplesDecided = true;
+      e.target.closest('.su-examples')?.remove();
+      return;
+    }
+    if (e.target.closest('.su-examples-accept')) {
+      const btn = e.target.closest('.su-examples-accept');
+      if (btn.disabled) return;
+      btn.disabled = true;   // a second click must not add them twice
+      const box = btn.closest('.su-examples');
+      // Bound to the page the click came from: "Weiter" during the request
+      // must not put the rows (or the flag) on another step.
+      const page = pages[idx];
+      const list = el.body.querySelector('.su-source-list');
+      try {
+        const { sources } = await api('/api/setup/examples');
+        if (pages[idx] !== page || !list?.isConnected) return;
+        const have = new Set([...list.querySelectorAll('.su-url')].map(i => i.value.trim()));
+        const fresh = (sources || []).filter(s => !have.has(String(s.url).trim()));
+        list.insertAdjacentHTML('beforeend', fresh.map(sourceRow).join(''));
+        page.examplesDecided = true;
+        box?.remove();
+        showMsg(t('wiz.examplesAdded').replace('{n}', fresh.length), 'ok');
+      } catch (err) {
+        btn.disabled = false;
+        showMsg(t('wiz.error') + err.message, 'err');
+      }
+      return;
     }
     if (e.target.closest('.su-add-source')) {
       const list = e.target.closest('.su-sources').querySelector('.su-source-list');
