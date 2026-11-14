@@ -9,6 +9,7 @@ import { isPlatformSource, scrapePlatform } from './scrapers/index.js';
 import { launchPlatformBrowser, newHardenedContext } from './scrapers/browser.js';
 import { runHostLimited, registrableDomain } from './host-limiter.js';
 import { isAborted } from './run-control.js';
+import { isNonJobLink } from './link-filter.js';
 import { CONFIG_DIR } from './paths.js';
 
 
@@ -567,21 +568,24 @@ export async function scrapeSource(source) {
   const allJobs = [];
   const visitedUrls = new Set();
   const seenJobUrls = new Set();
+  const nonJobLinks = new Set(); // link texts dropped as navigation/UI chrome
   let duplicateCount = 0;
   let siteTotal = null; // job entries skipped because their URL was already seen this run
 
   // countDupes=false for infinite-scroll/load-more, where each extraction re-reads the
   // full visible list and the "duplicates" are expected re-reads, not real duplicate postings.
   const addJobs = (jobs, countDupes = true) => {
-    let added = 0;
+    let added = 0, dupes = 0;
     for (const job of jobs) {
-      if (!seenJobUrls.has(job.url)) {
-        seenJobUrls.add(job.url);
-        allJobs.push({ ...job, id: generateId(job.url, job.title, job.company), source: source.name });
-        added++;
-      }
+      if (seenJobUrls.has(job.url)) { dupes++; continue; }
+      seenJobUrls.add(job.url);
+      // Pagination, legal links, "Stellenanzeige merken" … — never a job, and each
+      // one would cost a detail-page fetch and a Claude call.
+      if (isNonJobLink(job.title, source.name)) { nonJobLinks.add(job.title); continue; }
+      allJobs.push({ ...job, id: generateId(job.url, job.title, job.company), source: source.name });
+      added++;
     }
-    if (countDupes) duplicateCount += jobs.length - added;
+    if (countDupes) duplicateCount += dupes;
     return added;
   };
 
@@ -946,6 +950,10 @@ export async function scrapeSource(source) {
     await browser.close().catch(() => {});
   }
 
+  if (nonJobLinks.size > 0) {
+    const shown = [...nonJobLinks].slice(0, 5).map(t => `"${t}"`).join(', ');
+    log(`  ${nonJobLinks.size} Navigations-/UI-Link(s) ausgelassen: ${shown}${nonJobLinks.size > 5 ? ', …' : ''}`);
+  }
   log(`Finished ${source.name}: ${allJobs.length} unique job(s)${duplicateCount > 0 ? `, ${duplicateCount} duplicate(s) skipped` : ''}${siteTotal ? ` (site announced ${siteTotal})` : ''}`);
   return { jobs: allJobs, duplicates: duplicateCount, siteTotal: siteTotal ?? null };
 }
