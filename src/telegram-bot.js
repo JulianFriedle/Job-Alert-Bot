@@ -23,7 +23,7 @@ import {
   logApplicationEvent,
 } from './database.js';
 import { isTelegramEnabled } from './notifier.js';
-import { parseQuestions, applyAnswer, unansweredRequired } from './questions.js';
+import { parseQuestions, applyAnswer, unansweredRequired, hasChoices } from './questions.js';
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] [telegram-bot] ${msg}`);
@@ -93,7 +93,7 @@ export async function sendNextQuestion(applicationId, botOverride = null) {
 
   const header = `❓ *Frage zur Bewerbung*\n💼 ${esc(job?.title || '')}\n\n${esc(q.label)}`;
   const opts = { parse_mode: 'MarkdownV2' };
-  if ((q.type === 'select' || q.type === 'radio') && Array.isArray(q.options) && q.options.length) {
+  if (hasChoices(q)) {
     // Note: force_reply is not a ReplyKeyboardMarkup field — a keyboard tap
     // arrives as plain text and is routed via the open-prompt fallback.
     opts.reply_markup = {
@@ -362,7 +362,7 @@ async function handleCallback(b, query) {
     for (const q of questions) {
       const current = q.answer != null && String(q.answer).trim() !== '' ? `\n(aktuell: ${q.answer})` : '';
       const opts = { parse_mode: 'MarkdownV2' };
-      if ((q.type === 'select' || q.type === 'radio') && Array.isArray(q.options) && q.options.length) {
+      if (hasChoices(q)) {
         opts.reply_markup = { keyboard: q.options.map(o => [{ text: String(o) }]), one_time_keyboard: true, resize_keyboard: true };
       } else {
         opts.reply_markup = { force_reply: true };

@@ -97,6 +97,28 @@ export function harvestFieldsInPage(containerSelector) {
     });
   }
 
+  // Required checkboxes (consent, "Ich bestätige …"): one yes/no question each.
+  // Optional ones ("Ähnliche Jobs per E-Mail", "Angemeldet bleiben") are left
+  // alone — they never block a submit and would only add noise. Styled
+  // checkboxes often hide the input itself and show only its label, so a
+  // hidden input with a visible label still counts.
+  const labelVisible = (el) => {
+    const l = (el.id && root.querySelector(`label[for="${CSS.escape(el.id)}"]`)) || el.closest('label');
+    return Boolean(l && l.offsetParent !== null);
+  };
+  for (const el of root.querySelectorAll('input[type="checkbox"]')) {
+    if (el.disabled || inChrome(el) || !(el.offsetParent !== null || labelVisible(el))) continue;
+    if (!(el.required || el.getAttribute('aria-required') === 'true')) continue;
+    const label = (labelFor(el) || '').replace(/\s+/g, ' ').trim();
+    if (!label || seenLabels.has(label)) continue;
+    seenLabels.add(label);
+    out.push({
+      kind: 'checkbox', label, options: ['Ja', 'Nein'],
+      required: el.required || el.getAttribute('aria-required') === 'true',
+      answered: el.checked,
+    });
+  }
+
   for (const el of root.querySelectorAll('input[type="file"]')) {
     if (el.offsetParent === null && !el.closest('[class*="upload"]')) continue;
     if (inChrome(el)) continue;
@@ -134,22 +156,34 @@ export function fieldsToQuestions(fields) {
 
 // Runs in the browser: write one answer into the field whose label matches.
 // Returns true when a field was found and set.
-export function fillAnswerInPage({ containerSelector, label, value }) {
+export function fillAnswerInPage({ containerSelector, label, value, type = null }) {
   const root = containerSelector ? document.querySelector(containerSelector) : document;
   if (!root) return false;
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
   const target = norm(label);
 
+  // The same label chain as harvestFieldsInPage: a field is found again under
+  // the label it was harvested with (aria-labelledby, group label …).
   const labelFor = (el) => {
     if (el.id) {
       const l = root.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (l) return l.textContent;
     }
-    return el.closest('label')?.textContent
-      || el.getAttribute('aria-label')
-      || el.closest('fieldset')?.querySelector('legend')?.textContent
-      || el.getAttribute('placeholder')
-      || '';
+    const wrap = el.closest('label');
+    if (wrap) return wrap.textContent;
+    const aria = el.getAttribute('aria-label');
+    if (aria) return aria;
+    const labelled = el.getAttribute('aria-labelledby');
+    if (labelled) {
+      const t = labelled.split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ');
+      if (t.trim()) return t;
+    }
+    const legend = el.closest('fieldset')?.querySelector('legend');
+    if (legend) return legend.textContent;
+    const group = el.closest('[data-test-form-element], .fb-dash-form-element, [class*="form-element"], [class*="Questions-item"], .ia-Questions-item, div');
+    const groupLabel = group?.querySelector('label, legend, [class*="label"]');
+    if (groupLabel) return groupLabel.textContent;
+    return el.getAttribute('placeholder') || el.name || '';
   };
 
   const fire = (el) => {
@@ -157,6 +191,24 @@ export function fillAnswerInPage({ containerSelector, label, value }) {
     el.dispatchEvent(new Event('change', { bubbles: true }));
     el.dispatchEvent(new Event('blur', { bubbles: true }));
   };
+
+  // Checkbox questions go to checkboxes only — and only checkbox questions do,
+  // so an answer like "1" for "Berufserfahrung (Jahre)" never ticks a box whose
+  // label merely contains the question. An exact label wins over a partial one.
+  // click() rather than setting .checked, so the page's own handlers see the
+  // change. Keep the yes-pattern in sync with isTickAnswer() in
+  // src/questions.js (this runs in the browser and can't import it).
+  if (type === 'checkbox') {
+    const boxes = [...root.querySelectorAll('input[type="checkbox"]')];
+    const box = boxes.find(el => norm(labelFor(el)) === target)
+      || boxes.find(el => norm(labelFor(el)).includes(target));
+    if (!box) return false;
+    const want = /^(ja|yes|y|true|1|x|✓|✔|checked|an|on)$/i.test(String(value ?? '').trim());
+    if (box.checked !== want) box.click();
+    if (box.checked !== want) box.checked = want; // a handler swallowed the click
+    fire(box);
+    return true;
+  }
 
   // Radios: match group label, then click the option whose label matches value.
   for (const r of root.querySelectorAll('input[type="radio"]')) {
@@ -168,9 +220,16 @@ export function fillAnswerInPage({ containerSelector, label, value }) {
     if (optLabel === norm(value)) { r.click(); fire(r); return true; }
   }
 
-  for (const el of root.querySelectorAll('select')) {
-    const l = norm(labelFor(el));
-    if (l !== target && !l.includes(target)) continue;
+  // Exact label first, a partial one only after: a group-label or name
+  // fallback ("firstname" for "Name") must not beat the field that is really
+  // labelled with the question.
+  const byLabel = (els) => {
+    const withLabel = els.map(el => [el, norm(labelFor(el))]);
+    return [...withLabel.filter(([, l]) => l === target), ...withLabel.filter(([, l]) => l !== target && l.includes(target))]
+      .map(([el]) => el);
+  };
+
+  for (const el of byLabel([...root.querySelectorAll('select')])) {
     for (const opt of el.options) {
       if (norm(opt.textContent) === norm(value)) {
         el.value = opt.value;
@@ -180,10 +239,9 @@ export function fillAnswerInPage({ containerSelector, label, value }) {
     }
   }
 
-  for (const el of root.querySelectorAll('input[type="text"], input[type="number"], input[type="tel"], input[type="email"], input:not([type]), textarea')) {
-    if (el.offsetParent === null) continue;
-    const l = norm(labelFor(el));
-    if (l !== target && !l.includes(target)) continue;
+  const textFields = [...root.querySelectorAll('input[type="text"], input[type="number"], input[type="tel"], input[type="email"], input:not([type]), textarea')]
+    .filter(el => el.offsetParent !== null);
+  for (const el of byLabel(textFields)) {
     const setter = Object.getOwnPropertyDescriptor(
       el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value'
     ).set;
@@ -201,7 +259,7 @@ export async function fillAnswers(page, questions, containerSelector = null) {
   const misses = [];
   for (const q of questions) {
     if (q.answer == null || String(q.answer).trim() === '') continue;
-    const ok = await page.evaluate(fillAnswerInPage, { containerSelector, label: q.label, value: String(q.answer) })
+    const ok = await page.evaluate(fillAnswerInPage, { containerSelector, label: q.label, value: String(q.answer), type: q.type || null })
       .catch(() => false);
     if (!ok) misses.push(q.label);
     await page.waitForTimeout(150 + Math.random() * 250);

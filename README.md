@@ -387,6 +387,10 @@ answers pre-filled from an **answer library** of your previous answers. The prep
 application must then be **explicitly approved** — either in the job popup in the GUI
 (*Bewerben* button) or via Telegram (review summary with ✅ Bewerben / ✏️ Ändern /
 ❌ Verwerfen buttons). Unknown required questions are asked via Telegram one by one.
+Required checkboxes in the form (consent, *„Ich bestätige …“*) become *Ja/Nein* questions and
+are asked like any other required question instead of failing at submit; a *Ja* from the answer
+library pre-fills them like other answers (you still approve before anything is sent). Optional
+checkboxes are left as they are.
 After submission the job status flips to *Beworben* automatically.
 If you created tailored documents for the job in the GUI (see
 [Tailored CV & Cover Letter](#tailored-cv--cover-letter)), the worker uploads that CV as PDF and

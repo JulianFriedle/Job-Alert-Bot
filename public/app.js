@@ -300,7 +300,8 @@ function drawApplyPanel(job) {
         const lib = q.answeredVia === 'library' ? ` <span class="pill pill-lib" title="${esc(t('ap.fromLibraryTitle'))}">💾</span>` : '';
         const req = q.required ? ' <span class="req">*</span>' : '';
         let input;
-        if ((q.type === 'select' || q.type === 'radio') && Array.isArray(q.options) && q.options.length) {
+        // Same rule as hasChoices() in src/questions.js (checkbox = Ja/Nein).
+        if (['select', 'radio', 'checkbox'].includes(q.type) && Array.isArray(q.options) && q.options.length) {
           input = `<select class="set-input ap-answer" data-qid="${esc(q.id)}" ${editable ? '' : 'disabled'}>
             <option value=""></option>
             ${q.options.map(o => `<option value="${esc(o)}"${String(q.answer) === String(o) ? ' selected' : ''}>${esc(o)}</option>`).join('')}

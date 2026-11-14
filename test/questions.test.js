@@ -75,3 +75,68 @@ test('parseQuestions: tolerates broken/missing JSON', () => {
   assert.deepEqual(parseQuestions('{"not":"array"}'), []);
   assert.equal(parseQuestions('[{"id":"q1"}]').length, 1);
 });
+
+// ── Checkboxes (#20) ─────────────────────────────────────────────────────────
+// A required consent checkbox had no producer: it was never harvested, so the
+// application went to review "complete" and failed at submit every time.
+const { hasChoices, isTickAnswer, CHECKBOX_OPTIONS } = await import('../src/questions.js');
+const { fieldsToQuestions, fillAnswerInPage, fillAnswers } = await import('../src/appliers/common.js');
+
+test('a harvested checkbox becomes a Ja/Nein choice question', () => {
+  const qs = fieldsToQuestions([
+    { kind: 'checkbox', label: 'Ich stimme der Datenschutzerklärung zu', options: ['Ja', 'Nein'], required: true, answered: false },
+    { kind: 'checkbox', label: 'Schon angehakt', options: ['Ja', 'Nein'], required: true, answered: true },
+  ]);
+  assert.equal(qs.length, 1, 'a ticked box needs no answer');
+  assert.equal(qs[0].type, 'checkbox');
+  assert.deepEqual(qs[0].options, CHECKBOX_OPTIONS);
+  assert.equal(hasChoices(qs[0]), true);
+  assert.deepEqual(unansweredRequired(qs).map(q => q.label), ['Ich stimme der Datenschutzerklärung zu']);
+});
+
+test('checkbox answers must be one of Ja/Nein, case-insensitive', () => {
+  const qs = [{ id: 'q1', label: 'Einwilligung', type: 'checkbox', options: ['Ja', 'Nein'], required: true, answer: null }];
+  assert.equal(applyAnswer(qs, 'q1', 'vielleicht', 'gui'), false);
+  assert.equal(applyAnswer(qs, 'q1', 'ja', 'telegram'), true);
+  assert.equal(qs[0].answer, 'Ja');
+  assert.equal(unansweredRequired(qs).length, 0);
+});
+
+test('a library answer only prefills a checkbox when it is Ja or Nein', () => {
+  const qs = [
+    { id: 'q1', label: 'Einwilligung Datenschutz', type: 'checkbox', options: ['Ja', 'Nein'], answer: null },
+    { id: 'q2', label: 'Newsletter', type: 'checkbox', options: ['Ja', 'Nein'], answer: null },
+  ];
+  prefillFromLibrary(qs, [
+    { question_key: 'einwilligung datenschutz', answer: 'ja' },
+    { question_key: 'newsletter', answer: 'max@example.org' },
+  ]);
+  assert.equal(qs[0].answer, 'Ja');
+  assert.equal(qs[1].answer, null);
+});
+
+test('isTickAnswer and the in-page fill agree on what ticks a box', () => {
+  for (const v of ['Ja', 'yes', 'true', '1', 'x', '✓', 'an']) assert.equal(isTickAnswer(v), true, v);
+  for (const v of ['Nein', 'no', 'false', '0', 'aus', '', null]) assert.equal(isTickAnswer(v), false, String(v));
+  // fillAnswerInPage runs in the browser and can't import isTickAnswer — keep
+  // its yes-pattern identical.
+  assert.ok(fillAnswerInPage.toString().includes('/^(ja|yes|y|true|1|x|✓|✔|checked|an|on)$/i'));
+  assert.ok(isTickAnswer.toString().includes('/^(ja|yes|y|true|1|x|✓|✔|checked|an|on)$/i'));
+});
+
+test('fillAnswers hands each question its type, so only checkbox questions touch checkboxes', async () => {
+  const calls = [];
+  const page = {
+    evaluate: async (fn, args) => { calls.push(args); return true; },
+    waitForTimeout: async () => {},
+  };
+  await fillAnswers(page, [
+    { label: 'Berufserfahrung (Jahre)', type: 'number', answer: '1' },
+    { label: 'Ich akzeptiere die AGB', type: 'checkbox', answer: 'Ja' },
+    { label: 'Ohne Antwort', type: 'text', answer: null },
+  ]);
+  assert.deepEqual(calls.map(c => [c.label, c.type, c.value]), [
+    ['Berufserfahrung (Jahre)', 'number', '1'],
+    ['Ich akzeptiere die AGB', 'checkbox', 'Ja'],
+  ]);
+});
