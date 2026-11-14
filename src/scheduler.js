@@ -220,6 +220,28 @@ export const NOT_ALLOWED_SUMMARY = 'Titel nicht in der Positivliste – nicht be
 // otherwise release thousands of detail-page fetches and Claude calls at once.
 export const MAX_REOPEN_PER_RUN = 100;
 
+// ── Location pre-filter (#36) ────────────────────────────────────────────────
+// Large career pages list openings worldwide. With a location list set, a
+// career-page job whose location contains none of its terms never reaches
+// Claude. Deliberately lenient: a job without a location, a remote job, and
+// every job-board result (those searches carry their own location + radius,
+// so "Stuttgart" would wrongly drop "Esslingen") always pass.
+export const WRONG_LOCATION_SUMMARY = 'Ort nicht in der Ortsliste – nicht bewertet';
+const ALWAYS_OK_LOCATIONS = ['remote', 'homeoffice', 'home office', 'home-office', 'mobiles arbeiten',
+  'deutschlandweit', 'bundesweit'];
+const foldPlace = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+export function createLocationFilter(list) {
+  const terms = (Array.isArray(list) ? list : []).map(foldPlace).filter(Boolean);
+  const reject = (job) => {
+    if (terms.length === 0 || job?.platform) return null;
+    const loc = foldPlace(job?.location);
+    if (!loc || ALWAYS_OK_LOCATIONS.some(t => loc.includes(t))) return null;
+    return terms.some(t => loc.includes(t)) ? null : 'wrong-location';
+  };
+  return { reject, hasList: terms.length > 0 };
+}
+
 // The title pre-filters of one client. `reject(title)` says why a job never
 // reaches Claude: 'blocked' (blocklist hit) or 'not-allowed' (an allowlist is
 // set and the title matches none of it) — null means it goes on. An empty
@@ -246,6 +268,7 @@ async function runClientPipeline(client) {
   const cfg = getClientConfig(client);
   const sources = cfg.sources;
   const titleFilter = createTitleFilter(cfg.filters);
+  const locationFilter = createLocationFilter(cfg.filters.locationAllowlist);
 
   const t = {};
   const tick = (label) => { t[label] = Date.now(); };
@@ -285,18 +308,21 @@ async function runClientPipeline(client) {
   if (newDupes.length > 0) log(`${newDupes.length} neue Stelle(n) über mehrere Quellen doppelt gefunden — jeweils nur einmal übernommen`);
   log(`${scrapedJobs.length} scraped, ${newJobs.length} new`);
 
-  // 3. Title filters — skip structurally irrelevant jobs before touching Claude
-  const isTitleBlocked = (title) => titleFilter.reject(title) !== null;
-  // Blocklist drops are final; allowlist drops carry NOT_ALLOWED_SUMMARY so a
-  // loosened allowlist can bring them back (see below).
+  // 3. Pre-filters (title + location) — skip irrelevant jobs before touching Claude.
+  // rejectJob says why: 'blocked' | 'not-allowed' | 'wrong-location' | null.
+  const rejectJob = (job) => titleFilter.reject(job.title) ?? locationFilter.reject(job);
+  const isFiltered = (job) => rejectJob(job) !== null;
+  // Blocklist drops are final; allowlist and location drops carry a marker
+  // summary so a loosened list can bring them back (see below).
+  const FILTER_SUMMARY = { 'not-allowed': NOT_ALLOWED_SUMMARY, 'wrong-location': WRONG_LOCATION_SUMMARY };
   const markFiltered = (job) => {
-    const notAllowed = titleFilter.reject(job.title) === 'not-allowed';
-    markAnalyzed(clientId, job.id, false, null, notAllowed ? NOT_ALLOWED_SUMMARY : null);
+    markAnalyzed(clientId, job.id, false, null, FILTER_SUMMARY[rejectJob(job)] ?? null);
   };
+  const countBy = (jobs, reason) => jobs.filter(job => rejectJob(job) === reason).length;
 
-  const blockedJobs = newJobs.filter(job => isTitleBlocked(job.title));
-  const jobsToProcess = newJobs.filter(job => !isTitleBlocked(job.title));
-  const listed = blockedJobs.filter(job => titleFilter.reject(job.title) === 'blocked');
+  const blockedJobs = newJobs.filter(job => isFiltered(job));
+  const jobsToProcess = newJobs.filter(job => !isFiltered(job));
+  const listed = blockedJobs.filter(job => rejectJob(job) === 'blocked');
 
   if (listed.length > 0) {
     // Blocklist hits are listed one by one; an allowlist typically drops most
@@ -305,7 +331,10 @@ async function runClientPipeline(client) {
     for (const job of listed) log(`  ✗ ${job.title}`);
   }
   if (titleFilter.hasAllowlist) {
-    log(`Positivliste: ${newJobs.length - blockedJobs.length} neue Stelle(n) behalten, ${blockedJobs.length - listed.length} aussortiert`);
+    log(`Positivliste: ${newJobs.length - blockedJobs.length} neue Stelle(n) behalten, ${countBy(blockedJobs, 'not-allowed')} aussortiert`);
+  }
+  if (locationFilter.hasList) {
+    log(`Ortsfilter: ${countBy(blockedJobs, 'wrong-location')} neue Stelle(n) außerhalb der eingetragenen Orte aussortiert`);
   }
   for (const job of blockedJobs) {
     try {
@@ -314,22 +343,25 @@ async function runClientPipeline(client) {
     } catch (err) { log(`ERROR saving blocked job "${job.title}": ${err.message}`); }
   }
 
-  // Jobs an earlier allowlist dropped, which the current one lets through
-  // (a typo fixed, a term added): back into the analysis queue. Only while an
-  // allowlist is set — clearing it would release every job it ever dropped —
-  // only postings still seen within the expiry window, and capped per run.
+  // Jobs an earlier allowlist / location list dropped, which the current lists
+  // let through (a typo fixed, a term added): back into the analysis queue.
+  // Only while that list is set — clearing it would release every job it ever
+  // dropped — only postings still seen within the expiry window, capped per run.
   const seenSince = new Date(Date.now() - EXPIRY_THRESHOLD_HOURS * 3600 * 1000).toISOString();
-  const reopenable = titleFilter.hasAllowlist
-    ? getJobsWithSummary(clientId, NOT_ALLOWED_SUMMARY, seenSince).filter(job => !isTitleBlocked(job.title))
-    : [];
+  const reopenable = [
+    titleFilter.hasAllowlist ? NOT_ALLOWED_SUMMARY : null,
+    locationFilter.hasList ? WRONG_LOCATION_SUMMARY : null,
+  ].filter(Boolean)
+    .flatMap(summary => getJobsWithSummary(clientId, summary, seenSince))
+    .filter(job => !isFiltered(job));
   const reopen = reopenable.slice(0, MAX_REOPEN_PER_RUN);
   if (reopen.length > 0) {
     try {
       reopenForAnalysis(clientId, reopen.map(job => job.id));
       const later = reopenable.length - reopen.length;
-      log(`Positivliste geändert: ${reopen.length} früher aussortierte Stelle(n) werden jetzt bewertet` +
+      log(`Vorfilter geändert: ${reopen.length} früher aussortierte Stelle(n) werden jetzt bewertet` +
           (later > 0 ? `, ${later} weitere in den nächsten Läufen` : ''));
-    } catch (err) { log(`ERROR reopening allowlist-filtered jobs: ${err.message}`); }
+    } catch (err) { log(`ERROR reopening pre-filtered jobs: ${err.message}`); }
   }
 
   const newJobIds = new Set(jobsToProcess.map(j => j.id));
@@ -391,18 +423,23 @@ async function runClientPipeline(client) {
   // 7. Analyze unanalyzed jobs — collect results for new jobs found this run
   const allUnanalyzed = getUnanalyzedJobs(clientId);
 
-  // Apply the title filters retroactively to jobs saved before they were updated
-  const retroBlocked = allUnanalyzed.filter(job => isTitleBlocked(job.title));
+  // Apply the pre-filters retroactively to jobs saved before they were updated
+  const retroBlocked = allUnanalyzed.filter(job => isFiltered(job));
   if (retroBlocked.length > 0) {
-    const retroNotAllowed = retroBlocked.filter(job => titleFilter.reject(job.title) === 'not-allowed').length;
-    log(`Retroactively filtering ${retroBlocked.length} already-saved job(s) matching title filter` +
-        (retroNotAllowed > 0 ? ` (${retroNotAllowed} davon nur nicht in der Positivliste)` : ''));
+    const retroNotAllowed = countBy(retroBlocked, 'not-allowed');
+    const retroLocation = countBy(retroBlocked, 'wrong-location');
+    const parts = [
+      retroNotAllowed > 0 ? `${retroNotAllowed} nicht in der Positivliste` : '',
+      retroLocation > 0 ? `${retroLocation} außerhalb der Orte` : '',
+    ].filter(Boolean);
+    log(`Retroactively filtering ${retroBlocked.length} already-saved job(s) matching a pre-filter` +
+        (parts.length ? ` (davon ${parts.join(', ')})` : ''));
     for (const job of retroBlocked) {
       try { markFiltered(job); }
       catch (err) { log(`ERROR marking "${job.title}": ${err.message}`); }
     }
   }
-  const thin = await settleThinDescriptions(clientId, allUnanalyzed.filter(job => !isTitleBlocked(job.title)), savedIds);
+  const thin = await settleThinDescriptions(clientId, allUnanalyzed.filter(job => !isFiltered(job)), savedIds);
   const toAnalyze = thin.ready;
   // "Analysiert" in the overview counts new jobs that went to Claude — not the
   // ones held back for a missing description.

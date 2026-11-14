@@ -313,6 +313,7 @@ Cheap title-based filters applied **before** any Claude call:
 - **`titleAllowlist`** — if not empty, **only** jobs whose title contains at least one of these substrings go to Claude; all others are dropped as irrelevant (log: `Positivliste: X neue Stelle(n) behalten, Y aussortiert`). Made for a narrow target role on broad career pages — a handful of terms like `assistenz`, `office manager` instead of hundreds of blocklist entries. A title that matches a `priorityKeywords` entry counts as allowed. Empty (the default) = no restriction.
 - **`titleBlocklist`** — jobs whose title contains any of these substrings are dropped as irrelevant. Wins over the allowlist.
 - **`priorityKeywords`** — jobs whose title contains any of these get their score boosted to ≥ 7.
+- **`locationAllowlist`** — if not empty, a **career-page** job only goes to Claude when its location contains one of these terms (case-insensitive substring): list the towns you'd commute to, a region, or a country such as `Deutschland` to drop the worldwide openings of large employers — add `Germany` too, pages spell it either way (log: `Ortsfilter: X … aussortiert`). Deliberately lenient: a job without a location, a remote/home-office job and every job-board result (LinkedIn/StepStone/Indeed searches have their own location and radius) always pass. Like the allowlist, a location drop is undone automatically once a changed list lets the job through.
 
 All three match case-insensitively as substrings, after gender forms are folded on both sides
 (*(m/w/d)* removed, *Referent:in* → *referentin*) — so prefer distinctive terms: a short one like
@@ -549,7 +550,7 @@ changed later.
 5. **What you're looking for** — desired roles, locations, industries, contract types, minimum salary, dealbreakers
 6. *(optional)* **Job boards** — tick LinkedIn / StepStone / Indeed and enter one search term + location (pre-filled from your desired roles); no account needed
 7. **Career pages** — company sites to watch. At least one source is required overall; a job-board search from step 6 counts
-8. *(optional)* **Title filters** — allowlist, blocklist and priority keywords
+8. *(optional)* **Title filters** — allowlist, blocklist, priority keywords and locations
 9. *(optional)* **How often & how strict** — schedule as a plain choice (hourly … once a day) and the score threshold
 
 On a first run every step is shown once (optional ones can be skipped). After that, only the

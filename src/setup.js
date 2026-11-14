@@ -186,7 +186,7 @@ export const STEPS = [
   },
   {
     id: 'filters', title: 'Titel-Filter', required: false, later: 'wizard',
-    subtitle: 'Optional: Stellen vorab nach Stichwörtern im Titel aus- oder einschließen.',
+    subtitle: 'Optional: Stellen vorab nach Stichwörtern im Titel oder nach Ort aus- oder einschließen.',
     intro: 'Spart KI-Kosten. Geblockte Titel werden gar nicht erst analysiert; ' +
            'Prioritäts-Stichwörter heben den Score an. Leer lassen ist völlig in Ordnung.',
     fields: [
@@ -196,6 +196,11 @@ export const STEPS = [
               'z. B. assistenz, office manager. Ideal für eine eng umrissene Wunsch-Rolle. Leer = keine Einschränkung' },
       { key: 'titleBlocklist', store: 'filters', type: 'list',
         label: 'Blockliste (Titel überspringen)', help: 'Ein Stichwort pro Zeile, z. B. praktikum' },
+      { key: 'locationAllowlist', store: 'filters', type: 'list',
+        label: 'Nur diese Orte (Karriereseiten)',
+        help: 'Wenn ausgefüllt, gehen Stellen von Karriereseiten nur an die KI, wenn ihr Ort einen dieser Begriffe enthält – ' +
+              'z. B. Stuttgart, Esslingen oder Deutschland. Stellen ohne Ortsangabe, Remote-Stellen und Jobportal-Suchen ' +
+              '(die haben ihren eigenen Umkreis) werden nie aussortiert. Leer = keine Einschränkung' },
       { key: 'priorityKeywords', store: 'filters', type: 'list',
         label: 'Prioritäts-Stichwörter', help: 'Titel mit diesen Wörtern werden bevorzugt' },
     ],

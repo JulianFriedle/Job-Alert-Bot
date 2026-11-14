@@ -13,7 +13,7 @@ process.env.JOBS_DB_PATH = path.join(mkdtempSync(path.join(tmpdir(), 'jobbot-fil
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const { normalizeTitle, createTitleFilter, NOT_ALLOWED_SUMMARY } = await import('../src/scheduler.js');
+const { normalizeTitle, createTitleFilter, NOT_ALLOWED_SUMMARY, createLocationFilter, WRONG_LOCATION_SUMMARY } = await import('../src/scheduler.js');
 const db = await import('../src/database.js');
 
 test('normalizeTitle strips a gender marker wherever it sits', () => {
@@ -134,4 +134,42 @@ test('a keyword ending in a gender marker matches the end of a title', () => {
   const f = createTitleFilter({ titleBlocklist: ['Ingenieur (m/w/d)'], titleAllowlist: [] });
   assert.equal(f.reject('Konstruktion Ingenieur (m/w/d)'), 'blocked');
   assert.equal(createTitleFilter({ titleBlocklist: [' sap '] }).reject('Berater SAP Logistik'), 'blocked');
+});
+
+// ── Location pre-filter (#36) ────────────────────────────────────────────────
+
+test('an empty location list restricts nothing', () => {
+  const f = createLocationFilter([]);
+  assert.equal(f.hasList, false);
+  assert.equal(f.reject({ location: 'São Paulo, Brazil' }), null);
+  assert.equal(createLocationFilter(undefined).reject({ location: 'Paris' }), null);
+});
+
+test('with a location list only matching career-page jobs go on', () => {
+  const f = createLocationFilter(['Stuttgart', 'Esslingen', ' Deutschland ']);
+  assert.equal(f.reject({ location: 'Stuttgart-Feuerbach' }), null);
+  assert.equal(f.reject({ location: 'ESSLINGEN am Neckar' }), null);
+  assert.equal(f.reject({ location: 'Hamburg, Deutschland' }), null);
+  assert.equal(f.reject({ location: 'São Paulo, Brazil' }), 'wrong-location');
+  assert.equal(f.reject({ location: 'Budapest' }), 'wrong-location');
+});
+
+test('no location, remote jobs and job-board results always pass', () => {
+  const f = createLocationFilter(['Stuttgart']);
+  assert.equal(f.reject({ location: '' }), null);
+  assert.equal(f.reject({ location: null }), null);
+  assert.equal(f.reject({}), null);
+  assert.equal(f.reject({ location: 'Remote (EU)' }), null);
+  assert.equal(f.reject({ location: 'Homeoffice / Berlin' }), null);
+  assert.equal(f.reject({ location: 'Deutschlandweit' }), null);
+  // LinkedIn/StepStone/Indeed searches carry their own location and radius.
+  assert.equal(f.reject({ location: 'Ludwigsburg', platform: 'linkedin' }), null);
+});
+
+test('location-dropped jobs use their own reversible marker', () => {
+  assert.notEqual(WRONG_LOCATION_SUMMARY, NOT_ALLOWED_SUMMARY);
+  db.saveJob('default', { id: 'loc-1', title: 'Konstrukteur', company: 'A', url: 'https://a.example/loc', location: 'Paris', description: '', source: 'A' });
+  db.markAnalyzed('default', 'loc-1', false, null, WRONG_LOCATION_SUMMARY);
+  const since = new Date(Date.now() - 3600 * 1000).toISOString();
+  assert.ok(db.getJobsWithSummary('default', WRONG_LOCATION_SUMMARY, since).some(j => j.id === 'loc-1'));
 });
