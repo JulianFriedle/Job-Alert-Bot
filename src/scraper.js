@@ -11,6 +11,7 @@ import { runHostLimited, registrableDomain } from './host-limiter.js';
 import { isAborted } from './run-control.js';
 import { isNonJobLink } from './link-filter.js';
 import { cleanJobTitle } from './title-cleanup.js';
+import { createPaginationGuard } from './pagination-guard.js';
 import { CONFIG_DIR } from './paths.js';
 
 
@@ -590,6 +591,11 @@ export async function scrapeSource(source) {
   const visitedUrls = new Set();
   const seenJobUrls = new Set();
   const nonJobLinks = new Set(); // link texts dropped as navigation/UI chrome
+  // Per-source knobs (config): an optional page limit on top of each
+  // strategy's built-in cap, and how long one page load may take. The guard
+  // also stops on empty streaks, failures and refused connections.
+  const guard = createPaginationGuard({ maxPages: Number(source.maxPages) > 0 ? Number(source.maxPages) : Infinity });
+  const gotoTimeout = Number(source.gotoTimeout) > 0 ? Number(source.gotoTimeout) : 30000;
   let duplicateCount = 0;
   let siteTotal = null; // job entries skipped because their URL was already seen this run
 
@@ -708,11 +714,11 @@ export async function scrapeSource(source) {
     // Some sites (e.g. Rheinmetall) block domcontentloaded indefinitely via consent scripts.
     // Fall back to 'commit' (first bytes received) so the goto never hangs.
     try {
-      await page.goto(source.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.goto(source.url, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
     } catch (e) {
       if (e.message.includes('Timeout')) {
         log(`  domcontentloaded timed out — retrying with commit`);
-        await page.goto(source.url, { waitUntil: 'commit', timeout: 15000 });
+        await page.goto(source.url, { waitUntil: 'commit', timeout: Math.min(15000, gotoTimeout) });
         await page.waitForTimeout(4000); // give JS time to render content
       } else {
         throw e;
@@ -802,7 +808,16 @@ export async function scrapeSource(source) {
           visitedUrls.add(pgUrl);
           const prevSize = apiJobsMap.size;
           await page.waitForTimeout(1500);
-          await page.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          try {
+            await page.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
+          } catch (err) {
+            if (isAborted()) break;
+            // One slow page must not throw away the whole source — but the
+            // pages after it are unread, so the result is incomplete.
+            log(`  Azure API page ${pg}: ERROR — ${err.message.split('\n')[0]} — stopping`);
+            guard.giveUp(`Azure-Seite ${pg} fehlgeschlagen – weitere Seiten nicht gelesen`);
+            break;
+          }
           await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
           await page.waitForTimeout(1500);
           if (apiJobsMap.size > prevSize) {
@@ -836,7 +851,7 @@ export async function scrapeSource(source) {
         // 1..numPages-1 — `pg < numPages`, not numPages+1, or the last request
         // points one full page past the end.
         for (let pg = 1; pg < Math.min(numPages, 50); pg++) {
-          if (isAborted()) break;
+          if (isAborted() || !guard.canFetch()) break;
           const pgUrl = new URL(source.url);
           // 'index' mode: param is a 0-based page index (page,1,2,…). Default 'offset' mode: param is a row offset (step,2·step,…).
           const value = source.paginationMode === 'index' ? pg : pg * step;
@@ -846,19 +861,23 @@ export async function scrapeSource(source) {
             visitedUrls.add(pgStr);
             await page.waitForTimeout(1500);
             try {
-              await page.goto(pgStr, { waitUntil: 'domcontentloaded', timeout: 30000 });
+              await page.goto(pgStr, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
               await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
               await waitForFirstJob(page);
               const { jobs: pgJobs } = await extractJobsAndPagination(page, source);
               let pgAdded = addJobs(pgJobs);
               if (generalApiJobs.size > 0) pgAdded += addJobs([...generalApiJobs.values()], false, true);
               log(`  Config-page ${pg + 1}: ${pgJobs.length} found, ${pgAdded} new`);
+              guard.page(pgAdded, pgJobs.length);
               if (pgAdded === 0 && pg > 1) { log(`  Config-page: no new jobs — stopping`); break; }
             } catch (err) {
+              if (isAborted()) { log(`  Config-page ${pg + 1}: abgebrochen`); break; }
               log(`  Config-page ${pg + 1}: ERROR — ${err.message}`);
+              guard.error(err);
             }
           }
         }
+        if (guard.trailingFailure && !isAborted()) guard.giveUp('Letzte Seite fehlgeschlagen – nicht gelesen');
       } else {
         log(`  Config-driven pagination: could not read total count from page — skipping`);
       }
@@ -876,14 +895,14 @@ export async function scrapeSource(source) {
       log(`  Visiting ${remainingPages.length} more page(s)...`);
 
       for (let i = 0; i < remainingPages.length; i++) {
-        if (isAborted()) break;
+        if (isAborted() || !guard.canFetch()) break;
         const pageUrl = remainingPages[i];
         if (visitedUrls.has(pageUrl)) continue;
         visitedUrls.add(pageUrl);
 
         await page.waitForTimeout(2000);
         try {
-          await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
           await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
           await waitForFirstJob(page);
 
@@ -891,13 +910,16 @@ export async function scrapeSource(source) {
           let added = addJobs(pageJobs);
           if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
           log(`  Page ${i + 2}: ${pageJobs.length} job(s) found, ${added} new`);
+          guard.page(added, pageJobs.length);
         } catch (err) {
           // On abort Playwright tears the browser down under us, so the in-flight
           // navigation always throws — that's the stop working, not a failure.
           if (isAborted()) { log(`  Page ${i + 2}: abgebrochen`); break; }
           log(`  Page ${i + 2}: ERROR — ${err.message}`);
+          guard.error(err);
         }
       }
+      if (guard.trailingFailure && !isAborted()) guard.giveUp('Letzte Seite fehlgeschlagen – nicht gelesen');
 
     // ── Strategy B: "Load more" button (infinite scroll) ────────────────────
     // Skipped for apiOnly sources and for config-driven pagination (Strategy 0).
@@ -905,69 +927,90 @@ export async function scrapeSource(source) {
       log(`  No href-based pagination — trying load-more / next-button...`);
       let anyStrategyWorked = false;
       let consecutiveZeros = 0;
+      let lastStepFailed = false;
       const MAX_ACTIONS = 100;
 
       for (let action = 1; action <= MAX_ACTIONS; action++) {
-        if (isAborted()) break;
-        // Try load-more first (infinite scroll), then next-button (paginated SPA)
-        const loadMoreClicked = await clickLoadMore(page);
+        if (isAborted() || !guard.canFetch()) break;
+        try {
+          // Try load-more first (infinite scroll), then next-button (paginated SPA)
+          const loadMoreClicked = await clickLoadMore(page);
 
-        if (loadMoreClicked) {
-          anyStrategyWorked = true;
-          await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
-          await page.waitForTimeout(800);
-          const { jobs: visible } = await extractJobsAndPagination(page, source);
-          let added = source.apiOnly ? 0 : addJobs(visible, false);
-          // Also merge jobs from API responses fired by the click (e.g. Bosch /api/filter/query?page=N).
-          // Re-reading the cumulative maps is cheap — addJobs dedupes, so only genuinely new postings count.
-          if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
-          if (apiJobsMap.size > 0)     added += addJobs([...apiJobsMap.values()], false, true);
-          log(`  Load-more ${action}: +${added} new (${allJobs.length} total)`);
-          if (added === 0) { consecutiveZeros++; if (consecutiveZeros >= 2) { log(`  Load-more: end of results`); break; } }
-          else { consecutiveZeros = 0; }
+          if (loadMoreClicked) {
+            anyStrategyWorked = true;
+            await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+            await page.waitForTimeout(800);
+            const { jobs: visible } = await extractJobsAndPagination(page, source);
+            let added = source.apiOnly ? 0 : addJobs(visible, false);
+            // Also merge jobs from API responses fired by the click (e.g. Bosch /api/filter/query?page=N).
+            // Re-reading the cumulative maps is cheap — addJobs dedupes, so only genuinely new postings count.
+            if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
+            if (apiJobsMap.size > 0)     added += addJobs([...apiJobsMap.values()], false, true);
+            log(`  Load-more ${action}: +${added} new (${allJobs.length} total)`);
+            guard.page(added, null);
+            lastStepFailed = false;
+            if (added === 0) { consecutiveZeros++; if (consecutiveZeros >= 2) { log(`  Load-more: end of results`); break; } }
+            else { consecutiveZeros = 0; }
 
-        } else {
-          // Strategy C: click the "→" in a pagination nav (Rheinmetall-style)
-          const result = await clickNextButton(page);
+          } else {
+            // Strategy C: click the "→" in a pagination nav (Rheinmetall-style)
+            const result = await clickNextButton(page);
 
-          if (result === 'not_found') {
-            if (!anyStrategyWorked && allJobs.length === 0) {
-              // Nothing worked and no jobs found — dump debug info so the user can report it
-              await debugPageStructure(page);
-            }
-            if (!anyStrategyWorked) log(`  No further pagination detected — single page result.`);
-            break;
-          }
-
-          if (result === 'disabled') {
-            log(`  Next button is disabled — reached last page`);
-            break;
-          }
-
-          // result === 'clicked'
-          anyStrategyWorked = true;
-          await page.waitForTimeout(2500);
-          // Wait for the SPA's API call to finish before extracting.
-          // networkidle fires when no fetch/XHR requests are in flight for 500ms.
-          await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
-          await waitForFirstJob(page);
-
-          const { jobs: pageJobs } = await extractJobsAndPagination(page, source);
-          let added = addJobs(pageJobs);
-          if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
-          log(`  Next-click ${action}: +${added} new (${allJobs.length} total)`);
-
-          if (added === 0) {
-            consecutiveZeros = (consecutiveZeros ?? 0) + 1;
-            if (consecutiveZeros >= 2) {
-              log(`  Next-click: ${consecutiveZeros} pages with no new jobs — reached last page`);
+            if (result === 'not_found') {
+              if (!anyStrategyWorked && allJobs.length === 0) {
+                // Nothing worked and no jobs found — dump debug info so the user can report it
+                await debugPageStructure(page);
+              }
+              if (!anyStrategyWorked) log(`  No further pagination detected — single page result.`);
               break;
             }
-            log(`  Next-click: +0 this page — retrying once more`);
-          } else {
-            consecutiveZeros = 0;
+
+            if (result === 'disabled') {
+              log(`  Next button is disabled — reached last page`);
+              break;
+            }
+
+            // result === 'clicked'
+            anyStrategyWorked = true;
+            await page.waitForTimeout(2500);
+            // Wait for the SPA's API call to finish before extracting.
+            // networkidle fires when no fetch/XHR requests are in flight for 500ms.
+            await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+            await waitForFirstJob(page);
+
+            const { jobs: pageJobs } = await extractJobsAndPagination(page, source);
+            let added = addJobs(pageJobs);
+            if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
+            log(`  Next-click ${action}: +${added} new (${allJobs.length} total)`);
+            guard.page(added, null);
+            lastStepFailed = false;
+
+            if (added === 0) {
+              consecutiveZeros = (consecutiveZeros ?? 0) + 1;
+              if (consecutiveZeros >= 2) {
+                log(`  Next-click: ${consecutiveZeros} pages with no new jobs — reached last page`);
+                break;
+              }
+              log(`  Next-click: +0 this page — retrying once more`);
+            } else {
+              consecutiveZeros = 0;
+            }
           }
+        } catch (err) {
+          // One failing click or page read used to throw the whole source away,
+          // jobs found so far included. Count it and go on; the guard decides
+          // when it's enough.
+          if (isAborted()) break;
+          log(`  Pagination step ${action}: ERROR — ${err.message.split('\n')[0]}`);
+          guard.error(err);
+          lastStepFailed = true;
+          if (guard.stopReason) break;
         }
+      }
+      // Ended right after a failed step (the next try found no button, or the
+      // limit hit): what came after it was never read.
+      if (lastStepFailed && !isAborted()) {
+        guard.giveUp('Letzter Paginierungsschritt fehlgeschlagen – weitere Seiten evtl. nicht gelesen');
       }
     }
 
@@ -986,8 +1029,16 @@ export async function scrapeSource(source) {
       .map(t => `"${t.length > 60 ? `${t.slice(0, 57)}…` : t}"`).join(', ');
     log(`  ${nonJobLinks.size} Navigations-/UI-Link(s) ausgelassen: ${shown}${nonJobLinks.size > 5 ? ', …' : ''}`);
   }
+  if (guard.problem) log(`  FEHLER: Paginierung abgebrochen – ${guard.problem}`);
+  else if (guard.stopReason) log(`  Paginierung beendet: ${guard.stopReason}`);
   log(`Finished ${source.name}: ${allJobs.length} unique job(s)${duplicateCount > 0 ? `, ${duplicateCount} duplicate(s) skipped` : ''}${siteTotal ? ` (site announced ${siteTotal})` : ''}`);
-  return { jobs: allJobs, duplicates: duplicateCount, siteTotal: siteTotal ?? null };
+  // Pagination ended by failures leaves the result incomplete (blocked): the
+  // run must not expire jobs that simply weren't reached. The reason is shown
+  // in the run overview.
+  return {
+    jobs: allJobs, duplicates: duplicateCount, siteTotal: siteTotal ?? null,
+    blocked: Boolean(guard.problem), error: guard.problem,
+  };
 }
 
 // Extract the main description text from an already-loaded detail page.
