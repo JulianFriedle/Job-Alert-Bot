@@ -10,6 +10,7 @@ import { launchPlatformBrowser, newHardenedContext } from './scrapers/browser.js
 import { runHostLimited, registrableDomain } from './host-limiter.js';
 import { isAborted } from './run-control.js';
 import { isNonJobLink } from './link-filter.js';
+import { cleanJobTitle } from './title-cleanup.js';
 import { CONFIG_DIR } from './paths.js';
 
 
@@ -89,8 +90,26 @@ async function extractJobsAndPagination(page, source = {}) {
         '[class*="language"], [class*="lang-switch"], [class*="locale"], select'
       )) return;
 
+      // innerText keeps a break between block elements, so a title and the
+      // location in the next <div> don't run together ("ZeitpunktStuttgart").
+      // textContent stays the fallback for hidden or detached nodes.
+      const textOf = (node) => ((node?.innerText || node?.textContent || '').replace(/\s+/g, ' ').trim());
+      // An anchor that wraps the whole card also carries the date, badges and
+      // the location; a heading inside it is the title alone. Only when it is
+      // the one heading there (with several, the first may be a date or a
+      // location) and doesn't itself look like a date, badge or label.
+      // Innermost matches only: <div class="job-title"><h3>…</h3></div> is one heading.
+      const HEADING_SEL = 'h1, h2, h3, h4, h5, h6, [class*="title" i]:not([class*="sub" i])';
+      const ownHeadings = [...el.querySelectorAll(HEADING_SEL)].filter(h => !h.querySelector(HEADING_SEL));
+      const headingText = ownHeadings.length === 1 ? textOf(ownHeadings[0]) : '';
+      // Not a date ("30. September 2026", "30.09."), a "Neu …" badge, "Posted on …"
+      // or a bare label ("Standort: …", "Standort Berlin") — but "Standortleiter
+      // Logistik", "3D-Konstrukteur", "New Business Manager" are titles.
+      const headingUsable = headingText.split(' ').length >= 2 &&
+        !/^(\d{1,2}\.\s?\S+\s?\d{4}|\d{1,2}\.\d{1,2}\.|posted\b|neu\b|(standort|einsatzort|location|unternehmen)(\s*:|\s+\S+$))/i.test(headingText);
       let title = (
-        el.textContent?.trim() ||
+        (headingUsable ? headingText : '') ||
+        textOf(el) ||
         el.getAttribute('aria-label') ||
         el.getAttribute('title') ||
         ''
@@ -107,7 +126,7 @@ async function extractJobsAndPagination(page, source = {}) {
       if (!title || isCallToAction || title.split(/\s+/).length < 2) {
         const card2 = el.closest('li, article, [class*="job"], [class*="career"], [class*="position"]') || el.parentElement;
         const heading = card2?.querySelector('h1, h2, h3, h4, h5, h6, [class*="title"], [class*="heading"]');
-        if (heading) title = heading.textContent?.replace(/\s+/g, ' ').trim() || '';
+        if (heading) title = textOf(heading);
         // No heading to recover: a bare CTA label is worthless as a title (it would
         // slip past every title-based filter), so drop the entry entirely.
         else if (isCallToAction) return;
@@ -119,9 +138,11 @@ async function extractJobsAndPagination(page, source = {}) {
       const card = el.closest(
         '[class*="job"], [class*="career"], [class*="position"], li, article'
       ) || el.parentElement;
-      const cardText = card?.textContent?.replace(/\s+/g, ' ').trim() || '';
+      // innerText with line breaks kept: the location pattern below stops at
+      // the end of its line instead of running into the next element.
+      const cardText = (card?.innerText || card?.textContent || '').replace(/[ \t\u00a0]+/g, ' ').trim();
 
-      const locationMatch = cardText.match(/(?:📍|location|standort|ort)[:\s]+([^\n|•·]+)/i);
+      const locationMatch = cardText.match(/(?:📍|\blocation|\bstandort|\bort)[:\s]+([^\n|•·]+)/i);
       const location = locationMatch?.[1]?.trim() || '';
 
       const companyEl = card?.querySelector('[class*="company"], [class*="employer"], [class*="firm"]');
@@ -578,9 +599,17 @@ export async function scrapeSource(source) {
   // link filter is only for anchors picked off the page.
   const addJobs = (jobs, countDupes = true, fromApi = false) => {
     let added = 0, dupes = 0;
-    for (const job of jobs) {
+    for (let job of jobs) {
       if (seenJobUrls.has(job.url)) { dupes++; continue; }
       seenJobUrls.add(job.url);
+      // Dates, "Neu" badges, "Location…Posted on…", "Einsatzorte: …" glued to
+      // the title (#39); whatever location/date they held fills the empty fields.
+      const cleaned = cleanJobTitle(job.title);
+      job = {
+        ...job,
+        title: cleaned.title,
+        location: job.location || cleaned.location,
+      };
       // Pagination, legal links, "Stellenanzeige merken" … — never a job, and each
       // one would cost a detail-page fetch and a Claude call.
       if (!fromApi && isNonJobLink(job.title, source.name)) { nonJobLinks.add(job.title); continue; }

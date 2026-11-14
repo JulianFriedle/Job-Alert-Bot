@@ -31,6 +31,7 @@ index.js                  ← --once [--client <id>] or hourly scheduler
 └── src/scheduler.js      ← runAll(): loops enabled clients, runs the pipeline per client
     ├── src/scraper.js    ← Playwright scraper (DOM + API interception, 3 pagination strategies)
     │   ├── src/link-filter.js ← Drops navigation/UI links (pagination, Impressum, "merken") before they count as jobs
+    │   ├── src/title-cleanup.js ← Strips dates, "Neu" badges and location/portal metadata glued to job titles
     │   └── src/scrapers/ ← Job-board scrapers (linkedin, stepstone, indeed) + shared browser setup
     ├── src/host-limiter.js ← Per-host request spacing shared by all scraping stages
     ├── src/database.js   ← SQLite — clients table + per-client jobs (client_id), dedup, tracking
@@ -738,7 +739,7 @@ npm run cover-letter -- abc123def456 > anschreiben.txt
 
 ## How It Works
 
-1. **Scraper** visits each URL in `config/jobs.json` with a headless Chromium browser. It handles three pagination strategies automatically: href-based page links, "Load more" buttons, and next-button SPAs. For React/SPA sites (Bosch, Zeiss, SAP SuccessFactors, etc.) it intercepts XHR/fetch responses and extracts jobs directly from the API. Links whose whole text is navigation or page chrome — *„Gehe zu Seite 2“*, *„Impressum“*, *„Stellenanzeige merken“*, *„Arbeiten bei …“*, or just the company name — are dropped right there (`src/link-filter.js`), so they never cost a detail-page fetch or a Claude call; the log lists what was dropped per source.
+1. **Scraper** visits each URL in `config/jobs.json` with a headless Chromium browser. It handles three pagination strategies automatically: href-based page links, "Load more" buttons, and next-button SPAs. For React/SPA sites (Bosch, Zeiss, SAP SuccessFactors, etc.) it intercepts XHR/fetch responses and extracts jobs directly from the API. Links whose whole text is navigation or page chrome — *„Gehe zu Seite 2“*, *„Impressum“*, *„Stellenanzeige merken“*, *„Arbeiten bei …“*, or just the company name — are dropped right there (`src/link-filter.js`), so they never cost a detail-page fetch or a Claude call; the log lists what was dropped per source. Titles are cleaned on the way in (`src/title-cleanup.js`): a leading date (*„30. September 2026Betreuer …“*), a *Neu* badge, a trailing *„Location … Posted on …“* and labelled metadata (*„Einsatzorte: … Unternehmen: …“*) are removed, and a location found there fills the job's location field. A heading inside a job link is preferred over the whole card text. Only patterns that can't be part of a real title are stripped; titles already in the database stay as they are.
 2. **Deduplication** — jobs are hashed by URL and skipped if already in the database. A title blocklist (internship, Ausbildung, sales, etc.) filters irrelevant postings before they reach Claude.
 3. **Analyzer** sends each new job to Claude with your profile and receives a relevance score (1–10), reasons, concerns, and a one-sentence summary.
 4. **Notifier** sends a formatted Telegram message for every relevant job, including the job ID for application tracking.
