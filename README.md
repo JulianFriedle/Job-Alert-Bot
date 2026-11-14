@@ -329,7 +329,8 @@ Cheap pre-filters applied **before** any Claude call:
 
 The three title lists match case-insensitively as substrings, after gender forms are folded on both sides
 (*(m/w/d)* removed, *Referent:in* → *referentin*) — so prefer distinctive terms: a short one like
-`it` also matches inside *Qualität*. Both lists also apply **retroactively** to jobs that are
+`it` also matches inside *Qualität*. A keyword with a space before and after it (`" hr "`, as in
+the shipped blocklist) only matches the whole word; the editor and the wizard keep those spaces. Both lists also apply **retroactively** to jobs that are
 saved but not yet analyzed. A **blocklist** drop is final. An **allowlist** drop is stored with the
 summary *„Titel nicht in der Positivliste – nicht bewertet“* and is undone automatically: once a
 changed allowlist lets the title through (a typo fixed, a term added), the next runs put the job
@@ -337,7 +338,9 @@ back into the analysis queue — only postings still seen on their source within
 `EXPIRY_THRESHOLD_HOURS`, and at most 100 per run, since each one costs a detail-page fetch and a
 Claude call (and may trigger a notification). Clearing the allowlist completely does *not* do
 that — it could release thousands of jobs at once; new jobs are then analyzed again as usual.
-Edit this file (or the wizard's *Titel-Filter* step) to tune what gets filtered. If the file is
+Edit them in **Profil → Vorfilter** (with a **Testen** button that shows what a draft would drop
+from your most recent jobs, without saving anything or calling the AI), in the wizard's
+*Titel-Filter* step, or in this file, to tune what gets filtered. If the file is
 missing, built-in defaults are used.
 
 A third check needs no configuration file: a job whose description is shorter than

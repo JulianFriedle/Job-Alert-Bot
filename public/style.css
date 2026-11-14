@@ -854,3 +854,13 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   .docs-preview { height: 60vh; }
   .docs-spacer { display: none; }
 }
+
+/* Vorfilter card (Profil tab) */
+.filters-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.filters-grid .setting { display: flex; flex-direction: column; gap: 4px; }
+.filters-grid textarea { width: 100%; min-height: 7.5em; resize: vertical; }
+.filters-preview:empty { display: none; }
+.filters-preview { margin-top: 10px; }
+.filters-preview h4 { margin: 10px 0 4px; font-size: .9rem; }
+.filters-preview ul { margin: 0; padding-left: 1.2em; }
+.filters-preview li { font-size: .85rem; overflow-wrap: anywhere; }

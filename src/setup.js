@@ -13,6 +13,7 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 
 import { getClient, updateClient, DEFAULT_CLIENT_ID } from './database.js';
+import { keywordLines } from './filters.js';
 import { APP_ROOT, CONFIG_DIR as DEFAULT_CONFIG_DIR, DATA_DIR, ENV_FILE } from './paths.js';
 
 // Templates ship with the code; everything the wizard writes goes to the
@@ -602,7 +603,9 @@ async function saveStep(step, incoming, debug) {
     }
 
     if (f.type === 'list') {
-      const arr = Array.isArray(val) ? val.map(x => String(x).trim()).filter(Boolean)
+      // Filter keywords keep their padding (" hr " = whole word only).
+      const arr = f.store === 'filters' ? keywordLines(val)
+        : Array.isArray(val) ? val.map(x => String(x).trim()).filter(Boolean)
         : String(val ?? '').split('\n').map(x => x.trim()).filter(Boolean);
       if (f.required && arr.length === 0) errors.push(`${f.label}: mindestens ein Eintrag`);
       if (f.store === 'profile') { profile = profile || {}; setPath(profile, f.key, arr); }
