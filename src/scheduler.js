@@ -227,17 +227,62 @@ export const MAX_REOPEN_PER_RUN = 100;
 // every job-board result (those searches carry their own location + radius,
 // so "Stuttgart" would wrongly drop "Esslingen") always pass.
 export const WRONG_LOCATION_SUMMARY = 'Ort nicht in der Ortsliste – nicht bewertet';
+
+// Lowercase, no accents, umlauts and ß folded the same way on both sides, so
+// "München", "Muenchen" and "Munchen" (or "Düsseldorf"/"Duesseldorf") match.
+const foldPlace = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/ß/g, 'ss').replace(/([aou])e/g, '$1')
+  .replace(/\s+/g, ' ').trim();
+
+// Locations that name no place to filter by: kept, like a missing location.
 const ALWAYS_OK_LOCATIONS = ['remote', 'homeoffice', 'home office', 'home-office', 'mobiles arbeiten',
-  'deutschlandweit', 'bundesweit'];
-const foldPlace = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  'deutschlandweit', 'bundesweit', 'mehrere standorte', 'diverse standorte', 'verschiedene standorte',
+  'flexibel', 'flexible', 'hybrid', 'anywhere', 'weltweit', 'global', 'multiple locations',
+  'various locations'].map(foldPlace);
+
+// Country names in German and English. A country term in the list keeps every
+// job that names no OTHER country: "Berlin" passes "Deutschland", "Etowah,
+// TN, United States" does not.
+const COUNTRIES = {
+  de: ['deutschland', 'germany'], at: ['österreich', 'austria'], ch: ['schweiz', 'switzerland'],
+  fr: ['frankreich', 'france'], it: ['italien', 'italy'], es: ['spanien', 'spain'],
+  pt: ['portugal'], nl: ['niederlande', 'netherlands', 'holland'], be: ['belgien', 'belgium'],
+  lu: ['luxemburg', 'luxembourg'], pl: ['polen', 'poland', 'polska'], cz: ['tschechien', 'czech republic', 'czechia'],
+  sk: ['slowakei', 'slovakia'], hu: ['ungarn', 'hungary'], ro: ['rumänien', 'romania'], bg: ['bulgarien', 'bulgaria'],
+  hr: ['kroatien', 'croatia'], si: ['slowenien', 'slovenia'], rs: ['serbien', 'serbia'], gr: ['griechenland', 'greece'],
+  tr: ['türkei', 'turkey', 'türkiye'], dk: ['dänemark', 'denmark'], se: ['schweden', 'sweden'], no: ['norwegen', 'norway'],
+  fi: ['finnland', 'finland'], ie: ['irland', 'ireland'], gb: ['großbritannien', 'vereinigtes königreich', 'united kingdom', 'england', 'scotland', 'uk'],
+  us: ['usa', 'vereinigte staaten', 'united states', 'u.s.'], ca: ['kanada', 'canada'], mx: ['mexiko', 'mexico'],
+  br: ['brasilien', 'brazil', 'brasil'], ar: ['argentinien', 'argentina'], cl: ['chile'],
+  cn: ['china', 'volksrepublik china'], jp: ['japan'], kr: ['südkorea', 'south korea', 'korea'], in: ['indien', 'india'],
+  sg: ['singapur', 'singapore'], my: ['malaysia'], th: ['thailand'], vn: ['vietnam'], au: ['australien', 'australia'],
+  za: ['südafrika', 'south africa'], ae: ['vereinigte arabische emirate', 'united arab emirates', 'uae'],
+  il: ['israel'], ma: ['marokko', 'morocco'], tn: ['tunesien', 'tunisia'], eg: ['ägypten', 'egypt'], ua: ['ukraine'],
+};
+const COUNTRY_RES = Object.entries(COUNTRIES).map(([code, names]) => ({
+  code,
+  re: new RegExp(`(^|[^\\p{L}])(${names.map(n => foldPlace(n).replace(/[.]/g, '\\.')).join('|')})(?=$|[^\\p{L}])`, 'u'),
+}));
+const countriesIn = (folded) => COUNTRY_RES.filter(c => c.re.test(folded)).map(c => c.code);
 
 export function createLocationFilter(list) {
   const terms = (Array.isArray(list) ? list : []).map(foldPlace).filter(Boolean);
+  // A term that is nothing but a country name ("Deutschland") works per country.
+  const listCountries = new Set(terms.flatMap(t => {
+    const c = countriesIn(t);
+    return c.length === 1 && COUNTRIES[c[0]].map(foldPlace).includes(t) ? c : [];
+  }));
   const reject = (job) => {
     if (terms.length === 0 || job?.platform) return null;
     const loc = foldPlace(job?.location);
     if (!loc || ALWAYS_OK_LOCATIONS.some(t => loc.includes(t))) return null;
-    return terms.some(t => loc.includes(t)) ? null : 'wrong-location';
+    if (terms.some(t => loc.includes(t))) return null;
+    if (listCountries.size > 0) {
+      const named = countriesIn(loc);
+      // No country named at all ("Berlin"): a listed country may well be meant.
+      if (named.length === 0 || named.some(c => listCountries.has(c))) return null;
+    }
+    return 'wrong-location';
   };
   return { reject, hasList: terms.length > 0 };
 }
@@ -348,12 +393,21 @@ async function runClientPipeline(client) {
   // Only while that list is set — clearing it would release every job it ever
   // dropped — only postings still seen within the expiry window, capped per run.
   const seenSince = new Date(Date.now() - EXPIRY_THRESHOLD_HOURS * 3600 * 1000).toISOString();
-  const reopenable = [
-    titleFilter.hasAllowlist ? NOT_ALLOWED_SUMMARY : null,
-    locationFilter.hasList ? WRONG_LOCATION_SUMMARY : null,
-  ].filter(Boolean)
-    .flatMap(summary => getJobsWithSummary(clientId, summary, seenSince))
-    .filter(job => !isFiltered(job));
+  const listActive = { [NOT_ALLOWED_SUMMARY]: titleFilter.hasAllowlist, [WRONG_LOCATION_SUMMARY]: locationFilter.hasList };
+  const marked = (titleFilter.hasAllowlist || locationFilter.hasList)
+    ? [NOT_ALLOWED_SUMMARY, WRONG_LOCATION_SUMMARY].flatMap(summary => getJobsWithSummary(clientId, summary, seenSince))
+    : [];
+  // A job still filtered, but now by the other list, takes that list's marker —
+  // otherwise loosening that list later could never bring it back.
+  for (const job of marked) {
+    const now = FILTER_SUMMARY[rejectJob(job)];
+    if (now && now !== job.summary) {
+      try { markAnalyzed(clientId, job.id, false, null, now); job.summary = now; }
+      catch (err) { log(`ERROR re-marking "${job.title}": ${err.message}`); }
+    }
+  }
+  // Reopen only what its own list now lets through — a cleared list releases nothing.
+  const reopenable = marked.filter(job => !isFiltered(job) && listActive[job.summary]);
   const reopen = reopenable.slice(0, MAX_REOPEN_PER_RUN);
   if (reopen.length > 0) {
     try {

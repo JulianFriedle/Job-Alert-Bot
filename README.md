@@ -308,14 +308,14 @@ Behavior is controlled by environment variables (all optional — defaults shown
 
 ### Pre-filters (`config/filters.json`)
 
-Cheap title-based filters applied **before** any Claude call:
+Cheap pre-filters applied **before** any Claude call:
 
 - **`titleAllowlist`** — if not empty, **only** jobs whose title contains at least one of these substrings go to Claude; all others are dropped as irrelevant (log: `Positivliste: X neue Stelle(n) behalten, Y aussortiert`). Made for a narrow target role on broad career pages — a handful of terms like `assistenz`, `office manager` instead of hundreds of blocklist entries. A title that matches a `priorityKeywords` entry counts as allowed. Empty (the default) = no restriction.
 - **`titleBlocklist`** — jobs whose title contains any of these substrings are dropped as irrelevant. Wins over the allowlist.
 - **`priorityKeywords`** — jobs whose title contains any of these get their score boosted to ≥ 7.
-- **`locationAllowlist`** — if not empty, a **career-page** job only goes to Claude when its location contains one of these terms (case-insensitive substring): list the towns you'd commute to, a region, or a country such as `Deutschland` to drop the worldwide openings of large employers — add `Germany` too, pages spell it either way (log: `Ortsfilter: X … aussortiert`). Deliberately lenient: a job without a location, a remote/home-office job and every job-board result (LinkedIn/StepStone/Indeed searches have their own location and radius) always pass. Like the allowlist, a location drop is undone automatically once a changed list lets the job through.
+- **`locationAllowlist`** — if not empty, a **career-page** job only goes to Claude when its location contains one of these terms (log: `Ortsfilter: X … aussortiert`). Matching ignores case, accents and umlaut spelling (*München* = *Muenchen* = *Munchen*); English city names (*Munich*, *Cologne*) must be listed separately. List the towns you'd commute to, or a **country** such as `Deutschland`: a country term keeps every job that names no *other* country — *„Berlin“* passes, *„São Paulo, Brazil“* or *„Budapest, Hungary“* don't (a foreign city without its country, e.g. plain *„Paris“*, still passes). Deliberately lenient: a job without a location, a vague one (*remote*, *Homeoffice*, *hybrid*, *Mehrere Standorte* …) and every job-board result (LinkedIn/StepStone/Indeed searches have their own location and radius) always pass. Like the allowlist, a location drop is undone automatically once a changed list lets the job through.
 
-All three match case-insensitively as substrings, after gender forms are folded on both sides
+The three title lists match case-insensitively as substrings, after gender forms are folded on both sides
 (*(m/w/d)* removed, *Referent:in* → *referentin*) — so prefer distinctive terms: a short one like
 `it` also matches inside *Qualität*. Both lists also apply **retroactively** to jobs that are
 saved but not yet analyzed. A **blocklist** drop is final. An **allowlist** drop is stored with the

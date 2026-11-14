@@ -151,7 +151,9 @@ test('with a location list only matching career-page jobs go on', () => {
   assert.equal(f.reject({ location: 'ESSLINGEN am Neckar' }), null);
   assert.equal(f.reject({ location: 'Hamburg, Deutschland' }), null);
   assert.equal(f.reject({ location: 'São Paulo, Brazil' }), 'wrong-location');
-  assert.equal(f.reject({ location: 'Budapest' }), 'wrong-location');
+  assert.equal(f.reject({ location: 'Budapest, Hungary' }), 'wrong-location');
+  // No country named and a country term listed: kept (see the country test below).
+  assert.equal(f.reject({ location: 'Budapest' }), null);
 });
 
 test('no location, remote jobs and job-board results always pass', () => {
@@ -172,4 +174,40 @@ test('location-dropped jobs use their own reversible marker', () => {
   db.markAnalyzed('default', 'loc-1', false, null, WRONG_LOCATION_SUMMARY);
   const since = new Date(Date.now() - 3600 * 1000).toISOString();
   assert.ok(db.getJobsWithSummary('default', WRONG_LOCATION_SUMMARY, since).some(j => j.id === 'loc-1'));
+});
+
+test('vague locations are kept like a missing one', () => {
+  const f = createLocationFilter(['Stuttgart']);
+  for (const loc of ['Mehrere Standorte', 'Diverse Standorte', 'Hybrid', 'Flexibel', 'Anywhere', 'Weltweit', 'Multiple Locations']) {
+    assert.equal(f.reject({ location: loc }), null, loc);
+  }
+});
+
+test('umlauts and ß are folded on both sides', () => {
+  const f = createLocationFilter(['München', 'Düsseldorf', 'Gießen']);
+  for (const loc of ['Muenchen', 'Munchen', 'MÜNCHEN', 'Duesseldorf', 'Giessen']) assert.equal(f.reject({ location: loc }), null, loc);
+  assert.equal(createLocationFilter(['Muenchen']).reject({ location: 'München-Pasing' }), null);
+});
+
+test('a country term keeps jobs that name no other country', () => {
+  const f = createLocationFilter(['Deutschland']);
+  assert.equal(f.reject({ location: 'Berlin' }), null, 'a bare city may well be in Germany');
+  assert.equal(f.reject({ location: 'Leinfelden-Echterdingen, Germany' }), null);
+  assert.equal(f.reject({ location: 'São Paulo, Brazil' }), 'wrong-location');
+  assert.equal(f.reject({ location: 'Etowah, TN, United States' }), 'wrong-location');
+  assert.equal(f.reject({ location: 'Budapest, Hungary' }), 'wrong-location');
+  assert.equal(f.reject({ location: 'Wien, Österreich' }), 'wrong-location');
+  // Without a country term a city list is strict.
+  assert.equal(createLocationFilter(['Stuttgart']).reject({ location: 'Berlin' }), 'wrong-location');
+  // Country names match whole words only ("uk" is not in "Ukraine" … but Ukraine is its own country).
+  assert.equal(createLocationFilter(['Deutschland']).reject({ location: 'Dukovany' }), null);
+});
+
+test('a job moves to the marker of the list that filters it now', () => {
+  // Pipeline helper semantics: a NOT_ALLOWED job that now only fails the
+  // location list must carry WRONG_LOCATION so loosening that list frees it.
+  const title = createTitleFilter({ titleAllowlist: [] });
+  const loc = createLocationFilter(['Stuttgart']);
+  const job = { title: 'Konstrukteur', location: 'Paris' };
+  assert.equal(title.reject(job.title) ?? loc.reject(job), 'wrong-location');
 });
