@@ -635,15 +635,16 @@ export function getRelevantCountBySource(clientId) {
 }
 
 // Mark every job in the given id list as seen right now (within one client).
-// A live (not expired) job of `source` with exactly this title — how a job
-// read from a feed is matched to the same posting saved earlier from the page,
-// whose URL (and so id) can differ.
-export function findJobIdBySourceTitle(clientId, source, title) {
+// The live (not expired) jobs of `source` with exactly this title — how jobs
+// read from a feed are matched to the same postings saved earlier from the
+// page, whose URLs (and so ids) can differ. Several when a title is listed for
+// several offices.
+export function findJobIdsBySourceTitle(clientId, source, title) {
   return db.prepare(`
     SELECT id FROM jobs
     WHERE client_id = ? AND source = ? AND title = ? AND (expired = 0 OR expired IS NULL)
-    ORDER BY last_seen_at DESC LIMIT 1
-  `).get(clientId, source, title)?.id ?? null;
+    ORDER BY last_seen_at DESC
+  `).all(clientId, source, title).map(r => r.id);
 }
 
 export function updateLastSeenBatch(clientId, ids) {

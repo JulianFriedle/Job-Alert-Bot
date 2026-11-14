@@ -14,10 +14,17 @@ const db = await import('../src/database.js');
 test('a live job of the same source and title is found; other sources, titles and expired rows are not', () => {
   db.saveJob('default', { id: 'page-1', title: 'Konstrukteur (m/w/d)', company: 'A', url: 'https://a.jobs.personio.de/job/1?language=de', location: '', description: '', source: 'APworks' });
   db.saveJob('other', { id: 'page-1', title: 'Konstrukteur (m/w/d)', company: 'A', url: 'https://a.jobs.personio.de/job/1?language=de', location: '', description: '', source: 'APworks' });
-  assert.equal(db.findJobIdBySourceTitle('default', 'APworks', 'Konstrukteur (m/w/d)'), 'page-1');
-  assert.equal(db.findJobIdBySourceTitle('default', 'Andere Quelle', 'Konstrukteur (m/w/d)'), null);
-  assert.equal(db.findJobIdBySourceTitle('default', 'APworks', 'Konstrukteur'), null);
+  assert.deepEqual(db.findJobIdsBySourceTitle('default', 'APworks', 'Konstrukteur (m/w/d)'), ['page-1']);
+  assert.deepEqual(db.findJobIdsBySourceTitle('default', 'Andere Quelle', 'Konstrukteur (m/w/d)'), []);
+  assert.deepEqual(db.findJobIdsBySourceTitle('default', 'APworks', 'Konstrukteur'), []);
   db.markExpired('default', 'page-1');
-  assert.equal(db.findJobIdBySourceTitle('default', 'APworks', 'Konstrukteur (m/w/d)'), null, 'expired rows are not revived');
-  assert.equal(db.findJobIdBySourceTitle('other', 'APworks', 'Konstrukteur (m/w/d)'), 'page-1', 'per client');
+  assert.deepEqual(db.findJobIdsBySourceTitle('default', 'APworks', 'Konstrukteur (m/w/d)'), [], 'expired rows are not revived');
+  assert.deepEqual(db.findJobIdsBySourceTitle('other', 'APworks', 'Konstrukteur (m/w/d)'), ['page-1'], 'per client');
+});
+
+test('a title listed for several offices returns every live row', () => {
+  for (const [id, loc] of [['ws-muc', 'München'], ['ws-ber', 'Berlin']]) {
+    db.saveJob('default', { id, title: 'Werkstudent (m/w/d)', company: 'A', url: `https://a.jobs.personio.de/job/${id}`, location: loc, description: '', source: 'APworks' });
+  }
+  assert.deepEqual(db.findJobIdsBySourceTitle('default', 'APworks', 'Werkstudent (m/w/d)').sort(), ['ws-ber', 'ws-muc']);
 });
