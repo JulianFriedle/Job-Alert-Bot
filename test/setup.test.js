@@ -105,3 +105,12 @@ test('every labelled wizard field has an English override', () => {
     .filter(k => !new RegExp(`^\\s*(?:'${k.replace(/\./g, '\\.')}'|${k.replace(/\./g, '\\.')}):`, 'm').test(block));
   assert.deepEqual(missing, []);
 });
+
+test('the wizard finish page never pre-checks the first run', () => {
+  // A pre-checked box made finishing the wizard start an analysis of every job
+  // found — 1,500+ API calls on a setup with many career pages.
+  const src = readFileSync(new URL('../public/setup.js', import.meta.url), 'utf8');
+  const tag = src.match(/<input[^>]*id="su-run-now"[^>]*>/)?.[0];
+  assert.ok(tag, 'su-run-now checkbox not found');
+  assert.doesNotMatch(tag, /checked/);
+});
