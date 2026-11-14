@@ -877,6 +877,7 @@ export async function scrapeSource(source) {
             }
           }
         }
+        if (guard.trailingFailure && !isAborted()) guard.giveUp('Letzte Seite fehlgeschlagen – nicht gelesen');
       } else {
         log(`  Config-driven pagination: could not read total count from page — skipping`);
       }
@@ -918,6 +919,7 @@ export async function scrapeSource(source) {
           guard.error(err);
         }
       }
+      if (guard.trailingFailure && !isAborted()) guard.giveUp('Letzte Seite fehlgeschlagen – nicht gelesen');
 
     // ── Strategy B: "Load more" button (infinite scroll) ────────────────────
     // Skipped for apiOnly sources and for config-driven pagination (Strategy 0).

@@ -24,6 +24,7 @@ export function createPaginationGuard({ maxPages = Infinity, maxEmpty = 3, maxEr
   let refused = 0;
   let stopReason = null;
   let problem = null;   // pagination ended by failures: the result is incomplete
+  let lastFailed = false;
 
   const stop = (reason, isProblem = false) => {
     stopReason ||= reason;
@@ -34,6 +35,8 @@ export function createPaginationGuard({ maxPages = Infinity, maxEmpty = 3, maxEr
     get stopReason() { return stopReason; },
     get problem() { return problem; },
     get pages() { return pages; },
+    // The most recent page failed — if the walk ends here, that page is unread.
+    get trailingFailure() { return lastFailed; },
 
     // A failure the caller can't continue after (one loop gives up on it).
     giveUp(reason) { stop(reason, true); },
@@ -50,6 +53,7 @@ export function createPaginationGuard({ maxPages = Infinity, maxEmpty = 3, maxEr
     page(added, extracted = added) {
       pages++;
       errorStreak = 0;
+      lastFailed = false;
       if (extracted == null) return;
       if (extracted > 0) emptyStreak = 0;
       else if (++emptyStreak >= maxEmpty) stop(`${maxEmpty} Seiten in Folge ohne Stellen`);
@@ -58,6 +62,7 @@ export function createPaginationGuard({ maxPages = Infinity, maxEmpty = 3, maxEr
     // A page failed.
     error(err) {
       pages++;
+      lastFailed = true;
       const msg = String(err?.message ?? err ?? '');
       const code = msg.match(REFUSED)?.[0];
       if (code && ++refused >= maxRefused) {

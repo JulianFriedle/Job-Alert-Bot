@@ -75,3 +75,11 @@ test('the first reason sticks', () => {
   assert.equal(g.canFetch(), false);
   assert.match(g.stopReason, /ohne Stellen/, 'not overwritten by the page limit');
 });
+
+test('a failure on the last page read is visible to the caller', () => {
+  const g = createPaginationGuard();
+  walk(g, [[3, 3], timeout()]);
+  assert.equal(g.trailingFailure, true);
+  g.page(2, 2);
+  assert.equal(g.trailingFailure, false, 'a later success clears it');
+});
