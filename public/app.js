@@ -4,7 +4,7 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 // The active tenant. Data requests are auto-scoped with ?clientId=…; a handful of
 // global/operator endpoints (below) are exempt.
 let currentClientId = null;
-const CLIENT_AGNOSTIC = ['/api/clients', '/api/login', '/api/logout', '/api/auth', '/api/settings', '/api/setup', '/api/update', '/api/restart', '/api/backups'];
+const CLIENT_AGNOSTIC = ['/api/clients', '/api/login', '/api/logout', '/api/auth', '/api/settings', '/api/setup', '/api/update', '/api/restart', '/api/backups', '/api/models'];
 const api = async (url, opts) => {
   if (currentClientId && url.startsWith('/api/') && !CLIENT_AGNOSTIC.some(p => url.startsWith(p))) {
     url += (url.includes('?') ? '&' : '?') + 'clientId=' + encodeURIComponent(currentClientId);
@@ -1201,7 +1201,44 @@ function renderSettings() {
       </div>
     </div>`).join('');
   $('#settings-msg').textContent = '';
+  if (settingsSchema.some(s => s.models)) fillModelOptions();
 }
+
+// Fill the model pickers. The list is kept for the page (the server caches it
+// for an hour); a failure is remembered for a minute so reopening the tab
+// doesn't wait on it again, and its reason is shown under the field.
+let modelOptions = null;
+let modelOptionsError = null;
+let modelOptionsFailedAt = 0;
+async function fillModelOptions() {
+  if (!modelOptions && Date.now() - modelOptionsFailedAt > 60_000) {
+    try {
+      const r = await api('/api/models');
+      if (r.models?.length) { modelOptions = r.models; modelOptionsError = null; }
+      else { modelOptionsError = r.error || null; modelOptionsFailedAt = Date.now(); }
+    } catch (err) { modelOptionsError = err.message; modelOptionsFailedAt = Date.now(); }
+  }
+  for (const sel of $$('#settings-groups .model-pick')) {
+    const note = $(`#settings-groups .model-pick-note[data-for="${sel.dataset.for}"]`);
+    if (!modelOptions) {
+      sel.hidden = true;
+      if (note) { note.hidden = !modelOptionsError; note.textContent = modelOptionsError ? t('settings.modelListError').replace('{why}', modelOptionsError) : ''; }
+      continue;
+    }
+    sel.innerHTML = `<option value="">${esc(t('settings.modelPick'))}</option>` +
+      modelOptions.map(m => `<option value="${esc(m.id)}">${esc(m.name)} — ${esc(m.id)}</option>`).join('');
+    sel.hidden = false;
+    if (note) note.hidden = true;
+  }
+}
+
+$('#settings-groups').addEventListener('change', (e) => {
+  const sel = e.target.closest('.model-pick');
+  if (!sel || !sel.value) return;
+  const input = document.getElementById(sel.dataset.for);
+  if (input) { input.value = sel.value; input.dispatchEvent(new Event('input', { bubbles: true })); }
+  sel.value = '';
+});
 
 function settingField(s) {
   const id = `set-${s.key}`;
@@ -1226,6 +1263,14 @@ function settingField(s) {
   } else {
     control = `<input id="${id}" class="set-input" type="text" ${da}
       value="${esc(s.value)}" placeholder="${esc(s.default)}" spellcheck="false">`;
+    // Model fields: a picker next to the text field fills it with one of the
+    // models the key can use; any ID can still be typed. (Not .set-input, so
+    // the save handler ignores it.)
+    if (s.models) {
+      control = `<div class="model-pick-wrap">${control}
+        <select class="model-pick" data-for="${id}" hidden><option value="">${esc(t('settings.modelPick'))}</option></select>
+      </div><p class="set-help model-pick-note" data-for="${id}" hidden></p>`;
+    }
   }
   const def = (s.type !== 'secret' && s.type !== 'bool' && s.default) ? ` <span class="set-default">${esc(t('settings.defaultPrefix'))}<code>${esc(s.default)}</code></span>` : '';
   return `<div class="setting">
@@ -1265,6 +1310,7 @@ $('#save-settings').addEventListener('click', async () => {
     // Reflect the clients toggle immediately — no page reload needed.
     const clientsCb = $('#set-CLIENTS_ENABLED');
     if (clientsCb) applyClientsVisibility(clientsCb.checked);
+    modelOptions = null; modelOptionsFailedAt = 0;   // the key may have changed
     loadSettings();   // refresh: clears secret fields, updates "gesetzt"-Status
   } catch (err) { showSettingsMsg(t('toast.error') + err.message, 'err'); }
 });
