@@ -16,12 +16,9 @@ import { fileURLToPath } from 'url';
 import { getClient, getJobById, createDocument, updateDocument, getLatestDocument } from './database.js';
 import { getPrompts } from './client-config.js';
 import { setFrontmatter, lintDocument } from './markdown-doc.js';
+import { writerModel } from './models.js';
 
 const TEMPLATES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'templates');
-
-// Same model setting as the cover letter; read at call time so a change in the
-// settings tab applies without a restart.
-const model = () => process.env.COVER_LETTER_MODEL || 'claude-opus-5';
 
 export function humanizeEnabled() {
   return !['false', '0', 'off', 'no'].includes(String(process.env.DOCS_HUMANIZE ?? 'true').trim().toLowerCase());
@@ -138,7 +135,7 @@ export function parseDocumentAnswer(text) {
 async function callClaude({ system, user }) {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const response = await client.messages.create({
-    model: model(),
+    model: writerModel(),
     // Covers thinking + a two-page CV in Markdown with room to spare.
     max_tokens: 16000,
     system,

@@ -21,6 +21,7 @@ import {
 } from './backup.js';
 import { restoreFromBackup } from './database.js';
 import { generateCoverLetter } from './cover-letter.js';
+import { DEFAULT_ANALYZER_MODEL, DEFAULT_WRITER_MODEL } from './models.js';
 import { buildJobsCsv, filterJobs, csvFileName } from './csv-export.js';
 import { sendTelegramTest } from './notifier.js';
 import { handleSetupApi } from './setup.js';
@@ -186,9 +187,9 @@ const SETTINGS_SCHEMA = [
   { key: 'EXPIRY_NOTIFICATIONS', group: 'Schlüssel & Telegram', label: 'Ablauf-Benachrichtigungen', type: 'text', default: 'on',
     help: "Auf 'off' setzen, um keine Telegram-Nachrichten für ausgelaufene Jobs zu senden – neue Jobs werden weiterhin gemeldet" },
 
-  { key: 'ANALYZER_MODEL', group: 'KI-Modelle', label: 'Analyse-Modell', type: 'text', default: 'claude-haiku-4-5',
+  { key: 'ANALYZER_MODEL', group: 'KI-Modelle', label: 'Analyse-Modell', type: 'text', default: DEFAULT_ANALYZER_MODEL,
     help: 'Claude-Modell zur Relevanz-Bewertung (günstig/schnell empfohlen)' },
-  { key: 'COVER_LETTER_MODEL', group: 'KI-Modelle', label: 'Anschreiben-Modell', type: 'text', default: 'claude-opus-5',
+  { key: 'COVER_LETTER_MODEL', group: 'KI-Modelle', label: 'Anschreiben-Modell', type: 'text', default: DEFAULT_WRITER_MODEL,
     help: 'Claude-Modell für Anschreiben und angepasste Lebensläufe (stärkeres Modell empfohlen)' },
   { key: 'DOCS_HUMANIZE', group: 'KI-Modelle', label: 'Humanize-Durchgang', type: 'bool', default: 'true',
     help: 'An = Lebenslauf und Anschreiben laufen nach dem Erstellen durch einen zweiten KI-Durchgang, der KI-Floskeln entfernt. Natürlicher, kostet aber einen zusätzlichen Aufruf pro Dokument.' },

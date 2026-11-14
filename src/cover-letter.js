@@ -4,9 +4,7 @@ import { fileURLToPath } from 'url';
 import { getJobById, DEFAULT_CLIENT_ID } from './database.js';
 import { getClientConfig } from './client-config.js';
 import { coverLetterLanguageLine } from './prompts.js';
-
-// Read at call time so changes from the GUI settings tab apply without a restart.
-const model = () => process.env.COVER_LETTER_MODEL || 'claude-opus-5';
+import { writerModel } from './models.js';
 
 function buildUserPrompt(profile, job, instructions, notes, languageLine = '') {
   const notesBlock = notes
@@ -36,7 +34,7 @@ export async function generateCoverLetter(job, notes = '') {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   const response = await client.messages.create({
-    model: model(),
+    model: writerModel(),
     // max_tokens caps thinking and response text together, and models that think
     // by default spend a chunk of it before the letter starts. A letter is well
     // under 1000 tokens; the rest is headroom so it never truncates mid-sentence.

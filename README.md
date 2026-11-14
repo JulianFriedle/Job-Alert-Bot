@@ -263,8 +263,8 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `TELEGRAM_CHAT_ID` | — | Your Telegram chat ID (optional) |
 | `TELEGRAM_NOTIFICATIONS` | `on` | Set to `off` to disable Telegram push notifications entirely |
 | `EXPIRY_NOTIFICATIONS` | `on` | Set to `off` to silence Telegram alerts for expired jobs (new-job alerts still fire) |
-| `ANALYZER_MODEL` | `claude-haiku-4-5` | Model that scores job relevance |
-| `COVER_LETTER_MODEL` | `claude-opus-5` | Model that writes cover letters and tailored CVs |
+| `ANALYZER_MODEL` | `claude-haiku-5-5` | Model that scores job relevance. An ID Anthropic doesn't know is reported once in the run log, and jobs stay unrated (retried next run) until it's fixed |
+| `COVER_LETTER_MODEL` | `claude-opus-5-5` | Model that writes cover letters and tailored CVs |
 | `DOCS_HUMANIZE` | `true` | Run tailored CVs / cover letters through a second "humanize" pass that removes AI phrasing (one extra API call per document) |
 | `CHROME_PATH` | — | Chrome/Chromium binary for the document PDFs, only needed when Playwright's bundled browser is missing (not in the settings form) |
 | `MIN_RELEVANCE_SCORE` | `4` | Min AI score (1–10) for a job to count as relevant |
