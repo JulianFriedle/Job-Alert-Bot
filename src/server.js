@@ -28,8 +28,9 @@ import { buildJobsCsv, filterJobs, csvFileName } from './csv-export.js';
 import { sendTelegramTest } from './notifier.js';
 import { handleSetupApi, STEPS as SETUP_STEPS } from './setup.js';
 import {
-  MCP_HEADER, ACTIONS_REFUSAL, FORBIDDEN_REFUSAL, PROTECTED_SETTING_REFUSAL,
-  isMcpActionRoute, isMcpForbiddenRoute, mcpActionsEnabled, refusedSettingKeys,
+  MCP_HEADER, ACTIONS_REFUSAL, FORBIDDEN_REFUSAL, COST_SETTING_REFUSAL,
+  isMcpActionRoute, isMcpForbiddenRoute, mcpActionsEnabled, settingsRefusal, costFieldsInStepBody,
+  pinGuardedStepFields,
   secretFieldsInStepBody, redactSetupSecrets,
 } from './mcp-policy.js';
 import { DEFAULT_PROMPTS, PROMPT_FIELDS, minimizePromptOverrides } from './prompts.js';
@@ -267,7 +268,7 @@ const SETTINGS_SCHEMA = [
     help: 'Zufälliger String zum Signieren der Login-Sitzungen (sonst bei jedem Neustart neu → Logout). Neustart nötig.' },
 
   { key: 'MCP_ALLOW_ACTIONS', group: 'MCP-Server (KI-Assistent)', label: 'Kostenpflichtige KI-Aktionen', type: 'danger', default: 'false',
-    help: 'Gesperrt: Der KI-Assistent (Claude Desktop / Claude Code über MCP) kann Jobs, Läufe, Profil und Einstellungen lesen und pflegen, aber nichts auslösen, das Geld kostet oder nach außen wirkt. Freigeschaltet darf er Läufe starten (Anthropic-Kosten pro Job), Unterlagen und Anschreiben erstellen, Telegram-Nachrichten senden und Bewerbungen vorbereiten. Abgesendet wird nie ohne deine Freigabe.' },
+    help: 'Gesperrt: Der KI-Assistent (Claude Desktop / Claude Code über MCP) kann Jobs, Läufe, Profil und Einstellungen lesen und pflegen, aber nichts auslösen, das Geld kostet oder nach außen wirkt. Freigeschaltet darf er Läufe starten (Anthropic-Kosten pro Job), Unterlagen und Anschreiben erstellen, Telegram-Nachrichten senden, Bewerbungen vorbereiten sowie Modelle und Zeitplan ändern. Abgesendet wird nie ohne deine Freigabe.' },
   { key: 'MCP_API_TOKEN', group: 'MCP-Server (KI-Assistent)', label: 'MCP-Zugangstoken', type: 'secret',
     help: 'Nur nötig, wenn das Login aktiv ist (AUTH_ENABLED): Der MCP-Server meldet sich damit an der GUI an. Beliebiger langer Zufallsstring; derselbe Wert muss in der MCP-Konfiguration als MCP_API_TOKEN stehen.' },
 ];
@@ -595,7 +596,7 @@ let mcpEndpointUrl = '';
 
 function mcpActionLabel(pathname) {
   if (pathname === '/api/run') return 'Lauf gestartet';
-  if (pathname === '/api/run/stop') return 'Lauf gestoppt';
+  if (pathname === '/api/run/stop') return 'Lauf-Stopp angefordert';
   if (/\/documents$/.test(pathname)) return 'Unterlagen-Erstellung gestartet';
   if (/\/cover-letter$/.test(pathname)) return 'Anschreiben erzeugt';
   if (/telegram-test$/.test(pathname)) return 'Telegram-Testnachricht gesendet';
@@ -604,7 +605,10 @@ function mcpActionLabel(pathname) {
 }
 
 function shellQuote(v) {
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(v) ? v : `'${String(v).replace(/'/g, `'\\''`)}'`;
+  if (/^[A-Za-z0-9_@%+=:,./\\-]+$/.test(v)) return v;
+  // cmd.exe / PowerShell don't know single quotes ("C:\Program Files\…").
+  if (process.platform === 'win32') return `"${String(v).replace(/"/g, '\\"')}"`;
+  return `'${String(v).replace(/'/g, `'\\''`)}'`;
 }
 
 // Ready-to-paste connection snippets for Claude Desktop and Claude Code.
@@ -701,7 +705,11 @@ const server = http.createServer(async (req, res) => {
       // ---- Clients (tenant management) ----
       // GET /api/clients — list (secrets included; operator owns them)
       if (method === 'GET' && pathname === '/api/clients') {
-        return sendJson(res, 200, { clients: getClients(), defaultClientId: DEFAULT_CLIENT_ID });
+        // The assistant gets ids and names only — no chat ids or settings.
+        const clients = fromMcp
+          ? getClients().map(c => ({ id: c.id, name: c.name, enabled: c.enabled }))
+          : getClients();
+        return sendJson(res, 200, { clients, defaultClientId: DEFAULT_CLIENT_ID });
       }
       // POST /api/clients — create
       if (method === 'POST' && pathname === '/api/clients') {
@@ -748,7 +756,10 @@ const server = http.createServer(async (req, res) => {
         const client = getClient(id);
         if (!client) return sendJson(res, 404, { error: 'Klient nicht gefunden' });
         let chatId = client.telegram_chat_id;
-        try { chatId = (JSON.parse(await readBody(req) || '{}').telegram_chat_id || chatId); } catch { /* use stored */ }
+        // The assistant may only test the stored chat, never name another one.
+        if (!fromMcp) {
+          try { chatId = (JSON.parse(await readBody(req) || '{}').telegram_chat_id || chatId); } catch { /* use stored */ }
+        }
         try {
           await sendTelegramTest(chatId);
           return sendJson(res, 200, { ok: true });
@@ -771,17 +782,28 @@ const server = http.createServer(async (req, res) => {
         const ctx = { sendJson, readBody };
         if (fromMcp) {
           // The assistant never sees secret values and never writes secret fields.
-          ctx.sendJson = (r, status, obj) => sendJson(r, status, redactSetupSecrets(obj));
+          ctx.sendJson = (r, status, obj) => sendJson(r, status, redactSetupSecrets(obj, SCHEMA_BY_KEY));
           if (method === 'PUT' && pathname === '/api/setup/step') {
             const raw = await readBody(req);
             let body = {};
             try { body = JSON.parse(raw || '{}'); } catch { /* handleSetupApi reports the bad JSON */ }
-            const secrets = secretFieldsInStepBody(body, SETUP_STEPS);
+            const secrets = secretFieldsInStepBody(body, SETUP_STEPS, SCHEMA_BY_KEY);
             if (secrets.length) {
-              return sendJson(res, 400, { error: `${secrets.join(', ')}: geheime Felder trägt der Nutzer selbst in der GUI ein, nicht der KI-Assistent.` });
+              log(`MCP: Einrichtungsschritt abgelehnt (${secrets.join(', ')})`);
+              return sendJson(res, 400, { error: `${secrets.join(', ')}: geheime oder geschützte Felder trägt der Nutzer selbst in der GUI ein, nicht der KI-Assistent.` });
             }
-            ctx.readBody = async () => raw;
+            const current = (k) => process.env[k] ?? SCHEMA_BY_KEY[k]?.default ?? '';
+            const cost = costFieldsInStepBody(body, SETUP_STEPS, current, mcpActionsEnabled());
+            if (cost.length) {
+              log(`MCP: Einrichtungsschritt abgelehnt, kostenrelevant (${cost.join(', ')})`);
+              return sendJson(res, 400, { error: `${COST_SETTING_REFUSAL} (${cost.join(', ')})` });
+            }
+            const pinned = pinGuardedStepFields(body, SETUP_STEPS, SCHEMA_BY_KEY, (k) => process.env[k] ?? '');
+            ctx.readBody = async () => (pinned === body ? raw : JSON.stringify(pinned));
           }
+          // The Telegram test goes to the stored chat only, never to one the
+          // assistant names.
+          if (method === 'POST' && pathname === '/api/setup/test-telegram') ctx.readBody = async () => '{}';
         }
         const handled = await handleSetupApi(req, res, url, ctx);
         if (handled) return;
@@ -1437,10 +1459,10 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 400, { error: 'Erwarte { settings: { KEY: value } }' });
 
         if (fromMcp) {
-          const refused = refusedSettingKeys(Object.keys(updates), SCHEMA_BY_KEY);
-          if (refused.length) {
-            log(`MCP: Änderung geschützter Einstellungen abgelehnt (${refused.join(', ')})`);
-            return sendJson(res, 400, { error: `${PROTECTED_SETTING_REFUSAL} (${refused.join(', ')})` });
+          const refusal = settingsRefusal(Object.keys(updates), SCHEMA_BY_KEY, mcpActionsEnabled());
+          if (refusal) {
+            log(`MCP: Änderung geschützter Einstellungen abgelehnt (${refusal.keys.join(', ')})`);
+            return sendJson(res, 400, { error: refusal.error });
           }
         }
 

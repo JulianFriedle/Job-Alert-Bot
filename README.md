@@ -692,16 +692,27 @@ sends the version it read, so a concurrent edit is reported as a conflict instea
 **Einstellungen → MCP-Server**. Unlocked, the assistant may start runs (Anthropic cost per
 analyzed job — a large backlog is quickly several euros), generate tailored documents and cover
 letters (stronger model, up to 4 calls per click), send Telegram test messages and *prepare*
-applications. **Wieder sperren** locks it again; the switch is checked on every call, so it
-applies immediately. The GUI server enforces this itself (403), not only the MCP process.
+applications. The same button guards the settings that make every later run cost more:
+`ANALYZER_MODEL`, `COVER_LETTER_MODEL`, `DOCS_HUMANIZE` and `CRON_SCHEDULE` — while locked, the
+assistant can read but not change them (also not through the wizard). **Wieder sperren** locks it
+again; the switch is checked on every call, so it applies immediately. The GUI server refuses
+these requests from the MCP process itself (403), not only the MCP tools.
+
+What stays open while locked: sources, filters, profile and the other settings are setup work and
+free to change — but the next **scheduled** run acts on them. A long list of new sources or a broad
+job-board search means more jobs to analyze; a lower `MIN_RELEVANCE_SCORE` means more Telegram
+alerts to your own chat. Look over what the assistant changed (it tells you; the server logs
+`MCP: …` lines for refused attempts).
 
 **Never exposed** — not even when unlocked, because they stay with you: approving, discarding
 or retrying applications (submission always needs your explicit go-ahead in the GUI/Telegram;
 `APPLY_DRY_RUN` and the daily caps are untouched), platform credentials, CV upload/delete,
 backups and restore, updates, restart, creating/deleting clients, deleting or re-humanizing
 documents. The assistant also cannot change `MCP_ALLOW_ACTIONS` itself, nor the auto-apply
-settings, login settings (`AUTH_ENABLED`, operator password, `SESSION_SECRET`), `CREDENTIALS_KEY`
-or `GUI_PORT`.
+settings, login settings (`AUTH_ENABLED`, operator password, `SESSION_SECRET`), `CREDENTIALS_KEY`,
+`GUI_PORT`, where alerts go (`TELEGRAM_CHAT_ID`; a Telegram test always goes to the stored chat),
+the backup settings (`BACKUP_ENABLED`, `BACKUP_RETENTION_DAYS`) or `ISSUE_REPO`. `list_clients`
+gets ids and names only.
 
 **Security notes.** API keys and tokens never go through the chat: `get_settings` /
 `get_setup_status` only report *whether* a secret is set, and `update_settings` /
@@ -709,6 +720,13 @@ or `GUI_PORT`.
 set `MCP_API_TOKEN` in Einstellungen (any long random string); the MCP process reads it from
 the same `.env` and logs in with it as a bearer token. Every action call is logged in the GUI
 server's output (`MCP: …`).
+
+**What the lock is not.** It recognizes the assistant by the header its MCP process sends (or
+the `MCP_API_TOKEN`). It reliably limits what the assistant can do *through the MCP tools* — it is
+no sandbox against an agent that also has a shell or network access on the same machine: Claude
+Code with terminal access could call the GUI's HTTP API directly, or read `.env`, like any other
+local program (with `AUTH_ENABLED=false` the GUI trusts every local caller). Give such an agent
+only the permissions you would give it anyway.
 
 ## Releases (maintainers)
 

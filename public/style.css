@@ -529,8 +529,12 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .set-switch .set-bool:focus-visible + .set-switch-track { box-shadow: 0 0 0 3px var(--accent-soft); }
 @media (max-width: 640px) {
   .setting { grid-template-columns: 1fr; }
-  .set-label { padding-top: 0; }
-  .set-control, .set-help { grid-column: 1; }
+  /* One column: label, then control, then help (the desktop rows would put the
+     label into an extra column next to the control, off screen). */
+  .set-label { padding-top: 0; grid-column: 1; grid-row: 1; }
+  .set-control { grid-column: 1; grid-row: 2; }
+  .set-help { grid-column: 1; grid-row: 3; }
+  [data-mcp-toggle] { white-space: normal; text-align: left; }
 }
 
 .theme-toggle { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }

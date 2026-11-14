@@ -9,7 +9,10 @@ import { createToolkit, mergePatch, createHttpApi } from '../src/mcp-tools.js';
 import {
   MCP_HEADER, PROTECTED_SETTINGS_KEYS, isMcpActionRoute, isMcpForbiddenRoute, mcpActionsEnabled,
   secretFieldsInStepBody, redactSetupSecrets, ACTIONS_REFUSAL,
+  settingsRefusal, costFieldsInStepBody, COST_SETTINGS_KEYS, pinGuardedStepFields,
 } from '../src/mcp-policy.js';
+import { candidateBases } from '../src/mcp-tools.js';
+import { STEPS as WIZARD_STEPS } from '../src/setup.js';
 
 // ── fake api ────────────────────────────────────────────────────────────────
 function fakeApi(routes = {}) {
@@ -390,4 +393,83 @@ test('secretFieldsInStepBody / redactSetupSecrets', () => {
   const red = redactSetupSecrets(STATUS);
   assert.equal(red.steps[0].values.ANTHROPIC_API_KEY, '');
   assert.equal(red.steps[0].secretsSet.ANTHROPIC_API_KEY, true);
+});
+
+// ── review fixes: notification target, backups, cost knobs ─────────────────
+test('the wizard cannot redirect Telegram alerts (chat id) or touch protected keys', () => {
+  // The real wizard: TELEGRAM_CHAT_ID is a plain text field there.
+  const tg = WIZARD_STEPS.find(s => s.fields.some(f => f.key === 'TELEGRAM_CHAT_ID'));
+  assert.ok(tg, 'wizard has a chat id field');
+  assert.deepEqual(secretFieldsInStepBody({ id: tg.id, values: { TELEGRAM_CHAT_ID: '123', TELEGRAM_NOTIFICATIONS: 'on' } }, WIZARD_STEPS),
+    ['TELEGRAM_CHAT_ID']);
+  for (const k of ['TELEGRAM_CHAT_ID', 'BACKUP_ENABLED', 'BACKUP_RETENTION_DAYS', 'ISSUE_REPO']) {
+    assert.ok(PROTECTED_SETTINGS_KEYS.includes(k), k);
+    assert.ok(settingsRefusal([k], {}, true), `${k} refused even when unlocked`);
+  }
+});
+
+test('setup status hides values the settings schema marks secret', () => {
+  const status = { steps: [{ id: 'telegram', fields: [{ key: 'TELEGRAM_CHAT_ID', type: 'text' }], values: { TELEGRAM_CHAT_ID: '987654' } }] };
+  const red = redactSetupSecrets(status, { TELEGRAM_CHAT_ID: { type: 'secret' } });
+  assert.equal(red.steps[0].values.TELEGRAM_CHAT_ID, '');
+  assert.equal(red.steps[0].secretsSet.TELEGRAM_CHAT_ID, true);
+});
+
+test('cost-relevant settings need the red button; harmless ones do not', () => {
+  for (const k of ['ANALYZER_MODEL', 'COVER_LETTER_MODEL', 'DOCS_HUMANIZE', 'CRON_SCHEDULE']) {
+    assert.ok(COST_SETTINGS_KEYS.includes(k), k);
+    assert.match(settingsRefusal([k], {}, false).error, /freischalten/);
+    assert.equal(settingsRefusal([k], {}, true), null, `${k} allowed when unlocked`);
+  }
+  assert.equal(settingsRefusal(['MIN_RELEVANCE_SCORE'], {}, false), null);
+  // A secret in the schema is refused like a protected key.
+  assert.ok(settingsRefusal(['ANTHROPIC_API_KEY'], { ANTHROPIC_API_KEY: { type: 'secret' } }, true));
+});
+
+test('a wizard step may keep the schedule unchanged while locked, not change it', () => {
+  const tuning = WIZARD_STEPS.find(s => s.fields.some(f => f.key === 'CRON_SCHEDULE'));
+  assert.ok(tuning);
+  const current = (k) => ({ CRON_SCHEDULE: '0 * * * *' })[k];
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '0 * * * *', MIN_RELEVANCE_SCORE: 5 } }, WIZARD_STEPS, current, false), []);
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '* * * * *' } }, WIZARD_STEPS, current, false), ['CRON_SCHEDULE']);
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '* * * * *' } }, WIZARD_STEPS, current, true), []);
+});
+
+test('a stale endpoint file (its process is gone) is not used', async () => {
+  const file = async () => JSON.stringify({ url: 'http://127.0.0.1:5123', pid: 999999 });
+  assert.deepEqual(await candidateBases({ GUI_PORT: '3000' }, file, () => false), ['http://127.0.0.1:3000']);
+  assert.deepEqual(await candidateBases({ GUI_PORT: '3000' }, file, () => true), ['http://127.0.0.1:5123', 'http://127.0.0.1:3000']);
+  assert.deepEqual(await candidateBases({ JOB_ALERT_URL: 'http://x:1/' }, file, () => true), ['http://x:1']);
+});
+
+test('wizard save from the assistant keeps secret and protected fields as stored', () => {
+  const tg = WIZARD_STEPS.find(s => s.fields.some(f => f.key === 'TELEGRAM_CHAT_ID'));
+  const body = { id: tg.id, values: { TELEGRAM_NOTIFICATIONS: 'on', TELEGRAM_CHAT_ID: '' } };
+  const pinned = pinGuardedStepFields(body, WIZARD_STEPS, { TELEGRAM_CHAT_ID: { type: 'secret' } }, (k) => ({ TELEGRAM_CHAT_ID: '55555' })[k]);
+  assert.equal(pinned.values.TELEGRAM_CHAT_ID, '55555', 'a redacted (empty) chat id must not unset the stored one');
+  assert.equal(pinned.values.TELEGRAM_BOT_TOKEN, '', "secret wizard field: '' = leave unchanged");
+  assert.equal(pinned.values.TELEGRAM_NOTIFICATIONS, 'on');
+  assert.equal(body.values.TELEGRAM_CHAT_ID, '', 'input not mutated');
+  const other = { id: 'profile', values: { 'cv.name': 'x' } };
+  assert.deepEqual(pinGuardedStepFields(other, WIZARD_STEPS).values, { 'cv.name': 'x' });
+});
+
+test('save_setup_step keeps the stored answers of fields it was not given', async () => {
+  const status = { steps: [{
+    id: 'profile', title: 'Profil', required: true, complete: false, pending: true,
+    fields: [{ key: 'cv.name', type: 'text' }, { key: 'cv.summary', type: 'textarea' }, { key: 'cv.skills.tools', type: 'list' }],
+    values: { 'cv.name': 'Alt', 'cv.summary': 'Bleibt', 'cv.skills.tools': ['Excel'] },
+  }, {
+    id: 'telegram', title: 'Telegram', required: true, complete: false, pending: true,
+    fields: [{ key: 'TELEGRAM_NOTIFICATIONS', type: 'toggle' }, { key: 'TELEGRAM_BOT_TOKEN', type: 'secret' }, { key: 'TELEGRAM_CHAT_ID', type: 'text' }],
+    values: { TELEGRAM_NOTIFICATIONS: 'on', TELEGRAM_BOT_TOKEN: '', TELEGRAM_CHAT_ID: '' },
+    secretsSet: { TELEGRAM_BOT_TOKEN: true, TELEGRAM_CHAT_ID: true },
+  }] };
+  const { call, api } = setup({ 'GET /api/setup/status': status, 'PUT /api/setup/step': { ok: true, status } });
+  assert.equal((await call('save_setup_step', { stepId: 'profile', values: { 'cv.name': 'Neu' } })).isError, false);
+  assert.deepEqual(api.calls.find(c => c.method === 'PUT').body.values,
+    { 'cv.name': 'Neu', 'cv.summary': 'Bleibt', 'cv.skills.tools': ['Excel'] });
+  await call('save_setup_step', { stepId: 'telegram', values: { TELEGRAM_NOTIFICATIONS: 'off' } });
+  assert.deepEqual(api.calls.filter(c => c.method === 'PUT')[1].body.values, { TELEGRAM_NOTIFICATIONS: 'off' },
+    'redacted fields are left to the server, not sent back empty');
 });

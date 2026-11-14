@@ -346,7 +346,7 @@ const I18N = {
 
     // MCP-Server (KI-Assistent) in Einstellungen
     'mcp.unlock': 'Kostenpflichtige KI-Aktionen freischalten',
-    'mcp.confirm': 'Kostenpflichtige KI-Aktionen für den KI-Assistenten freischalten?\n\nDanach darf er Läufe starten (Anthropic-Kosten pro analysiertem Job – bei großem Rückstand schnell mehrere Euro), Bewerbungsunterlagen und Anschreiben erstellen (stärkeres, teureres Modell), Telegram-Nachrichten senden und Bewerbungen vorbereiten.\n\nAbgesendet wird nie ohne deine Freigabe. Du kannst jederzeit wieder sperren.',
+    'mcp.confirm': 'Kostenpflichtige KI-Aktionen für den KI-Assistenten freischalten?\n\nDanach darf er Läufe starten (Anthropic-Kosten pro analysiertem Job – bei großem Rückstand schnell mehrere Euro), Bewerbungsunterlagen und Anschreiben erstellen (stärkeres, teureres Modell), Telegram-Nachrichten senden, Bewerbungen vorbereiten sowie Modelle und Zeitplan ändern (das verteuert jeden weiteren Lauf).\n\nAbgesendet wird nie ohne deine Freigabe. Du kannst jederzeit wieder sperren.',
     'mcp.unlocked': 'Freigeschaltet – der KI-Assistent kann Kosten verursachen',
     'mcp.lock': 'Wieder sperren',
     'mcp.toastUnlocked': 'KI-Aktionen freigeschaltet',
@@ -777,7 +777,7 @@ const I18N = {
 
     // MCP server (AI assistant) in settings
     'mcp.unlock': 'Unlock paid AI actions',
-    'mcp.confirm': 'Unlock paid AI actions for the AI assistant?\n\nAfterwards it may start runs (Anthropic cost per analyzed job – quickly several euros on a large backlog), create application documents and cover letters (stronger, pricier model), send Telegram messages and prepare applications.\n\nNothing is ever submitted without your approval. You can lock it again at any time.',
+    'mcp.confirm': 'Unlock paid AI actions for the AI assistant?\n\nAfterwards it may start runs (Anthropic cost per analyzed job – quickly several euros on a large backlog), create application documents and cover letters (stronger, pricier model), send Telegram messages, prepare applications and change the models and schedule (which makes every later run cost more).\n\nNothing is ever submitted without your approval. You can lock it again at any time.',
     'mcp.unlocked': 'Unlocked – the AI assistant can cause costs',
     'mcp.lock': 'Lock again',
     'mcp.toastUnlocked': 'AI actions unlocked',
@@ -952,7 +952,7 @@ const SETTINGS_HELP_EN = {
   OPERATOR_USER: 'Username for the GUI login (only when login is enabled)',
   OPERATOR_PASSWORD_HASH: 'scrypt hash of the operator password. Generate with: npm run hash-password -- "<password>"',
   SESSION_SECRET: 'Random string used to sign login sessions (otherwise regenerated on every restart → logout). Requires a restart.',
-  MCP_ALLOW_ACTIONS: 'Locked: the AI assistant (Claude Desktop / Claude Code via MCP) can read and maintain jobs, runs, profile and settings, but cannot trigger anything that costs money or reaches the outside world. Unlocked, it may start runs (Anthropic cost per job), create documents and cover letters, send Telegram messages and prepare applications. Nothing is ever submitted without your approval.',
+  MCP_ALLOW_ACTIONS: 'Locked: the AI assistant (Claude Desktop / Claude Code via MCP) can read and maintain jobs, runs, profile and settings, but cannot trigger anything that costs money or reaches the outside world. Unlocked, it may start runs (Anthropic cost per job), create documents and cover letters, send Telegram messages, prepare applications and change the models and schedule. Nothing is ever submitted without your approval.',
   MCP_API_TOKEN: 'Only needed when login is enabled (AUTH_ENABLED): the MCP server uses it to sign in to the GUI. Any long random string; the same value must be set as MCP_API_TOKEN in the MCP configuration.',
 };
 

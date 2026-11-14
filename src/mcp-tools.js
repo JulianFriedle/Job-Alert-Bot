@@ -15,7 +15,7 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { APP_ROOT, DATA_DIR } from './paths.js';
 import {
-  PROTECTED_SETTINGS_KEYS, ACTIONS_REFUSAL, PROTECTED_SETTING_REFUSAL, MCP_HEADER,
+  PROTECTED_SETTINGS_KEYS, COST_SETTINGS_KEYS, ACTIONS_REFUSAL, PROTECTED_SETTING_REFUSAL, MCP_HEADER,
 } from './mcp-policy.js';
 
 const PLATFORM_TYPES = ['linkedin', 'stepstone', 'indeed'];
@@ -253,7 +253,7 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
     async () => summarizeSetupStatus(await api.get('/api/setup/status')));
 
   add('save_setup_step',
-    'Speichert die Antworten eines Einrichtungsschritts (id aus get_setup_status). Werte sind ein Objekt { feldKey: wert }; Listen als Array. Betrifft immer den Standard-Klienten. Felder vom Typ "secret" (API-Schlüssel, Bot-Token) werden abgelehnt: diese gibt der Nutzer selbst in der GUI unter Einstellungen ein – niemals im Chat. Mit skip=true wird ein optionaler Schritt übersprungen. Kostenlos, lokal.',
+    'Speichert die Antworten eines Einrichtungsschritts (id aus get_setup_status). Werte sind ein Objekt { feldKey: wert }; Listen als Array. Betrifft immer den Standard-Klienten. Felder vom Typ "secret" (API-Schlüssel, Bot-Token) und die Telegram-Chat-ID werden abgelehnt: diese gibt der Nutzer selbst in der GUI ein – niemals im Chat. Den Zeitplan (CRON_SCHEDULE) nur ändern, wenn die KI-Aktionen freigeschaltet sind; sonst ihn weglassen. Mit skip=true wird ein optionaler Schritt übersprungen. Kostenlos, lokal.',
     schema({
       stepId: { type: 'string', description: 'Schritt-ID, z. B. "profile" oder "sources".' },
       values: { type: 'object', description: 'Feld-Werte { key: wert }.' },
@@ -272,7 +272,15 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
       }
       const unknown = Object.keys(values).filter(k => !byKey[k]);
       if (unknown.length) throw new Error(`Unbekannte Felder für Schritt "${step.id}": ${unknown.join(', ')}. Gültig: ${Object.keys(byKey).join(', ')}`);
-      const r = await api.put('/api/setup/step', { id: step.id, values, skip: Boolean(args.skip) });
+      // The wizard saves a step as a whole and empties every field it doesn't
+      // get: keep the stored answers of the fields not passed. Secrets and the
+      // redacted ones stay out — the server keeps their stored values.
+      const keep = {};
+      for (const f of step.fields || []) {
+        if (f.type === 'secret' || step.secretsSet?.[f.key] !== undefined || f.key in values) continue;
+        if (step.values && f.key in step.values) keep[f.key] = step.values[f.key];
+      }
+      const r = await api.put('/api/setup/step', { id: step.id, values: { ...keep, ...values }, skip: Boolean(args.skip) });
       const summary = summarizeSetupStatus(r.status || {});
       return { ok: true, openSteps: summary.openSteps, step: summary.steps.find(s => s.id === step.id) };
     });
@@ -374,7 +382,7 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
     });
 
   add('get_settings',
-    'Die Einstellungen (.env) mit aktuellem Wert. Geheime Werte (API-Schlüssel, Tokens) werden nie angezeigt, nur ob sie gesetzt sind. Geschützte Einstellungen (Auto-Bewerbung, Login, MCP-Freischaltung) sind als locked markiert und für den Assistenten nicht änderbar. Kostenlos, nur lesend.',
+    'Die Einstellungen (.env) mit aktuellem Wert. Geheime Werte (API-Schlüssel, Tokens, Chat-ID) werden nie angezeigt, nur ob sie gesetzt sind. Geschützte Einstellungen (Auto-Bewerbung, Login, MCP-Freischaltung, Datensicherung) sind als locked markiert und für den Assistenten nicht änderbar; kostenrelevante (Modelle, Zeitplan) als requiresUnlock – die gehen nur mit freigeschalteten KI-Aktionen. Kostenlos, nur lesend.',
     schema(),
     async () => {
       const r = await api.get('/api/settings');
@@ -384,12 +392,13 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
         if (secret) row.isSet = Boolean(s.isSet);
         else row.value = s.value;
         if (secret || PROTECTED_SETTINGS_KEYS.includes(s.key)) row.locked = true;
+        else if (COST_SETTINGS_KEYS.includes(s.key)) row.requiresUnlock = true;
         return row;
       });
     });
 
   add('update_settings',
-    'Ändert Einstellungen (.env) als { KEY: wert }. Nicht erlaubt: geheime Felder (API-Schlüssel, Tokens – die trägt der Nutzer selbst in der GUI ein) und geschützte Einstellungen (Auto-Bewerbung, Login, MCP-Freischaltung, Port). Ein leerer Wert setzt auf den Standard zurück. Kostenlos, lokal; wirkt ab dem nächsten Lauf.',
+    'Ändert Einstellungen (.env) als { KEY: wert }. Nicht erlaubt: geheime Felder (API-Schlüssel, Tokens, Chat-ID – die trägt der Nutzer selbst in der GUI ein) und geschützte Einstellungen (Auto-Bewerbung, Login, MCP-Freischaltung, Port, Datensicherung). Modelle, DOCS_HUMANIZE und Zeitplan nur bei freigeschalteten KI-Aktionen. Ein leerer Wert setzt auf den Standard zurück. Kostenlos, lokal; wirkt ab dem nächsten Lauf.',
     schema({ settings: { type: 'object', description: 'Zu ändernde Einstellungen { KEY: wert }.' } }, ['settings']),
     async (args) => {
       const updates = isObj(args.settings) ? args.settings : null;
@@ -535,13 +544,22 @@ export function endpointFilePath() {
   return path.join(DATA_DIR, 'mcp-endpoint.json');
 }
 
-async function candidateBases(env, readFileImpl) {
+// Is the process that wrote the endpoint file still running? After a crash the
+// file stays behind, and another program may own that port by now — it must
+// not get our requests (or the token).
+export function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (err) { return err?.code === 'EPERM'; }
+}
+
+export async function candidateBases(env, readFileImpl, isAlive = pidAlive) {
   const explicit = (env.JOB_ALERT_URL || '').trim();
   if (explicit) return [explicit.replace(/\/+$/, '')];
   const out = [];
   try {
     const info = JSON.parse(await readFileImpl(endpointFilePath(), 'utf-8'));
-    if (info && typeof info.url === 'string' && info.url) out.push(info.url.replace(/\/+$/, ''));
+    if (info && typeof info.url === 'string' && info.url && isAlive(info.pid)) out.push(info.url.replace(/\/+$/, ''));
   } catch { /* no endpoint file – fall back */ }
   const fallback = `http://127.0.0.1:${env.GUI_PORT || 3000}`;
   if (!out.includes(fallback)) out.push(fallback);

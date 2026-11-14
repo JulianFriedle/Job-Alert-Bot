@@ -1318,8 +1318,8 @@ function settingField(s) {
     const on = ['true', '1', 'on', 'yes'].includes(String(s.value).toLowerCase());
     control = on
       ? `<div class="mcp-banner" role="alert">${esc(t('mcp.unlocked'))}</div>
-         <button type="button" class="btn" data-mcp-toggle="lock">${esc(t('mcp.lock'))}</button>`
-      : `<button type="button" class="btn btn-red" data-mcp-toggle="unlock">${esc(t('mcp.unlock'))}</button>`;
+         <button type="button" id="${id}" class="btn" data-mcp-toggle="lock">${esc(t('mcp.lock'))}</button>`
+      : `<button type="button" id="${id}" class="btn btn-red" data-mcp-toggle="unlock">${esc(t('mcp.unlock'))}</button>`;
   } else if (s.type === 'int') {
     control = `<input id="${id}" class="set-input set-num" type="number" ${da}
       value="${esc(s.value)}" placeholder="${esc(s.default)}"${s.min != null ? ` min="${s.min}"` : ''}${s.max != null ? ` max="${s.max}"` : ''}>`;
