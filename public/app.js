@@ -12,9 +12,42 @@ const api = async (url, opts) => {
   const res = await fetch(url, opts);
   const ct = res.headers.get('content-type') || '';
   const body = ct.includes('json') ? await res.json() : await res.text();
-  if (!res.ok) throw new Error(body?.error || res.statusText);
+  if (!res.ok) {
+    const err = new Error(body?.error || res.statusText);
+    err.status = res.status; err.body = body;
+    throw err;
+  }
   return body;
 };
+
+// ── Stale-data protection for the editable config tabs (#32) ─────────────────
+// Each tab remembers the version it loaded and sends it back on save; the
+// server answers 409 when the data changed in the meantime (another window,
+// the wizard, another client). Unsaved edits are tracked so a tab can quietly
+// refresh itself when reopened or when the window regains focus — but never
+// throw away what the user is typing.
+const cfgVersion = { sources: null, profile: null, prompts: null };
+const cfgDirty = { sources: false, profile: false, prompts: false };
+const CFG_FORMS = { sources: '#source-list', profile: '#profile-groups', prompts: '#prompts-groups' };
+for (const [name, sel] of Object.entries(CFG_FORMS)) {
+  const el = document.querySelector(sel);
+  ['input', 'change'].forEach(ev => el?.addEventListener(ev, () => { cfgDirty[name] = true; }));
+}
+
+// After a 409: offer to reload (dropping the edits here) or keep them, in
+// which case the next save deliberately overwrites the newer data.
+async function handleSaveConflict(name, err, reload, showMsg) {
+  if (err?.status !== 409) return false;
+  if (confirm(t('conflict.reload'))) {
+    cfgDirty[name] = false;
+    await reload();
+    showMsg(t('conflict.reloaded'), 'ok');
+  } else {
+    cfgVersion[name] = err.body?.version ?? null;
+    showMsg(t('conflict.kept'), 'err');
+  }
+  return true;
+}
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -37,12 +70,12 @@ $('#tabs').addEventListener('click', (e) => {
   $$('.tab').forEach(t => t.classList.toggle('active', t === tab));
   const name = tab.dataset.tab;
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
-  if (name === 'sources' && !sourcesLoaded) loadSources();
+  if (name === 'sources' && (!sourcesLoaded || !cfgDirty.sources)) loadSources();
   if (name === 'stats') loadStats();
   if (name === 'settings' && !settingsLoaded) loadSettings();
   if (name === 'settings') loadBackups();
-  if (name === 'profile' && !profileLoaded) loadProfile();
-  if (name === 'prompts' && !promptsLoaded) loadPrompts();
+  if (name === 'profile' && (!profileLoaded || !cfgDirty.profile)) loadProfile();
+  if (name === 'prompts' && (!promptsLoaded || !cfgDirty.prompts)) loadPrompts();
   if (name === 'clients') renderClients();
   if (name === 'run') loadRecentRuns();
 });
@@ -983,6 +1016,8 @@ async function loadSources() {
   try {
     const cfg = await api('/api/sources');
     renderSources(cfg.sources || []);
+    cfgVersion.sources = cfg.version ?? null;
+    cfgDirty.sources = false;
     sourcesLoaded = true;
   } catch (err) { toast(t('toast.error') + err.message); }
 }
@@ -1017,7 +1052,7 @@ function sourceRow(s = { name: '', url: '', type: 'careers-page' }) {
     <select class="stype">${typeOpts}</select>
     ${sourceConfigHtml(type, s)}
     <button class="btn btn-ghost btn-danger js-del" title="${esc(t('sources.delTitle'))}">✕</button>`;
-  div.querySelector('.js-del').addEventListener('click', () => { div.remove(); updateSourceCount(); });
+  div.querySelector('.js-del').addEventListener('click', () => { div.remove(); cfgDirty.sources = true; updateSourceCount(); });
   // Swapping the type re-renders only the config part; the rest of the row stays.
   div.querySelector('.stype').addEventListener('change', (e) => {
     const cfg = div.querySelector('.src-config');
@@ -1046,6 +1081,7 @@ function updateSourceCount() {
 }
 
 $('#add-source').addEventListener('click', () => {
+  cfgDirty.sources = true;
   const row = sourceRow();
   $('#source-list').appendChild(row);
   updateSourceCount();
@@ -1082,11 +1118,16 @@ $('#save-sources').addEventListener('click', async () => {
   try {
     const r = await api('/api/sources', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sources }, null, 2),
+      body: JSON.stringify({ sources, baseVersion: cfgVersion.sources }, null, 2),
     });
+    cfgVersion.sources = r.version ?? null;
+    cfgDirty.sources = false;
     showSourcesMsg(t('sources.savedMsg').replace('{n}', r.count), 'ok');
     toast(t('toast.sourcesSaved'));
-  } catch (err) { showSourcesMsg(t('toast.error') + err.message, 'err'); }
+  } catch (err) {
+    if (await handleSaveConflict('sources', err, loadSources, showSourcesMsg)) return;
+    showSourcesMsg(t('toast.error') + err.message, 'err');
+  }
 });
 
 function showSourcesMsg(msg, kind) {
@@ -1639,9 +1680,11 @@ function setPath(o, dotted, value) {
 
 async function loadProfile() {
   try {
-    const { profile } = await api('/api/profile');
+    const { profile, version } = await api('/api/profile');
     profileData = profile || {};
     renderProfile();
+    cfgVersion.profile = version ?? null;
+    cfgDirty.profile = false;
     profileLoaded = true;
   } catch (err) { toast(t('toast.error') + err.message); }
   loadCredentials();   // Plattform-Zugänge card lives on the same tab
@@ -1699,14 +1742,19 @@ $('#save-profile').addEventListener('click', async () => {
     }
   }
   try {
-    await api('/api/profile', {
+    const r = await api('/api/profile', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile: next }),
+      body: JSON.stringify({ profile: next, baseVersion: cfgVersion.profile }),
     });
     profileData = next;
+    cfgVersion.profile = r.version ?? null;
+    cfgDirty.profile = false;
     showProfileMsg(t('profile.savedMsg'), 'ok');
     toast(t('toast.profileSaved'));
-  } catch (err) { showProfileMsg(t('toast.error') + err.message, 'err'); }
+  } catch (err) {
+    if (await handleSaveConflict('profile', err, loadProfile, showProfileMsg)) return;
+    showProfileMsg(t('toast.error') + err.message, 'err');
+  }
 });
 
 $('#profile-reset').addEventListener('click', loadProfile);
@@ -1982,9 +2030,11 @@ let promptDefaults = {};
 
 async function loadPrompts() {
   try {
-    const { fields, prompts, defaults } = await api('/api/prompts');
+    const { fields, prompts, defaults, version } = await api('/api/prompts');
     promptDefaults = defaults || {};
     renderPrompts(fields, prompts);
+    cfgVersion.prompts = version ?? null;
+    cfgDirty.prompts = false;
     promptsLoaded = true;
   } catch (err) { toast(t('toast.error') + err.message); }
 }
@@ -2024,17 +2074,23 @@ $('#save-prompts').addEventListener('click', async () => {
   const prompts = {};
   for (const ta of $$('#prompts-groups textarea[data-key]')) prompts[ta.dataset.key] = ta.value;
   try {
-    await api('/api/prompts', {
+    const r = await api('/api/prompts', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompts }),
+      body: JSON.stringify({ prompts, baseVersion: cfgVersion.prompts }),
     });
+    cfgVersion.prompts = r.version ?? null;
+    cfgDirty.prompts = false;
     showPromptsMsg(t('prompts.savedMsg'), 'ok');
     toast(t('toast.promptsSaved'));
-  } catch (err) { showPromptsMsg(t('toast.error') + err.message, 'err'); }
+  } catch (err) {
+    if (await handleSaveConflict('prompts', err, loadPrompts, showPromptsMsg)) return;
+    showPromptsMsg(t('toast.error') + err.message, 'err');
+  }
 });
 
 // reset all fields to defaults (in the form; takes effect on Save)
 $('#prompts-reset').addEventListener('click', () => {
+  cfgDirty.prompts = true;
   for (const ta of $$('#prompts-groups textarea[data-key]')) ta.value = promptDefaults[ta.dataset.key] ?? '';
   showPromptsMsg(t('prompts.resetHint'), 'ok');
 });
@@ -2308,3 +2364,15 @@ async function boot() {
 }
 
 boot();
+
+// Back in this window: refresh the open config tab if nothing is being edited
+// there, so it shows what another window or the wizard saved meanwhile (#32).
+function refreshActiveConfigTab() {
+  if (document.hidden) return;
+  const active = $('.tab.active')?.dataset.tab;
+  if (active === 'sources' && sourcesLoaded && !cfgDirty.sources) loadSources();
+  else if (active === 'profile' && profileLoaded && !cfgDirty.profile) loadProfile();
+  else if (active === 'prompts' && promptsLoaded && !cfgDirty.prompts) loadPrompts();
+}
+window.addEventListener('focus', refreshActiveConfigTab);
+document.addEventListener('visibilitychange', refreshActiveConfigTab);
