@@ -139,7 +139,19 @@
         </div>
         <div class="panel-actions">
           <button class="btn" id="add-source" data-i18n="sources.addSource">+ Quelle</button>
+          <button class="btn" id="export-sources" data-i18n="sources.export">Exportieren</button>
+          <button class="btn" id="import-sources" data-i18n="sources.import">Importieren</button>
+          <input type="file" id="import-sources-file" accept="application/json,.json" hidden>
           <button class="btn btn-primary" id="save-sources" data-i18n="btn.save">Speichern</button>
+        </div>
+      </div>
+      <div class="card sources-import" id="sources-import" hidden>
+        <p id="sources-import-summary"></p>
+        <ul class="muted" id="sources-import-invalid"></ul>
+        <div class="docs-row">
+          <button class="btn btn-primary" id="sources-import-merge" data-i18n="sources.importMerge">Neue hinzufügen</button>
+          <button class="btn" id="sources-import-replace" data-i18n="sources.importReplace">Liste ersetzen</button>
+          <button class="btn btn-ghost" id="sources-import-cancel" data-i18n="sources.importCancel">Abbrechen</button>
         </div>
       </div>
       <div class="source-list" id="source-list"></div>
@@ -548,6 +560,7 @@
   <script src="i18n.js"></script>
   <script src="setup.js"></script>
   <script src="app.js"></script>
+  <script type="module" src="sources-io.js"></script>
   <script src="tour.js"></script>
 </body>
 </html>
