@@ -195,13 +195,39 @@ export function normalizeTitle(title) {
     .trim();
 }
 
+// Keywords are matched against the normalized (lowercased) title, so they are
+// lowercased too — a "Praktikum" typed into the wizard used to match nothing.
+// Not trimmed: a padded keyword like " sap " deliberately matches a whole word.
+const keywordList = (list) => (Array.isArray(list) ? list : [])
+  .map(k => String(k ?? '').toLowerCase())
+  .filter(k => k.trim() !== '');
+
+// The title pre-filters of one client. `reject(title)` says why a job never
+// reaches Claude: 'blocked' (blocklist hit) or 'not-allowed' (an allowlist is
+// set and the title matches none of it) — null means it goes on. An empty
+// allowlist restricts nothing; a priority keyword counts as allowed; the
+// blocklist always wins.
+export function createTitleFilter({ titleBlocklist, priorityKeywords, titleAllowlist } = {}) {
+  const block = keywordList(titleBlocklist);
+  const prio = keywordList(priorityKeywords);
+  const allow = keywordList(titleAllowlist);
+  const hits = (title, list) => {
+    const t = normalizeTitle(title);
+    return list.some(kw => t.includes(kw));
+  };
+  const isBlocked = (title) => hits(title, block);
+  const isPriority = (title) => hits(title, prio);
+  const isAllowed = (title) => allow.length === 0 || hits(title, allow) || isPriority(title);
+  const reject = (title) => (isBlocked(title) ? 'blocked' : isAllowed(title) ? null : 'not-allowed');
+  return { isBlocked, isPriority, isAllowed, reject, hasAllowlist: allow.length > 0 };
+}
+
 // Run the full scrape→analyze→notify→export pipeline for ONE client.
 async function runClientPipeline(client) {
   const clientId = client.id;
   const cfg = getClientConfig(client);
   const sources = cfg.sources;
-  const TITLE_BLOCKLIST = cfg.filters.titleBlocklist;
-  const PRIORITY_KEYWORDS = cfg.filters.priorityKeywords;
+  const titleFilter = createTitleFilter(cfg.filters);
 
   const t = {};
   const tick = (label) => { t[label] = Date.now(); };
@@ -236,19 +262,22 @@ async function runClientPipeline(client) {
   const newJobs = scrapedJobs.filter(job => isNewJob(clientId, job.id));
   log(`${scrapedJobs.length} scraped, ${newJobs.length} new`);
 
-  // 3. Title blocklist — skip structurally irrelevant jobs before touching Claude
-  const isTitleBlocked = (title) => {
-    const t = normalizeTitle(title);
-    return TITLE_BLOCKLIST.some(kw => t.includes(kw));
-  };
+  // 3. Title filters — skip structurally irrelevant jobs before touching Claude
+  const isTitleBlocked = (title) => titleFilter.reject(title) !== null;
 
   const blockedJobs = newJobs.filter(job => isTitleBlocked(job.title));
   const jobsToProcess = newJobs.filter(job => !isTitleBlocked(job.title));
 
   if (blockedJobs.length > 0) {
+    // Blocklist hits are listed one by one; an allowlist typically drops most
+    // titles, so those only show up in the count below.
+    const listed = blockedJobs.filter(job => titleFilter.reject(job.title) === 'blocked');
     log(`Title-filtered ${blockedJobs.length} job(s) (saving as irrelevant to skip on future runs):`);
+    for (const job of listed) log(`  ✗ ${job.title}`);
+    if (titleFilter.hasAllowlist) {
+      log(`Title-allowlist: ${newJobs.length - blockedJobs.length} kept, ${blockedJobs.length - listed.length} skipped`);
+    }
     for (const job of blockedJobs) {
-      log(`  ✗ ${job.title}`);
       try {
         saveJob(clientId, job);
         markAnalyzed(clientId, job.id, false);
@@ -315,7 +344,7 @@ async function runClientPipeline(client) {
   // 7. Analyze unanalyzed jobs — collect results for new jobs found this run
   const allUnanalyzed = getUnanalyzedJobs(clientId);
 
-  // Apply title blocklist retroactively to jobs saved before the blocklist was updated
+  // Apply the title filters retroactively to jobs saved before they were updated
   const retroBlocked = allUnanalyzed.filter(job => isTitleBlocked(job.title));
   if (retroBlocked.length > 0) {
     log(`Retroactively blocking ${retroBlocked.length} already-saved job(s) matching title filter`);
@@ -332,10 +361,7 @@ async function runClientPipeline(client) {
   }
   log(`Analyzing ${toAnalyze.length} unanalyzed job(s)...`);
 
-  const isPriority = (title) => {
-    const t = normalizeTitle(title);
-    return PRIORITY_KEYWORDS.some(kw => t.includes(kw));
-  };
+  const isPriority = titleFilter.isPriority;
 
   const analysisCache = new Map(); // id → analysis (reused for notifications)
   let analysisIdx = 0;

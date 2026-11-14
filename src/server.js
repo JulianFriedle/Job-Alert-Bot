@@ -1202,7 +1202,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true });
       }
 
-      // GET /api/filters — this client's title blocklist + priority keywords
+      // GET /api/filters — this client's title blocklist, priority keywords + allowlist
       if (method === 'GET' && pathname === '/api/filters') {
         return sendJson(res, 200, { filters: getFilters(clientId) });
       }
@@ -1214,10 +1214,13 @@ const server = http.createServer(async (req, res) => {
         catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
         const f = body && body.filters;
         if (!f || typeof f !== 'object')
-          return sendJson(res, 400, { error: 'Erwarte { filters: { titleBlocklist, priorityKeywords } }' });
+          return sendJson(res, 400, { error: 'Erwarte { filters: { titleBlocklist, priorityKeywords, titleAllowlist } }' });
         const clean = {
           titleBlocklist:  Array.isArray(f.titleBlocklist)  ? f.titleBlocklist.map(String)  : [],
           priorityKeywords: Array.isArray(f.priorityKeywords) ? f.priorityKeywords.map(String) : [],
+          // Omitted = keep the stored one, so an older client can't wipe it.
+          titleAllowlist:  Array.isArray(f.titleAllowlist)  ? f.titleAllowlist.map(String)
+            : getFilters(clientId).titleAllowlist,
         };
         updateClient(clientId, { filters_json: JSON.stringify(clean) });
         return sendJson(res, 200, { ok: true });

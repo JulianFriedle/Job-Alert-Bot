@@ -190,6 +190,10 @@ export const STEPS = [
     intro: 'Spart KI-Kosten. Geblockte Titel werden gar nicht erst analysiert; ' +
            'Prioritäts-Stichwörter heben den Score an. Leer lassen ist völlig in Ordnung.',
     fields: [
+      { key: 'titleAllowlist', store: 'filters', type: 'list',
+        label: 'Nur diese Titel (Positivliste)',
+        help: 'Wenn ausgefüllt, gehen nur Stellen an die KI, deren Titel eines dieser Stichwörter enthält – ' +
+              'z. B. assistenz, office manager. Ideal für eine eng umrissene Wunsch-Rolle. Leer = keine Einschränkung' },
       { key: 'titleBlocklist', store: 'filters', type: 'list',
         label: 'Blockliste (Titel überspringen)', help: 'Ein Stichwort pro Zeile, z. B. praktikum' },
       { key: 'priorityKeywords', store: 'filters', type: 'list',

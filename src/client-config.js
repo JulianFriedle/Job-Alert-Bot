@@ -73,6 +73,8 @@ export function getFilters(clientOrId) {
   return {
     titleBlocklist:  Array.isArray(f?.titleBlocklist)  ? f.titleBlocklist  : DEFAULT_TITLE_BLOCKLIST,
     priorityKeywords: Array.isArray(f?.priorityKeywords) ? f.priorityKeywords : DEFAULT_PRIORITY_KEYWORDS,
+    // Empty = no restriction (see createTitleFilter in scheduler.js).
+    titleAllowlist:  Array.isArray(f?.titleAllowlist)  ? f.titleAllowlist  : [],
   };
 }
 
