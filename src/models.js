@@ -33,6 +33,7 @@ export async function listAvailableModels({ apiKey = process.env.ANTHROPIC_API_K
     if (m?.id) models.push({ id: m.id, name: m.display_name || m.id, created: m.created_at || '' });
   }
   models.sort((a, b) => String(b.created).localeCompare(String(a.created)));
+  modelCache.clear();   // one key at a time — an old key's list is of no use
   modelCache.set(key, { at: now(), models });
   return models;
 }

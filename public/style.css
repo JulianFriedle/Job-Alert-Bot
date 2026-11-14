@@ -869,3 +869,8 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .sources-import { margin-bottom: 12px; }
 .sources-import ul:empty { display: none; }
 .sources-import li { font-size: .85rem; }
+
+/* Model picker next to the model ID field (Einstellungen → KI-Modelle) */
+.model-pick-wrap { display: flex; gap: 8px; flex-wrap: wrap; }
+.model-pick-wrap .set-input { flex: 1 1 200px; min-width: 0; }
+.model-pick { flex: 0 1 260px; max-width: 100%; }

@@ -339,6 +339,8 @@ const I18N = {
     // Settings field chrome (frontend bits around backend labels)
     'settings.required': 'erforderlich', 'settings.secretSet': '•••••••• gesetzt',
     'settings.secretUnset': 'nicht gesetzt', 'settings.defaultPrefix': 'Standard: ',
+    'settings.modelPick': 'Modell wählen …',
+    'settings.modelListError': 'Modellliste nicht abrufbar ({why}) – die Modell-ID kann trotzdem eingetragen werden.',
     'settings.version': 'Version',
     'settings.revealTitle': 'Anzeigen/Verbergen',
 
@@ -743,6 +745,8 @@ const I18N = {
     // Settings field chrome
     'settings.required': 'required', 'settings.secretSet': '•••••••• set',
     'settings.secretUnset': 'not set', 'settings.defaultPrefix': 'Default: ',
+    'settings.modelPick': 'Choose a model …',
+    'settings.modelListError': 'Model list unavailable ({why}) – you can still enter a model ID.',
     'settings.version': 'Version',
     'settings.revealTitle': 'Show/hide',
 
