@@ -1660,11 +1660,13 @@ server.on('error', (err) => {
 });
 server.listen(PORT, HOST, () => {
   log(`GUI ready → http://localhost:${PORT}`);
+  const port = server.address()?.port || PORT;
+  mcpEndpointUrl = `http://127.0.0.1:${port}`;
   // Tell the MCP server where we listen: the desktop app picks its port
-  // dynamically. Best effort — a failure here must never take the GUI down.
-  try {
-    const port = server.address()?.port || PORT;
-    mcpEndpointUrl = `http://127.0.0.1:${port}`;
+  // dynamically. Desktop only — a dev/test instance or the operator sandbox
+  // shares data/ with the real GUI and would otherwise point the assistant at
+  // the wrong database. Best effort — a failure must never take the GUI down.
+  if (IS_DESKTOP) try {
     mkdirSync(DATA_DIR, { recursive: true });
     writeFile(path.join(DATA_DIR, 'mcp-endpoint.json'),
       JSON.stringify({ url: mcpEndpointUrl, pid: process.pid, startedAt: new Date().toISOString() }), 'utf-8')

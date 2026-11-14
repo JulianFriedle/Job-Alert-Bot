@@ -317,7 +317,7 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `APPLY_HEADFUL` | `false` | Show the apply browser window (for first logins with 2FA) |
 | `MCP_ALLOW_ACTIONS` | `false` | The red button in **Einstellungen → MCP-Server**: `true` lets the AI assistant trigger paid / outward-facing actions (see [AI assistant (MCP)](#ai-assistant-mcp)) |
 | `MCP_API_TOKEN` | — | Token the MCP server logs in with when `AUTH_ENABLED=true` (otherwise not needed) |
-| `JOB_ALERT_URL` | *(auto)* | Read by the MCP process only: GUI address override. Default: `data/mcp-endpoint.json` (written by the GUI on start), else `http://127.0.0.1:$GUI_PORT`. Not in the settings form |
+| `JOB_ALERT_URL` | *(auto)* | Read by the MCP process only: GUI address override. Default: `mcp-endpoint.json` (written by the desktop app on start), else `http://127.0.0.1:$GUI_PORT`. Not in the settings form |
 | `MCP_CLIENT_ID` | *(default client)* | Read by the MCP process only: client the assistant works on when a tool gets no `clientId`. Not in the settings form |
 
 > **Per-client vs global.** `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, models and the auth/server
@@ -666,8 +666,9 @@ By hand it looks like this (paths are examples; the desktop app additionally nee
 }
 ```
 
-The GUI writes its address to `data/mcp-endpoint.json` on start (the desktop app picks a free
-port), which the MCP process reads; override with `JOB_ALERT_URL`. Tools take an optional
+The desktop app picks a free port and writes its address to `mcp-endpoint.json` in its data
+folder on start, which the MCP process reads. Elsewhere the MCP process uses
+`http://127.0.0.1:$GUI_PORT` from `.env`; override either with `JOB_ALERT_URL`. Tools take an optional
 `clientId` (default: `MCP_CLIENT_ID`, else the default client).
 
 **Tools, by tier**
