@@ -120,6 +120,9 @@ const I18N = {
     'sources.savedMsg': '✓ {n} Quellen gespeichert.', 'toast.sourcesSaved': 'Quellen gespeichert',
 
     'profile.savedMsg': '✓ Profil gespeichert. Greift beim nächsten Lauf / Anschreiben.',
+    'conflict.reload': 'Diese Daten wurden inzwischen an anderer Stelle geändert (anderes Fenster, Assistent oder Klient).\n\nOK = neu laden (deine Änderungen hier gehen verloren)\nAbbrechen = deine Änderungen behalten',
+    'conflict.reloaded': 'Neu geladen – das ist der aktuell gespeicherte Stand.',
+    'conflict.kept': 'Nicht gespeichert: Die Daten wurden inzwischen geändert. Erneut „Speichern“ überschreibt den neueren Stand mit deinen Änderungen.',
     'toast.profileSaved': 'Profil gespeichert',
 
     'prompts.savedMsg': '✓ Prompts gespeichert. Greifen sofort beim nächsten Lauf / Anschreiben.',
@@ -491,6 +494,9 @@ const I18N = {
     'sources.savedMsg': '✓ Saved {n} sources.', 'toast.sourcesSaved': 'Sources saved',
 
     'profile.savedMsg': '✓ Profile saved. Applies on the next run / cover letter.',
+    'conflict.reload': 'This data was changed elsewhere in the meantime (another window, the wizard or another client).\n\nOK = reload (your changes here are lost)\nCancel = keep your changes',
+    'conflict.reloaded': 'Reloaded – this is what is saved now.',
+    'conflict.kept': 'Not saved: the data was changed in the meantime. Clicking “Save” again overwrites the newer data with your changes.',
     'toast.profileSaved': 'Profile saved',
 
     'prompts.savedMsg': '✓ Prompts saved. Apply immediately on the next run / cover letter.',

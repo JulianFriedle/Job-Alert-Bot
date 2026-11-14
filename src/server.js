@@ -21,6 +21,7 @@ import {
 } from './backup.js';
 import { restoreFromBackup } from './database.js';
 import { generateCoverLetter } from './cover-letter.js';
+import { versionOf, isStale, CONFLICT_ERROR } from './config-version.js';
 import { DEFAULT_ANALYZER_MODEL, DEFAULT_WRITER_MODEL } from './models.js';
 import { buildJobsCsv, filterJobs, csvFileName } from './csv-export.js';
 import { sendTelegramTest } from './notifier.js';
@@ -1158,7 +1159,8 @@ const server = http.createServer(async (req, res) => {
 
       // GET /api/sources — this client's job sources
       if (method === 'GET' && pathname === '/api/sources') {
-        return sendJson(res, 200, { sources: getSources(clientId) });
+        const sources = getSources(clientId);
+        return sendJson(res, 200, { sources, version: versionOf(sources) });
       }
 
       // PUT /api/sources — overwrite this client's sources (validated)
@@ -1169,6 +1171,10 @@ const server = http.createServer(async (req, res) => {
         catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
         if (!parsed || !Array.isArray(parsed.sources))
           return sendJson(res, 400, { error: 'Erwarte { "sources": [...] }' });
+        {
+          const current = versionOf(getSources(clientId));
+          if (isStale(parsed.baseVersion, current)) return sendJson(res, 409, { error: CONFLICT_ERROR, conflict: true, version: current });
+        }
         for (const s of parsed.sources) {
           if (!s || typeof s.name !== 'string')
             return sendJson(res, 400, { error: 'Jede Quelle braucht einen Namen' });
@@ -1182,12 +1188,13 @@ const server = http.createServer(async (req, res) => {
           }
         }
         updateClient(clientId, { sources_json: JSON.stringify({ sources: parsed.sources }) });
-        return sendJson(res, 200, { ok: true, count: parsed.sources.length });
+        return sendJson(res, 200, { ok: true, count: parsed.sources.length, version: versionOf(getSources(clientId)) });
       }
 
       // GET /api/profile — this client's CV/preferences JSON
       if (method === 'GET' && pathname === '/api/profile') {
-        return sendJson(res, 200, { profile: getProfile(clientId) });
+        const profile = getProfile(clientId);
+        return sendJson(res, 200, { profile, version: versionOf(profile) });
       }
 
       // PUT /api/profile — overwrite this client's profile object
@@ -1198,13 +1205,18 @@ const server = http.createServer(async (req, res) => {
         const profile = body && body.profile;
         if (!profile || typeof profile !== 'object' || Array.isArray(profile))
           return sendJson(res, 400, { error: 'Erwarte { profile: { … } }' });
+        {
+          const current = versionOf(getProfile(clientId));
+          if (isStale(body.baseVersion, current)) return sendJson(res, 409, { error: CONFLICT_ERROR, conflict: true, version: current });
+        }
         updateClient(clientId, { profile_json: JSON.stringify(profile) });
-        return sendJson(res, 200, { ok: true });
+        return sendJson(res, 200, { ok: true, version: versionOf(getProfile(clientId)) });
       }
 
       // GET /api/filters — this client's title blocklist, priority keywords + allowlist
       if (method === 'GET' && pathname === '/api/filters') {
-        return sendJson(res, 200, { filters: getFilters(clientId) });
+        const filters = getFilters(clientId);
+        return sendJson(res, 200, { filters, version: versionOf(filters) });
       }
 
       // PUT /api/filters — overwrite this client's filters
@@ -1215,6 +1227,10 @@ const server = http.createServer(async (req, res) => {
         const f = body && body.filters;
         if (!f || typeof f !== 'object')
           return sendJson(res, 400, { error: 'Erwarte { filters: { titleBlocklist, priorityKeywords, titleAllowlist, locationAllowlist } }' });
+        {
+          const current = versionOf(getFilters(clientId));
+          if (isStale(body.baseVersion, current)) return sendJson(res, 409, { error: CONFLICT_ERROR, conflict: true, version: current });
+        }
         // Only non-blank strings; anything else would become "null" or
         // "[object Object]" and turn into a keyword.
         const cleanList = (l) => l.filter(x => typeof x === 'string' && x.trim() !== '').slice(0, 5000);
@@ -1228,15 +1244,17 @@ const server = http.createServer(async (req, res) => {
             : getFilters(clientId).locationAllowlist,
         };
         updateClient(clientId, { filters_json: JSON.stringify(clean) });
-        return sendJson(res, 200, { ok: true });
+        return sendJson(res, 200, { ok: true, version: versionOf(getFilters(clientId)) });
       }
 
       // GET /api/prompts — editable prompt fields + this client's current/default values
       if (method === 'GET' && pathname === '/api/prompts') {
+        const prompts = getPrompts(clientId);
         return sendJson(res, 200, {
           fields: PROMPT_FIELDS,
-          prompts: getPrompts(clientId),
+          prompts,
           defaults: DEFAULT_PROMPTS,
+          version: versionOf(prompts),
         });
       }
 
@@ -1248,9 +1266,13 @@ const server = http.createServer(async (req, res) => {
         const incoming = body && body.prompts;
         if (!incoming || typeof incoming !== 'object')
           return sendJson(res, 400, { error: 'Erwarte { prompts: { KEY: text } }' });
+        {
+          const current = versionOf(getPrompts(clientId));
+          if (isStale(body.baseVersion, current)) return sendJson(res, 409, { error: CONFLICT_ERROR, conflict: true, version: current });
+        }
         const overrides = minimizePromptOverrides(incoming);
         updateClient(clientId, { prompts_json: Object.keys(overrides).length ? JSON.stringify(overrides) : null });
-        return sendJson(res, 200, { ok: true });
+        return sendJson(res, 200, { ok: true, version: versionOf(getPrompts(clientId)) });
       }
 
       // GET /api/settings — schema + current values.
