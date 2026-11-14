@@ -97,6 +97,25 @@ export function harvestFieldsInPage(containerSelector) {
     });
   }
 
+  // Checkboxes (consent, "Ich bestätige …"): one yes/no question each. Styled
+  // checkboxes often hide the input itself and show only its label, so a
+  // hidden input with a visible label still counts.
+  const labelVisible = (el) => {
+    const l = (el.id && root.querySelector(`label[for="${CSS.escape(el.id)}"]`)) || el.closest('label');
+    return Boolean(l && l.offsetParent !== null);
+  };
+  for (const el of root.querySelectorAll('input[type="checkbox"]')) {
+    if (el.disabled || inChrome(el) || !(el.offsetParent !== null || labelVisible(el))) continue;
+    const label = (labelFor(el) || '').replace(/\s+/g, ' ').trim();
+    if (!label || seenLabels.has(label)) continue;
+    seenLabels.add(label);
+    out.push({
+      kind: 'checkbox', label, options: ['Ja', 'Nein'],
+      required: el.required || el.getAttribute('aria-required') === 'true',
+      answered: el.checked,
+    });
+  }
+
   for (const el of root.querySelectorAll('input[type="file"]')) {
     if (el.offsetParent === null && !el.closest('[class*="upload"]')) continue;
     if (inChrome(el)) continue;
@@ -177,6 +196,26 @@ export function fillAnswerInPage({ containerSelector, label, value }) {
         fire(el);
         return true;
       }
+    }
+  }
+
+  // Checkboxes: tick for a yes-answer, untick for a no-answer — only for a
+  // yes/no value, so a text answer ("E-Mail") never lands on a checkbox whose
+  // label merely contains it ("E-Mail-Benachrichtigungen erhalten"). An exact
+  // label wins over a partial one. click() rather than setting .checked, so the
+  // page's own handlers see the change. Keep the yes-pattern in sync with
+  // isTickAnswer() in src/questions.js (this runs in the browser).
+  const answer = String(value ?? '').trim();
+  if (/^(ja|nein|yes|no|y|n|true|false|1|0|x|✓|✔|checked|unchecked|an|aus|on|off)$/i.test(answer)) {
+    const boxes = [...root.querySelectorAll('input[type="checkbox"]')];
+    const box = boxes.find(el => norm(labelFor(el)) === target)
+      || boxes.find(el => norm(labelFor(el)).includes(target));
+    if (box) {
+      const want = /^(ja|yes|y|true|1|x|✓|✔|checked|an|on)$/i.test(answer);
+      if (box.checked !== want) box.click();
+      if (box.checked !== want) box.checked = want; // a handler swallowed the click
+      fire(box);
+      return true;
     }
   }
 

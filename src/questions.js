@@ -15,6 +15,20 @@ export function normalizeQuestionKey(label) {
     .trim();
 }
 
+// A question answered by picking one of its options: select, radio, and a
+// checkbox (options "Ja"/"Nein").
+export const CHOICE_TYPES = ['select', 'radio', 'checkbox'];
+export const CHECKBOX_OPTIONS = ['Ja', 'Nein'];
+export function hasChoices(q) {
+  return CHOICE_TYPES.includes(q?.type) && Array.isArray(q.options) && q.options.length > 0;
+}
+
+// Whether a checkbox answer means "tick it" — tolerant of how it was typed
+// (GUI option, Telegram reply, an older library entry).
+export function isTickAnswer(value) {
+  return /^(ja|yes|y|true|1|x|✓|✔|checked|an|on)$/i.test(String(value ?? '').trim());
+}
+
 export function parseQuestions(json) {
   try {
     const arr = JSON.parse(json || '[]');
@@ -34,7 +48,7 @@ export function applyAnswer(questions, questionId, value, via) {
   const q = questions.find(x => x.id === questionId);
   if (!q) return false;
   const v = String(value).trim();
-  if ((q.type === 'select' || q.type === 'radio') && Array.isArray(q.options) && q.options.length) {
+  if (hasChoices(q)) {
     const match = q.options.find(o => String(o).trim().toLowerCase() === v.toLowerCase());
     if (!match) return false;
     q.answer = match;
@@ -55,7 +69,7 @@ export function prefillFromLibrary(questions, libraryRows) {
     if (q.answer != null && String(q.answer).trim() !== '') continue;
     const hit = byKey.get(normalizeQuestionKey(q.label));
     if (!hit || hit.answer == null || String(hit.answer).trim() === '') continue;
-    if ((q.type === 'select' || q.type === 'radio') && Array.isArray(q.options) && q.options.length) {
+    if (hasChoices(q)) {
       const match = q.options.find(o => String(o).trim().toLowerCase() === String(hit.answer).trim().toLowerCase());
       if (!match) continue;
       q.answer = match;
