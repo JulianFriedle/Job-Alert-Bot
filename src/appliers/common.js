@@ -220,9 +220,16 @@ export function fillAnswerInPage({ containerSelector, label, value, type = null 
     if (optLabel === norm(value)) { r.click(); fire(r); return true; }
   }
 
-  for (const el of root.querySelectorAll('select')) {
-    const l = norm(labelFor(el));
-    if (l !== target && !l.includes(target)) continue;
+  // Exact label first, a partial one only after: a group-label or name
+  // fallback ("firstname" for "Name") must not beat the field that is really
+  // labelled with the question.
+  const byLabel = (els) => {
+    const withLabel = els.map(el => [el, norm(labelFor(el))]);
+    return [...withLabel.filter(([, l]) => l === target), ...withLabel.filter(([, l]) => l !== target && l.includes(target))]
+      .map(([el]) => el);
+  };
+
+  for (const el of byLabel([...root.querySelectorAll('select')])) {
     for (const opt of el.options) {
       if (norm(opt.textContent) === norm(value)) {
         el.value = opt.value;
@@ -232,11 +239,9 @@ export function fillAnswerInPage({ containerSelector, label, value, type = null 
     }
   }
 
-
-  for (const el of root.querySelectorAll('input[type="text"], input[type="number"], input[type="tel"], input[type="email"], input:not([type]), textarea')) {
-    if (el.offsetParent === null) continue;
-    const l = norm(labelFor(el));
-    if (l !== target && !l.includes(target)) continue;
+  const textFields = [...root.querySelectorAll('input[type="text"], input[type="number"], input[type="tel"], input[type="email"], input:not([type]), textarea')]
+    .filter(el => el.offsetParent !== null);
+  for (const el of byLabel(textFields)) {
     const setter = Object.getOwnPropertyDescriptor(
       el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value'
     ).set;
