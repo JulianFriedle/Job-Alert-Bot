@@ -1239,7 +1239,7 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
     try {
       // Platform sources (linkedin/stepstone/indeed) have dedicated scrapers;
       // everything else goes through the generic career-page heuristics.
-      const { jobs, duplicates, siteTotal, blocked } = isPlatformSource(source)
+      const { jobs, duplicates, siteTotal, blocked, error: reported } = isPlatformSource(source)
         ? await scrapePlatform(source)
         : await scrapeSource(source);
       allJobs.push(...jobs);
@@ -1250,7 +1250,9 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
         // that it legitimately has no jobs.
         failed: Boolean(blocked) || Boolean(stats[source.name]?.failed),
         blocked: Boolean(blocked) || Boolean(stats[source.name]?.blocked),
-        error: stats[source.name]?.error ?? null,
+        // A scraper may explain an empty or partial result itself (Indeed: why
+        // the search page had no cards); shown in the run overview.
+        error: reported ?? stats[source.name]?.error ?? null,
       };
     } catch (err) {
       log(isAborted()
