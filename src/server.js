@@ -1214,7 +1214,7 @@ const server = http.createServer(async (req, res) => {
         catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
         const f = body && body.filters;
         if (!f || typeof f !== 'object')
-          return sendJson(res, 400, { error: 'Erwarte { filters: { titleBlocklist, priorityKeywords, titleAllowlist } }' });
+          return sendJson(res, 400, { error: 'Erwarte { filters: { titleBlocklist, priorityKeywords, titleAllowlist, locationAllowlist } }' });
         // Only non-blank strings; anything else would become "null" or
         // "[object Object]" and turn into a keyword.
         const cleanList = (l) => l.filter(x => typeof x === 'string' && x.trim() !== '').slice(0, 5000);
@@ -1224,6 +1224,8 @@ const server = http.createServer(async (req, res) => {
           // Omitted = keep the stored one, so an older client can't wipe it.
           titleAllowlist:  Array.isArray(f.titleAllowlist)  ? cleanList(f.titleAllowlist)
             : getFilters(clientId).titleAllowlist,
+          locationAllowlist: Array.isArray(f.locationAllowlist) ? cleanList(f.locationAllowlist)
+            : getFilters(clientId).locationAllowlist,
         };
         updateClient(clientId, { filters_json: JSON.stringify(clean) });
         return sendJson(res, 200, { ok: true });

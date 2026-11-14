@@ -75,6 +75,8 @@ export function getFilters(clientOrId) {
     priorityKeywords: Array.isArray(f?.priorityKeywords) ? f.priorityKeywords : DEFAULT_PRIORITY_KEYWORDS,
     // Empty = no restriction (see createTitleFilter in scheduler.js).
     titleAllowlist:  Array.isArray(f?.titleAllowlist)  ? f.titleAllowlist  : [],
+    // Empty = no restriction (see createLocationFilter in scheduler.js).
+    locationAllowlist: Array.isArray(f?.locationAllowlist) ? f.locationAllowlist : [],
   };
 }
 
