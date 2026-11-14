@@ -468,7 +468,7 @@ test('save_setup_step keeps the stored answers of fields it was not given', asyn
   }, {
     id: 'telegram', title: 'Telegram', required: true, complete: false, pending: true,
     fields: [{ key: 'TELEGRAM_NOTIFICATIONS', type: 'toggle' }, { key: 'TELEGRAM_BOT_TOKEN', type: 'secret' }, { key: 'TELEGRAM_CHAT_ID', type: 'text' },
-      { key: 'EXPIRY_NOTIFICATIONS', type: 'toggle', default: 'on' }],
+      { key: 'EXPIRY_NOTIFICATIONS', type: 'toggle', store: 'env', default: 'on' }],
     values: { TELEGRAM_NOTIFICATIONS: 'on', TELEGRAM_BOT_TOKEN: '', TELEGRAM_CHAT_ID: '', EXPIRY_NOTIFICATIONS: '' },
     secretsSet: { TELEGRAM_BOT_TOKEN: true, TELEGRAM_CHAT_ID: true },
   }] };
@@ -476,6 +476,12 @@ test('save_setup_step keeps the stored answers of fields it was not given', asyn
   assert.equal((await call('save_setup_step', { stepId: 'profile', values: { 'cv.name': 'Neu' } })).isError, false);
   assert.deepEqual(api.calls.find(c => c.method === 'PUT').body.values,
     { 'cv.name': 'Neu', 'cv.summary': 'Bleibt', 'cv.skills.tools': ['Excel'] });
+  // An unanswered profile select stays unset (no default filled in).
+  const lang = { steps: [{ id: 'language', fields: [{ key: 'preferences.outputLanguage', type: 'select', store: 'profile', default: 'de' }, { key: 'uiLanguage', type: 'select', store: 'ui', default: 'de' }],
+    values: { 'preferences.outputLanguage': '', uiLanguage: '' } }] };
+  const l = setup({ 'GET /api/setup/status': lang, 'PUT /api/setup/step': { ok: true, status: lang } });
+  await l.call('save_setup_step', { stepId: 'language', values: { uiLanguage: 'en' } });
+  assert.deepEqual(l.api.calls.find(c => c.method === 'PUT').body.values, { 'preferences.outputLanguage': '', uiLanguage: 'en' });
   await call('save_setup_step', { stepId: 'telegram', values: { TELEGRAM_NOTIFICATIONS: 'off' } });
   assert.deepEqual(api.calls.filter(c => c.method === 'PUT')[1].body.values, { TELEGRAM_NOTIFICATIONS: 'off', EXPIRY_NOTIFICATIONS: 'on' },
     'redacted fields are left to the server; an unset toggle keeps its default instead of turning off');

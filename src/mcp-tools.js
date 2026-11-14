@@ -283,7 +283,9 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
         if (f.type === 'secret' || step.secretsSet?.[f.key] !== undefined || f.key in values) continue;
         if (!step.values || !(f.key in step.values)) continue;
         const v = step.values[f.key];
-        keep[f.key] = (isEmptyValue(v) && f.default != null && f.default !== '') ? f.default : v;
+        // Only for .env settings, where empty already means the default; an
+        // unanswered profile field (e.g. the AI output language) stays unset.
+        keep[f.key] = (f.store === 'env' && isEmptyValue(v) && f.default != null && f.default !== '') ? f.default : v;
       }
       const r = await api.put('/api/setup/step', { id: step.id, values: { ...keep, ...values }, skip: Boolean(args.skip) });
       const summary = summarizeSetupStatus(r.status || {});
