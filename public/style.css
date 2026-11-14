@@ -874,3 +874,7 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .model-pick-wrap { display: flex; gap: 8px; flex-wrap: wrap; }
 .model-pick-wrap .set-input { flex: 1 1 200px; min-width: 0; }
 .model-pick { flex: 0 1 260px; max-width: 100%; }
+
+/* Setup wizard: example companies offer (sources step) */
+.su-examples { border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.su-examples p { margin: 0 0 8px; }

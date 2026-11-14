@@ -121,7 +121,18 @@
       const boardNote = boards.length
         ? `<p class="su-board-note">${esc(t('wiz.boardsKept').replace('{list}', boards.map(b => b.name).join(', ')))}</p>`
         : '';
+      // Fresh install, no career page yet: offer the shipped examples (#30).
+      const step = pages[idx];
+      const offer = (step?.examples > 0 && !rows && !step.examplesDecided) ? `<div class="su-examples">
+          <p>${esc(t('wiz.examplesOffer').replace('{n}', step.examples))}</p>
+          <div class="su-test">
+            <button type="button" class="btn btn-primary su-examples-accept">${esc(t('wiz.examplesAccept'))}</button>
+            <button type="button" class="btn su-examples-decline">${esc(t('wiz.examplesDecline'))}</button>
+          </div>
+          <p class="muted">${esc(t('wiz.migrateHint'))}</p>
+        </div>` : '';
       control = `<div class="su-sources" ${da}>
+        ${offer}
         <div class="su-source-list">${rows}</div>
         <button type="button" class="btn su-add-source">${esc(t('wiz.addSource'))}</button>
         ${boardNote}
@@ -410,11 +421,28 @@
     if (!firstRun || debug || confirm(t('wiz.closeConfirm'))) close();
   });
 
-  el.body.addEventListener('click', (e) => {
+  el.body.addEventListener('click', async (e) => {
     if (e.target.closest('.su-reveal')) {
       const inp = e.target.closest('.secret-wrap').querySelector('input');
       inp.type = inp.type === 'password' ? 'text' : 'password';
       e.target.classList.toggle('on', inp.type === 'text');
+    }
+    if (e.target.closest('.su-examples-decline')) {
+      pages[idx].examplesDecided = true;
+      e.target.closest('.su-examples')?.remove();
+      return;
+    }
+    if (e.target.closest('.su-examples-accept')) {
+      const box = e.target.closest('.su-examples');
+      try {
+        const { sources } = await api('/api/setup/examples');
+        const list = el.body.querySelector('.su-source-list');
+        list.insertAdjacentHTML('beforeend', (sources || []).map(sourceRow).join(''));
+        pages[idx].examplesDecided = true;
+        box?.remove();
+        showMsg(t('wiz.examplesAdded').replace('{n}', (sources || []).length), 'ok');
+      } catch (err) { showMsg(t('wiz.error') + err.message, 'err'); }
+      return;
     }
     if (e.target.closest('.su-add-source')) {
       const list = e.target.closest('.su-sources').querySelector('.su-source-list');

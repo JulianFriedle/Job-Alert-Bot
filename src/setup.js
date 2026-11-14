@@ -39,6 +39,17 @@ const SANDBOX = {
   state:   path.join(SANDBOX_DIR, 'setup-state.json'),
 };
 
+// Example career pages shipped with the app (config/jobs.json next to the
+// code). A desktop install keeps its data elsewhere (APP_DATA_DIR), so on a
+// fresh install the sources step starts empty; the wizard then offers these,
+// to accept or decline (#30).
+const SHIPPED_JOBS = path.join(ROOT, 'config', 'jobs.json');
+export async function exampleSources() {
+  const shipped = await readJson(SHIPPED_JOBS);
+  const list = Array.isArray(shipped?.sources) ? shipped.sources : [];
+  return list.filter(s => s && typeof s.name === 'string' && typeof s.url === 'string' && !PLATFORM_TYPES.includes(s.type));
+}
+
 // Bump when steps that should re-prompt existing users are added.
 const SETUP_VERSION = 1;
 
@@ -548,6 +559,13 @@ async function buildStatus(debug) {
     });
   }
 
+  // Sources step without any career page yet: offer the shipped examples.
+  const sourcesStep = steps.find(s => s.id === 'sources');
+  if (sourcesStep) {
+    const career = (sourcesStep.values.sources || []).filter(s => !PLATFORM_TYPES.includes(s.type));
+    if (career.length === 0) sourcesStep.examples = (await exampleSources()).length;
+  }
+
   const needed = debug
     || steps.some(s => s.required && s.pending)
     || (firstRun && steps.some(s => s.pending));
@@ -732,6 +750,12 @@ export async function handleSetupApi(req, res, url, { sendJson, readBody }) {
   if (!pathname.startsWith('/api/setup')) return false;
   const debug = url.searchParams.get('debug') === '1';
   const method = req.method;
+
+  // The shipped example career pages, for the sources step's offer.
+  if (method === 'GET' && pathname === '/api/setup/examples') {
+    sendJson(res, 200, { sources: await exampleSources() });
+    return true;
+  }
 
   if (method === 'GET' && pathname === '/api/setup/status') {
     sendJson(res, 200, await buildStatus(debug));
