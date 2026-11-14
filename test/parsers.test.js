@@ -75,3 +75,28 @@ test('indeed: broken mosaic shapes yield an empty list', () => {
   assert.deepEqual(extractJobcards({}), []);
   assert.deepEqual(extractJobcards({ providerData: { 'mosaic-provider-jobcards': {} } }), []);
 });
+
+// ── Indeed: why a search came back empty (#37) ──────────────────────────────
+import { explainEmptyResult } from '../src/scrapers/indeed.js';
+
+test('indeed: an empty search page says why, and only a real "no results" counts as genuine', () => {
+  const cases = [
+    [{ status: 403 }, /HTTP 403/, false],
+    [{ status: 200, url: 'https://secure.indeed.com/account/login?hl=de' }, /Login/, false],
+    [{ status: 200, noResults: true }, /keine Treffer/, true],
+    [{ status: 200, consent: true, domCards: 0 }, /Consent/, false],
+    [{ status: 200, hasMosaic: true }, /nicht lesbar/, false],
+    [{ status: 200 }, /Keine Jobkarten/, false],
+    [{ challenge: true }, /Bot-Schutz/, false],
+  ];
+  for (const [facts, reason, genuine] of cases) {
+    const d = explainEmptyResult(facts);
+    assert.match(d.reason, reason, JSON.stringify(facts));
+    assert.equal(d.genuine, genuine, JSON.stringify(facts));
+  }
+  // The facts line names what was seen, for the log.
+  assert.match(explainEmptyResult({ status: 200, title: 'Jobs | Indeed', domCards: 0 }).facts,
+    /HTTP 200, Titel „Jobs \| Indeed“, mosaic-JSON fehlt, Karten im DOM: 0/);
+  // An error status beats a "no results" text on the same page.
+  assert.equal(explainEmptyResult({ status: 429, noResults: true }).genuine, false);
+});

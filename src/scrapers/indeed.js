@@ -64,6 +64,43 @@ export function extractJobcards(mosaic) {
     }));
 }
 
+// Why a search page yielded no job cards — so a run says "HTTP 403" or
+// "Consent-Seite" instead of a silent "0 Stellen" (#37). Pure, unit-tested.
+// `genuine` = Indeed itself says the search has no results; anything else
+// means this source's result is incomplete.
+export function explainEmptyResult({ status = null, title = '', url = '', hasMosaic = false, domCards = 0,
+  consent = false, noResults = false, challenge = false } = {}) {
+  const facts = [
+    status != null ? `HTTP ${status}` : 'HTTP ?',
+    `Titel „${String(title).slice(0, 80)}“`,
+    `mosaic-JSON ${hasMosaic ? 'vorhanden' : 'fehlt'}`,
+    `Karten im DOM: ${domCards}`,
+  ].join(', ');
+  let reason;
+  let genuine = false;
+  if (challenge) reason = 'Bot-Schutz (Challenge-Seite)';
+  else if (status != null && status >= 400) reason = `Indeed antwortet mit HTTP ${status}`;
+  else if (/\/(account\/login|auth)|secure\.indeed\./i.test(String(url))) reason = 'Weiterleitung auf die Login-Seite';
+  else if (noResults) { reason = 'Indeed meldet keine Treffer für diese Suche'; genuine = true; }
+  else if (consent && domCards === 0) reason = 'Consent-Banner verdeckt die Ergebnisse';
+  else if (hasMosaic || domCards > 0) reason = 'Jobkarten vorhanden, aber nicht lesbar (Seitenaufbau geändert?)';
+  else reason = 'Keine Jobkarten und keine Trefferdaten (Seitenaufbau geändert oder Bot-Schutz?)';
+  return { reason, genuine, facts };
+}
+
+// Runs in the browser: the facts explainEmptyResult needs.
+function collectEmptyPageFacts() {
+  const text = (document.body?.innerText || '').slice(0, 8000);
+  return {
+    title: document.title || '',
+    hasMosaic: typeof window.mosaic === 'object' && window.mosaic !== null,
+    domCards: document.querySelectorAll('a.jcs-JobTitle, a[data-jk], [data-testid="slider_item"]').length,
+    consent: Boolean(document.querySelector(
+      '#onetrust-banner-sdk, #onetrust-consent-sdk, [id*="consent" i], [class*="consent" i], [data-testid*="consent" i]')),
+    noResults: /did not match any jobs|no jobs found|keine (passenden )?(jobs|stellen|ergebnisse|stellenangebote)|ergab keine treffer/i.test(text),
+  };
+}
+
 // DOM fallback when the mosaic JSON shape changes.
 function parseCardsInDom() {
   const out = [];
@@ -95,6 +132,7 @@ export async function scrape(source) {
   let duplicates = 0;
   let siteTotal = null;
   let blocked = false; // challenge/error → result is incomplete, not "0 jobs exist"
+  let error = null;    // why page 1 came back empty, for the run overview
 
   const browser = await launchPlatformBrowser({ headless: true });
   try {
@@ -107,12 +145,12 @@ export async function scrape(source) {
       if (pageNo > 0) await humanDelay(2500, 6000);
       log(`${source.name}: Seite ${pageNo + 1} — ${url}`);
       try {
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
 
         if (await isChallengePage(page)) {
           log(`  BLOCKED — Cloudflare-Challenge erkannt. Lauf wird übersprungen (kein CAPTCHA-Lösen).`);
-          blocked = true;
+          blocked = true; // classified as "Blockiert" in the overview — no extra error text
           break;
         }
 
@@ -121,7 +159,19 @@ export async function scrape(source) {
           return typeof window.mosaic === 'object' ? window.mosaic : null;
         }).then(m => extractJobcards(m)).catch(() => []);
         if (cards.length === 0) cards = await page.evaluate(parseCardsInDom).catch(() => []);
-        if (cards.length === 0) { log(`  Seite ${pageNo + 1}: keine Jobcards — Ende.`); break; }
+        if (cards.length === 0) {
+          if (pageNo === 0) {
+            // The first page empty is the case worth explaining; later pages
+            // running out is just the end of the list.
+            const facts = await page.evaluate(collectEmptyPageFacts).catch(() => ({}));
+            const d = explainEmptyResult({ ...facts, status: response?.status() ?? null, url: page.url() });
+            log(`  Seite 1: keine Jobcards — ${d.reason} (${d.facts})`);
+            if (!d.genuine) { blocked = true; error = d.reason; }
+          } else {
+            log(`  Seite ${pageNo + 1}: keine Jobcards — Ende.`);
+          }
+          break;
+        }
 
         if (pageNo === 0) {
           siteTotal = await page.evaluate(() => {
@@ -173,5 +223,5 @@ export async function scrape(source) {
   }
 
   log(`Fertig ${source.name}: ${jobs.length} Job(s)${siteTotal ? ` (Website: ${siteTotal})` : ''}${blocked ? ' [UNVOLLSTÄNDIG]' : ''}`);
-  return { jobs, duplicates, siteTotal, blocked };
+  return { jobs, duplicates, siteTotal, blocked, error };
 }
