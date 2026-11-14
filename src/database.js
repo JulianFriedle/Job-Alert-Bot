@@ -621,6 +621,16 @@ export function markNotified(clientId, id) {
   db.prepare('UPDATE jobs SET notified = 1 WHERE client_id = ? AND id = ?').run(clientId, id);
 }
 
+// The most recently scraped jobs of a client (manual entries excluded) — what
+// the filter editor's "Testen" runs a filter draft against.
+export function getRecentJobsForFilterPreview(clientId, limit = 1000) {
+  return db.prepare(`
+    SELECT title, location, platform, source FROM jobs
+    WHERE client_id = ? AND source IS NOT 'Manuell'
+    ORDER BY scraped_at DESC LIMIT ?
+  `).all(clientId, limit);
+}
+
 export function getUnanalyzedJobs(clientId) {
   return db.prepare('SELECT * FROM jobs WHERE client_id = ? AND relevant IS NULL').all(clientId);
 }

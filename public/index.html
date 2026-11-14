@@ -161,6 +161,32 @@
       <div class="settings-groups" id="profile-groups"></div>
       <p class="save-hint" id="profile-msg"></p>
 
+      <!-- Vorfilter: title/location pre-filters, editable without the wizard (#33) -->
+      <div class="card" id="filters-card">
+        <div class="card-head"><h2 data-i18n="filters.title">Vorfilter</h2></div>
+        <p class="muted" data-i18n="filters.intro">Sortieren Stellen aus, bevor die KI sie bewertet – das spart Kosten. Ein Begriff pro Zeile, Groß-/Kleinschreibung egal.</p>
+        <div class="filters-grid">
+          <label class="setting"><span class="set-label" data-i18n="filters.allow">Nur diese Titel (Positivliste)</span>
+            <span class="muted set-help" data-i18n="filters.allowHelp">Wenn ausgefüllt, gehen nur Stellen an die KI, deren Titel einen dieser Begriffe enthält. Leer = keine Einschränkung.</span>
+            <textarea class="set-input" id="flt-titleAllowlist" rows="6" spellcheck="false"></textarea></label>
+          <label class="setting"><span class="set-label" data-i18n="filters.block">Blockliste (Titel überspringen)</span>
+            <span class="muted set-help" data-i18n="filters.blockHelp">Titel mit einem dieser Begriffe werden nie bewertet. Gewinnt gegen die Positivliste.</span>
+            <textarea class="set-input" id="flt-titleBlocklist" rows="6" spellcheck="false"></textarea></label>
+          <label class="setting"><span class="set-label" data-i18n="filters.prio">Prioritäts-Stichwörter</span>
+            <span class="muted set-help" data-i18n="filters.prioHelp">Titel damit bekommen mindestens Score 7 und zählen als erlaubt.</span>
+            <textarea class="set-input" id="flt-priorityKeywords" rows="6" spellcheck="false"></textarea></label>
+          <label class="setting"><span class="set-label" data-i18n="filters.loc">Nur diese Orte (Karriereseiten)</span>
+            <span class="muted set-help" data-i18n="filters.locHelp">Städte, Regionen oder ein Land wie „Deutschland“. Stellen ohne Ort, Remote-Stellen und Jobportal-Suchen werden nie aussortiert.</span>
+            <textarea class="set-input" id="flt-locationAllowlist" rows="6" spellcheck="false"></textarea></label>
+        </div>
+        <div class="docs-row">
+          <button class="btn btn-primary" id="filters-save" data-i18n="btn.save">Speichern</button>
+          <button class="btn" id="filters-test" data-i18n="filters.test">Testen</button>
+        </div>
+        <p class="save-hint" id="filters-msg"></p>
+        <div class="filters-preview" id="filters-preview"></div>
+      </div>
+
       <!-- Bewerbungsunterlagen: fact base, base templates and images for tailored CVs -->
       <div class="card" id="docs-setup-card">
         <div class="card-head"><h2 data-i18n="docsSetup.title">Bewerbungsunterlagen</h2></div>

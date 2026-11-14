@@ -26,13 +26,13 @@ const api = async (url, opts) => {
 // the wizard, another client). Unsaved edits are tracked so a tab can quietly
 // refresh itself when reopened or when the window regains focus — but never
 // throw away what the user is typing.
-const cfgVersion = { sources: null, profile: null, prompts: null };
-const cfgDirty = { sources: false, profile: false, prompts: false };
+const cfgVersion = { sources: null, profile: null, prompts: null, filters: null };
+const cfgDirty = { sources: false, profile: false, prompts: false, filters: false };
 // Per-tab load sequence: only the newest request for the current client may
 // render. Starting a load, saving and switching clients all move it on, so a
 // slower, older response (another client's, or from before a save) is dropped.
-const cfgSeq = { sources: 0, profile: 0, prompts: 0 };
-const cfgInFlight = { sources: 0, profile: 0, prompts: 0 };
+const cfgSeq = { sources: 0, profile: 0, prompts: 0, filters: 0 };
+const cfgInFlight = { sources: 0, profile: 0, prompts: 0, filters: 0 };
 // Start a load for `name`. A background (quiet) load is skipped while another
 // one is running; a normal load always goes ahead and wins.
 function beginCfgLoad(name, quiet) {
@@ -41,7 +41,7 @@ function beginCfgLoad(name, quiet) {
   return { seq: ++cfgSeq[name], client: currentClientId };
 }
 const cfgLoadCurrent = (name, ticket) => ticket.seq === cfgSeq[name] && ticket.client === currentClientId;
-const CFG_FORMS = { sources: '#source-list', profile: '#profile-groups', prompts: '#prompts-groups' };
+const CFG_FORMS = { sources: '#source-list', profile: '#profile-groups', prompts: '#prompts-groups', filters: '#filters-card .filters-grid' };
 for (const [name, sel] of Object.entries(CFG_FORMS)) {
   const el = document.querySelector(sel);
   ['input', 'change'].forEach(ev => el?.addEventListener(ev, () => { cfgDirty[name] = true; }));
@@ -91,7 +91,10 @@ $('#tabs').addEventListener('click', (e) => {
   if (name === 'settings') loadBackups();
   if (name === 'profile') {
     if (!profileLoaded) loadProfile();
-    else if (!cfgDirty.profile) loadProfile({ quiet: true, formOnly: true });
+    else {
+      if (!cfgDirty.profile) loadProfile({ quiet: true, formOnly: true });
+      if (!cfgDirty.filters) loadFilters({ quiet: true });
+    }
   }
   if (name === 'prompts') {
     if (!promptsLoaded) loadPrompts();
@@ -1735,6 +1738,7 @@ async function loadProfile({ quiet = false, formOnly = false } = {}) {
   if (!formOnly && cfgLoadCurrent('profile', ticket)) {
     loadCredentials();   // Plattform-Zugänge card lives on the same tab
     loadDocsSetup();     // Bewerbungsunterlagen card too
+    loadFilters();       // and the Vorfilter card
   }
   return ok;
 }
@@ -2431,8 +2435,84 @@ function refreshActiveConfigTab() {
   if (document.hidden) return;
   const active = $('.tab.active')?.dataset.tab;
   if (active === 'sources' && sourcesLoaded && !cfgDirty.sources) loadSources({ quiet: true });
-  else if (active === 'profile' && profileLoaded && !cfgDirty.profile) loadProfile({ quiet: true, formOnly: true });
+  else if (active === 'profile' && profileLoaded) {
+    if (!cfgDirty.profile) loadProfile({ quiet: true, formOnly: true });
+    if (!cfgDirty.filters) loadFilters({ quiet: true });
+  }
   else if (active === 'prompts' && promptsLoaded && !cfgDirty.prompts) loadPrompts({ quiet: true });
 }
 window.addEventListener('focus', refreshActiveConfigTab);
 document.addEventListener('visibilitychange', refreshActiveConfigTab);
+
+// ── VORFILTER (Profil tab, #33) ──────────────────────────────────────────────
+// The same lists as the wizard's Titel-Filter step, editable any time, with a
+// "Testen" preview against the client's recent jobs (nothing saved, no AI).
+const FILTER_KEYS = ['titleAllowlist', 'titleBlocklist', 'priorityKeywords', 'locationAllowlist'];
+const filterLines = (v) => String(v || '').split('\n').map(x => x.trim()).filter(Boolean);
+const filterDraft = () => Object.fromEntries(FILTER_KEYS.map(k => [k, filterLines($(`#flt-${k}`)?.value)]));
+
+function showFiltersMsg(msg, kind) {
+  const el = $('#filters-msg');
+  if (!el) return;
+  el.textContent = msg; el.className = 'save-hint ' + kind;
+  if (kind === 'ok') setTimeout(() => { el.textContent = ''; }, 4000);
+}
+
+async function loadFilters({ quiet = false } = {}) {
+  const ticket = beginCfgLoad('filters', quiet);
+  if (!ticket) return false;
+  try {
+    const { filters, version } = await api('/api/filters');
+    if (!cfgLoadCurrent('filters', ticket) || (quiet && cfgDirty.filters)) return false;
+    for (const k of FILTER_KEYS) {
+      const ta = $(`#flt-${k}`);
+      if (ta) ta.value = (filters?.[k] || []).join('\n');
+    }
+    cfgVersion.filters = version ?? null;
+    cfgDirty.filters = false;
+    return true;
+  } catch (err) {
+    if (!quiet) toast(t('toast.error') + err.message);
+    return false;
+  } finally { cfgInFlight.filters--; }
+}
+
+$('#filters-save')?.addEventListener('click', async () => {
+  try {
+    cfgSeq.filters++;
+    const r = await api('/api/filters', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filters: filterDraft(), baseVersion: cfgVersion.filters }),
+    });
+    cfgVersion.filters = r.version ?? null;
+    cfgDirty.filters = false;
+    showFiltersMsg(t('filters.saved'), 'ok');
+    toast(t('filters.saved'));
+  } catch (err) {
+    if (await handleSaveConflict('filters', err, loadFilters, showFiltersMsg)) return;
+    showFiltersMsg(t('toast.error') + err.message, 'err');
+  }
+});
+
+$('#filters-test')?.addEventListener('click', async () => {
+  const out = $('#filters-preview');
+  try {
+    const p = await api('/api/filters/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filters: filterDraft() }),
+    });
+    if (!p.total) { out.innerHTML = `<p class="muted">${esc(t('filters.previewEmpty'))}</p>`; return; }
+    const d = p.dropped || {};
+    const summary = t('filters.previewSummary')
+      .replace('{total}', p.total).replace('{kept}', p.kept)
+      .replace('{dropped}', p.total - p.kept)
+      .replace('{blocked}', d.blocked || 0).replace('{notAllowed}', d['not-allowed'] || 0)
+      .replace('{location}', d['wrong-location'] || 0);
+    const list = (key, label) => (p.samples?.[key] || []).length
+      ? `<h4>${esc(t(label))}</h4><ul>${p.samples[key].map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '';
+    out.innerHTML = `<p>${esc(summary)}</p>`
+      + list('kept', 'filters.previewKept') + list('blocked', 'filters.previewBlocked')
+      + list('not-allowed', 'filters.previewNotAllowed') + list('wrong-location', 'filters.previewLocation')
+      + `<p class="muted">${esc(t('filters.previewNote'))}</p>`;
+  } catch (err) { showFiltersMsg(t('toast.error') + err.message, 'err'); }
+});

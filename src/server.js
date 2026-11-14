@@ -19,9 +19,10 @@ import {
   createBackup, listBackups, resolveBackupPath, ingestUpload,
   maybeRunDailyBackup, isDailyEnabled, retentionDays, BACKUP_DIR,
 } from './backup.js';
-import { restoreFromBackup } from './database.js';
+import { restoreFromBackup, getRecentJobsForFilterPreview } from './database.js';
 import { generateCoverLetter } from './cover-letter.js';
 import { versionOf, isStale, CONFLICT_ERROR } from './config-version.js';
+import { previewFilters } from './filters.js';
 import { DEFAULT_ANALYZER_MODEL, DEFAULT_WRITER_MODEL } from './models.js';
 import { buildJobsCsv, filterJobs, csvFileName } from './csv-export.js';
 import { sendTelegramTest } from './notifier.js';
@@ -1245,6 +1246,22 @@ const server = http.createServer(async (req, res) => {
         };
         updateClient(clientId, { filters_json: JSON.stringify(clean) });
         return sendJson(res, 200, { ok: true, version: versionOf(getFilters(clientId)) });
+      }
+
+      // POST /api/filters/preview — what a filter draft would drop from this
+      // client's most recent jobs (nothing is saved, no API call).
+      if (method === 'POST' && pathname === '/api/filters/preview') {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); }
+        catch (e) { return sendJson(res, 400, { error: `kein gültiges JSON: ${e.message}` }); }
+        const f = body && body.filters;
+        if (!f || typeof f !== 'object') return sendJson(res, 400, { error: 'Erwarte { filters: { … } }' });
+        const list = (l) => (Array.isArray(l) ? l.filter(x => typeof x === 'string' && x.trim() !== '').slice(0, 5000) : []);
+        const draft = {
+          titleBlocklist: list(f.titleBlocklist), priorityKeywords: list(f.priorityKeywords),
+          titleAllowlist: list(f.titleAllowlist), locationAllowlist: list(f.locationAllowlist),
+        };
+        return sendJson(res, 200, previewFilters(draft, getRecentJobsForFilterPreview(clientId, 1000)));
       }
 
       // GET /api/prompts — editable prompt fields + this client's current/default values

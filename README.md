@@ -337,7 +337,9 @@ back into the analysis queue — only postings still seen on their source within
 `EXPIRY_THRESHOLD_HOURS`, and at most 100 per run, since each one costs a detail-page fetch and a
 Claude call (and may trigger a notification). Clearing the allowlist completely does *not* do
 that — it could release thousands of jobs at once; new jobs are then analyzed again as usual.
-Edit this file (or the wizard's *Titel-Filter* step) to tune what gets filtered. If the file is
+Edit them in **Profil → Vorfilter** (with a **Testen** button that shows what a draft would drop
+from your most recent jobs, without saving anything or calling the AI), in the wizard's
+*Titel-Filter* step, or in this file, to tune what gets filtered. If the file is
 missing, built-in defaults are used.
 
 A third check needs no configuration file: a job whose description is shorter than
