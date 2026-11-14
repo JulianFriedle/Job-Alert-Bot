@@ -690,6 +690,23 @@ export function recordDescriptionAttempt(clientId, id, description) {
   `).run(description ?? '', clientId, id);
 }
 
+// Jobs stored as not relevant with a given marker summary (live ones only).
+export function getJobsWithSummary(clientId, summary) {
+  return db.prepare(
+    'SELECT * FROM jobs WHERE client_id = ? AND relevant = 0 AND summary = ? AND (expired = 0 OR expired IS NULL)'
+  ).all(clientId, summary);
+}
+
+// Put jobs back into the analysis queue (relevant = NULL), e.g. once a loosened
+// title allowlist lets them through again.
+export function reopenForAnalysis(clientId, ids) {
+  const stmt = db.prepare(`
+    UPDATE jobs SET relevant = NULL, analyzed_at = NULL, score = NULL, summary = NULL
+    WHERE client_id = ? AND id = ?
+  `);
+  db.transaction(() => { for (const id of ids) stmt.run(clientId, id); })();
+}
+
 export function updateJobDescription(clientId, id, description) {
   db.prepare(`
     UPDATE jobs

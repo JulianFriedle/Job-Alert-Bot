@@ -9,6 +9,7 @@ import {
   getRelevantUnnotifiedJobs, getRelevantCountBySource, updateLastSeenBatch,
   getJobsToExpire, markExpired, saveRunSnapshot, getEnabledClients, getClient,
   checkpointWal, getJobById, createApplication, recordDescriptionAttempt,
+  getJobsWithSummary, reopenForAnalysis,
 } from './database.js';
 import { analyzeJob } from './analyzer.js';
 import { notifyBatch, notifyExpired, isTelegramEnabled } from './notifier.js';
@@ -186,21 +187,27 @@ export async function settleThinDescriptions(clientId, jobs, freshIds,
 // which breaks the plain substring match the filters use — the first would miss a
 // keyword like "entwickler für embedded" entirely. Drop the marker before matching
 // so a keyword list stays a list of role names, not a list of spelling variants.
+const foldTitle = (s) => String(s || '')
+  .toLowerCase()
+  .replace(/\(\s*[mwdfx*:/\s-]+\)/g, ' ')  // (m/w/d), (w/m/d), (m/w/x), (d/w/m) …
+  .replace(/[*:]in\b/g, 'in')              // Referent*in / Referent:in → Referentin
+  .replace(/\s+/g, ' ');
+
 export function normalizeTitle(title) {
-  return (title || '')
-    .toLowerCase()
-    .replace(/\(\s*[mwdfx*:/\s-]+\)/g, ' ')  // (m/w/d), (w/m/d), (m/w/x), (d/w/m) …
-    .replace(/[*:]in\b/g, 'in')              // Referent*in / Referent:in → Referentin
-    .replace(/\s+/g, ' ')
-    .trim();
+  return foldTitle(title).trim();
 }
 
-// Keywords are matched against the normalized (lowercased) title, so they are
-// lowercased too — a "Praktikum" typed into the wizard used to match nothing.
-// Not trimmed: a padded keyword like " sap " deliberately matches a whole word.
+// Keywords go through the same folding as the title — lowercase, gender forms,
+// whitespace — or "Praktikum" or "referent:in" could never match. Not trimmed:
+// a padded keyword like " sap " (config/filters.json) matches a whole word.
 const keywordList = (list) => (Array.isArray(list) ? list : [])
-  .map(k => String(k ?? '').toLowerCase())
+  .map(foldTitle)
   .filter(k => k.trim() !== '');
+
+// Summary of a job dropped only because it matched no allowlist term. Unlike a
+// blocklist drop this is undone: once the allowlist lets the title through
+// (typo fixed, term added), the job goes back to the analysis queue.
+export const NOT_ALLOWED_SUMMARY = 'Titel nicht in der Positivliste – nicht bewertet';
 
 // The title pre-filters of one client. `reject(title)` says why a job never
 // reaches Claude: 'blocked' (blocklist hit) or 'not-allowed' (an allowlist is
@@ -264,25 +271,45 @@ async function runClientPipeline(client) {
 
   // 3. Title filters — skip structurally irrelevant jobs before touching Claude
   const isTitleBlocked = (title) => titleFilter.reject(title) !== null;
+  // Blocklist drops are final; allowlist drops carry NOT_ALLOWED_SUMMARY so a
+  // loosened allowlist can bring them back (see below).
+  const markFiltered = (job) => {
+    const notAllowed = titleFilter.reject(job.title) === 'not-allowed';
+    markAnalyzed(clientId, job.id, false, null, notAllowed ? NOT_ALLOWED_SUMMARY : null);
+  };
 
   const blockedJobs = newJobs.filter(job => isTitleBlocked(job.title));
   const jobsToProcess = newJobs.filter(job => !isTitleBlocked(job.title));
+  const listed = blockedJobs.filter(job => titleFilter.reject(job.title) === 'blocked');
 
-  if (blockedJobs.length > 0) {
+  if (listed.length > 0) {
     // Blocklist hits are listed one by one; an allowlist typically drops most
     // titles, so those only show up in the count below.
-    const listed = blockedJobs.filter(job => titleFilter.reject(job.title) === 'blocked');
-    log(`Title-filtered ${blockedJobs.length} job(s) (saving as irrelevant to skip on future runs):`);
+    log(`Title-filtered ${listed.length} job(s) by the blocklist (saving as irrelevant to skip on future runs):`);
     for (const job of listed) log(`  ✗ ${job.title}`);
-    if (titleFilter.hasAllowlist) {
-      log(`Title-allowlist: ${newJobs.length - blockedJobs.length} kept, ${blockedJobs.length - listed.length} skipped`);
-    }
-    for (const job of blockedJobs) {
-      try {
-        saveJob(clientId, job);
-        markAnalyzed(clientId, job.id, false);
-      } catch (err) { log(`ERROR saving blocked job "${job.title}": ${err.message}`); }
-    }
+  }
+  if (titleFilter.hasAllowlist) {
+    log(`Positivliste: ${newJobs.length - blockedJobs.length} neue Stelle(n) behalten, ${blockedJobs.length - listed.length} aussortiert`);
+  }
+  for (const job of blockedJobs) {
+    try {
+      saveJob(clientId, job);
+      markFiltered(job);
+    } catch (err) { log(`ERROR saving blocked job "${job.title}": ${err.message}`); }
+  }
+
+  // Jobs an earlier allowlist dropped, which the current one lets through
+  // (a typo fixed, a term added): back into the analysis queue. Only while an
+  // allowlist is set — clearing it would release every job it ever dropped,
+  // possibly thousands of Claude calls in one run.
+  const reopen = titleFilter.hasAllowlist
+    ? getJobsWithSummary(clientId, NOT_ALLOWED_SUMMARY).filter(job => !isTitleBlocked(job.title))
+    : [];
+  if (reopen.length > 0) {
+    try {
+      reopenForAnalysis(clientId, reopen.map(job => job.id));
+      log(`Positivliste geändert: ${reopen.length} früher aussortierte Stelle(n) werden jetzt bewertet`);
+    } catch (err) { log(`ERROR reopening allowlist-filtered jobs: ${err.message}`); }
   }
 
   const newJobIds = new Set(jobsToProcess.map(j => j.id));
@@ -347,9 +374,12 @@ async function runClientPipeline(client) {
   // Apply the title filters retroactively to jobs saved before they were updated
   const retroBlocked = allUnanalyzed.filter(job => isTitleBlocked(job.title));
   if (retroBlocked.length > 0) {
-    log(`Retroactively blocking ${retroBlocked.length} already-saved job(s) matching title filter`);
+    const retroNotAllowed = retroBlocked.filter(job => titleFilter.reject(job.title) === 'not-allowed').length;
+    log(`Retroactively filtering ${retroBlocked.length} already-saved job(s) matching title filter` +
+        (retroNotAllowed > 0 ? ` (${retroNotAllowed} davon nur nicht in der Positivliste)` : ''));
     for (const job of retroBlocked) {
-      markAnalyzed(clientId, job.id, false);
+      try { markFiltered(job); }
+      catch (err) { log(`ERROR marking "${job.title}": ${err.message}`); }
     }
   }
   const thin = await settleThinDescriptions(clientId, allUnanalyzed.filter(job => !isTitleBlocked(job.title)), savedIds);

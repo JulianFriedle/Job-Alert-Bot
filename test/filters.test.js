@@ -13,7 +13,8 @@ process.env.JOBS_DB_PATH = path.join(mkdtempSync(path.join(tmpdir(), 'jobbot-fil
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const { normalizeTitle, createTitleFilter } = await import('../src/scheduler.js');
+const { normalizeTitle, createTitleFilter, NOT_ALLOWED_SUMMARY } = await import('../src/scheduler.js');
+const db = await import('../src/database.js');
 
 test('normalizeTitle strips a gender marker wherever it sits', () => {
   assert.equal(normalizeTitle('Entwickler (m/w/d) für Embedded Systeme'), 'entwickler für embedded systeme');
@@ -94,4 +95,29 @@ test('blank entries and missing lists are ignored', () => {
   assert.equal(f.hasAllowlist, false);
   assert.equal(f.reject('Irgendein Job'), null);
   assert.equal(createTitleFilter().reject('Irgendein Job'), null);
+});
+
+test('keywords are folded like the title (gender forms, spacing)', () => {
+  const f = createTitleFilter({ titleBlocklist: ['Referent:in', 'office  manager', 'Ingenieur*in'], titleAllowlist: [] });
+  assert.equal(f.reject('Referent:in Marketing'), 'blocked');
+  assert.equal(f.reject('Referent*in Marketing'), 'blocked');
+  assert.equal(f.reject('Office Manager (m/w/d)'), 'blocked');
+  assert.equal(f.reject('Ingenieurin Fertigung'), 'blocked');
+});
+
+test('allowlist-dropped jobs can be found and put back into the queue, per client', () => {
+  for (const c of ['default', 'other']) {
+    db.saveJob(c, { id: 'allow-1', title: 'Konstrukteur', company: 'A', url: 'https://a.example/1', location: '', description: '', source: 'A' });
+    db.markAnalyzed(c, 'allow-1', false, null, NOT_ALLOWED_SUMMARY);
+  }
+  db.saveJob('default', { id: 'block-1', title: 'Praktikum', company: 'A', url: 'https://a.example/2', location: '', description: '', source: 'A' });
+  db.markAnalyzed('default', 'block-1', false);
+
+  const found = db.getJobsWithSummary('default', NOT_ALLOWED_SUMMARY).map(j => j.id);
+  assert.deepEqual(found, ['allow-1'], 'blocklist drops are not reopened');
+
+  db.reopenForAnalysis('default', found);
+  assert.equal(db.getJobById('default', 'allow-1').relevant, null);
+  assert.equal(db.getJobById('default', 'allow-1').summary, null);
+  assert.equal(db.getJobById('other', 'allow-1').relevant, 0, 'other client untouched');
 });

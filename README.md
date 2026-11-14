@@ -309,13 +309,18 @@ Behavior is controlled by environment variables (all optional — defaults shown
 
 Cheap title-based filters applied **before** any Claude call:
 
-- **`titleAllowlist`** — if not empty, **only** jobs whose title contains at least one of these substrings go to Claude; all others are dropped as irrelevant (log: `Title-allowlist: X kept, Y skipped`). Made for a narrow target role on broad career pages — a handful of terms like `assistenz`, `office manager` instead of hundreds of blocklist entries. A title that matches a `priorityKeywords` entry counts as allowed. Empty (the default) = no restriction.
+- **`titleAllowlist`** — if not empty, **only** jobs whose title contains at least one of these substrings go to Claude; all others are dropped as irrelevant (log: `Positivliste: X neue Stelle(n) behalten, Y aussortiert`). Made for a narrow target role on broad career pages — a handful of terms like `assistenz`, `office manager` instead of hundreds of blocklist entries. A title that matches a `priorityKeywords` entry counts as allowed. Empty (the default) = no restriction.
 - **`titleBlocklist`** — jobs whose title contains any of these substrings are dropped as irrelevant. Wins over the allowlist.
 - **`priorityKeywords`** — jobs whose title contains any of these get their score boosted to ≥ 7.
 
-All three match case-insensitively against the title with gender markers like *(m/w/d)* removed.
-Like the blocklist, the allowlist also applies **retroactively** to jobs that are saved but not
-yet analyzed — they are stored as not relevant and stay so even if you later loosen the filter.
+All three match case-insensitively as substrings, after gender forms are folded on both sides
+(*(m/w/d)* removed, *Referent:in* → *referentin*) — so prefer distinctive terms: a short one like
+`it` also matches inside *Qualität*. Both lists also apply **retroactively** to jobs that are
+saved but not yet analyzed. A **blocklist** drop is final. An **allowlist** drop is stored with the
+summary *„Titel nicht in der Positivliste – nicht bewertet“* and is undone automatically: once a
+changed allowlist lets the title through (a typo fixed, a term added), the next run puts the job
+back into the analysis queue. Clearing the allowlist completely does *not* do that — it could
+release thousands of jobs at once; new jobs are then analyzed again as usual.
 Edit this file (or the wizard's *Titel-Filter* step) to tune what gets filtered. If the file is
 missing, built-in defaults are used.
 
