@@ -32,9 +32,16 @@ export const PROTECTED_SETTINGS_KEYS = [
 ];
 
 // Settings that make every later run cost more (pricier model, an extra paid
-// pass per document, more runs). Writable only with the red button, like the
-// action routes — the unattended scheduler would otherwise spend on them.
-export const COST_SETTINGS_KEYS = ['ANALYZER_MODEL', 'COVER_LETTER_MODEL', 'DOCS_HUMANIZE', 'CRON_SCHEDULE'];
+// pass per document, more runs, more jobs sent to Claude) or send more Telegram
+// messages. Writable only with the red button, like the action routes — the
+// unattended scheduler would otherwise spend or message on them.
+export const COST_SETTINGS_KEYS = [
+  'ANALYZER_MODEL', 'COVER_LETTER_MODEL', 'DOCS_HUMANIZE', 'CRON_SCHEDULE',
+  // 0 = thin descriptions (cookie banners, error pages) go to Claude too.
+  'MIN_DESCRIPTION_CHARS',
+  // Telegram on/off and how many jobs count as relevant (= get a message).
+  'TELEGRAM_NOTIFICATIONS', 'EXPIRY_NOTIFICATIONS', 'MIN_RELEVANCE_SCORE',
+];
 
 export const UNLOCK_HINT = 'Einstellungen → MCP-Server → roter Button „Kostenpflichtige KI-Aktionen freischalten“';
 
@@ -150,15 +157,22 @@ export function secretFieldsInStepBody(body, steps, schemaByKey = {}) {
 // Cost-relevant wizard fields whose value would change while the actions are
 // locked. A step is saved as a whole, so an unchanged value (`current(key)`)
 // must not block the other answers of that step. Empty means "unset", i.e.
-// the default (`defaultOf(key)`), on both sides.
+// the default (`defaultOf(key)`), on both sides. A field missing from the body
+// (or null) is a change too: the wizard saves it as empty, i.e. resets it.
+// Toggles compare as the wizard stores them: on/off.
 export function costFieldsInStepBody(body, steps, current, actionsEnabled = false, defaultOf = () => '') {
-  if (actionsEnabled) return [];
+  if (actionsEnabled || body?.skip) return [];
   const step = (steps || []).find(s => s.id === body?.id);
-  if (!step || !body.values || typeof body.values !== 'object') return [];
+  if (!step) return [];
+  const values = body.values && typeof body.values === 'object' ? body.values : {};
+  // Same reading as setup.js saveStep (incoming) and the scheduler (stored).
+  const toggleIn = (v) => (v === true || ['true', 'on', '1'].includes(String(v ?? '').trim().toLowerCase()) ? 'on' : 'off');
+  const toggleStored = (v) => (String(v ?? '').trim().toLowerCase() === 'off' ? 'off' : 'on');
   const norm = (k, v) => String(v ?? '').trim() || String(defaultOf(k) ?? '').trim();
   return step.fields
-    .filter(f => COST_SETTINGS_KEYS.includes(f.key) && body.values[f.key] != null
-      && norm(f.key, body.values[f.key]) !== norm(f.key, current(f.key)))
+    .filter(f => COST_SETTINGS_KEYS.includes(f.key) && (f.type === 'toggle'
+      ? toggleIn(values[f.key]) !== toggleStored(current(f.key))
+      : norm(f.key, values[f.key]) !== norm(f.key, current(f.key))))
     .map(f => f.key);
 }
 
@@ -179,9 +193,14 @@ export function pinGuardedStepFields(body, steps, schemaByKey = {}, current = ()
   return { ...body, values };
 }
 
-// Blank the secret values in a /api/setup/status payload (keeps `isSet`), so an
-// assistant never sees API keys, tokens or the Telegram chat id.
+// Blank the secret values in a setup payload (keeps `isSet`), so an assistant
+// never sees API keys, tokens or the Telegram chat id. Covers both shapes the
+// wizard API answers with: the status itself (GET /api/setup/status) and
+// `{ ok, status }` (PUT /api/setup/step).
 export function redactSetupSecrets(payload, schemaByKey = {}) {
+  if (payload && !Array.isArray(payload.steps) && payload.status && Array.isArray(payload.status.steps)) {
+    return { ...payload, status: redactSetupSecrets(payload.status, schemaByKey) };
+  }
   if (!payload || !Array.isArray(payload.steps)) return payload;
   return {
     ...payload,

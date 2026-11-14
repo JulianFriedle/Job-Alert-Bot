@@ -8,14 +8,14 @@
 // Tiers (descriptions are German — the model reads them):
 //   Lesen / Einrichtung & Profil / Pflege — always available, free and local.
 //   Aktionen — cost money or reach the outside world; listed always, but they
-//   refuse unless the user flipped the red button in Einstellungen. The check
-//   happens at call time (GET /api/mcp/info) and again in server.js.
+//   refuse unless the user flipped the red button in Einstellungen. server.js
+//   enforces that and answers with ACTIONS_REFUSAL, which the tool passes on.
 
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { APP_ROOT, DATA_DIR } from './paths.js';
 import {
-  PROTECTED_SETTINGS_KEYS, COST_SETTINGS_KEYS, ACTIONS_REFUSAL, PROTECTED_SETTING_REFUSAL, MCP_HEADER,
+  PROTECTED_SETTINGS_KEYS, COST_SETTINGS_KEYS, MCP_HEADER, settingsRefusal, secretFieldsInStepBody,
 } from './mcp-policy.js';
 
 const PLATFORM_TYPES = ['linkedin', 'stepstone', 'indeed'];
@@ -76,7 +76,9 @@ export function summarizeSetupStatus(status) {
   const steps = (status.steps || []).map(step => {
     const values = step.values || {};
     const fields = (step.fields || []).map(f => {
-      const secret = f.type === 'secret';
+      // Secret in the wizard, or redacted by the server (the Telegram chat id is
+      // a plain text field in the wizard but secret in the settings schema).
+      const secret = f.type === 'secret' || step.secretsSet?.[f.key] !== undefined;
       const set = secret ? Boolean(step.secretsSet?.[f.key] ?? !isEmptyValue(values[f.key])) : !isEmptyValue(values[f.key]);
       const out = { key: f.key, label: f.label, type: f.type, required: f.required, filled: set };
       if (secret) out.hinweis = 'Geheimnis – der Nutzer trägt es selbst in der GUI ein (Einstellungen), niemals im Chat.';
@@ -106,19 +108,10 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
   const defaultClient = (env.MCP_CLIENT_ID || '').trim() || undefined;
   const q = (args, extra = {}) => ({ clientId: (args?.clientId || '').trim() || defaultClient, ...extra });
 
-  async function requireUnlocked() {
-    const info = await api.get('/api/mcp/info');
-    if (!info || !info.actionsEnabled) throw new Error(ACTIONS_REFUSAL);
-  }
-
   const tools = [];
+  // Action tools are only marked here: server.js refuses them while locked.
   const add = (name, description, inputSchema, handler, { action = false } = {}) => {
-    tools.push({
-      name,
-      description: action ? ACTION_PREFIX + description : description,
-      inputSchema,
-      handler: action ? async (args) => { await requireUnlocked(); return handler(args); } : handler,
-    });
+    tools.push({ name, description: action ? ACTION_PREFIX + description : description, inputSchema, handler });
   };
 
   // ── Lesen ────────────────────────────────────────────────────────────────
@@ -253,7 +246,7 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
     async () => summarizeSetupStatus(await api.get('/api/setup/status')));
 
   add('save_setup_step',
-    'Speichert die Antworten eines Einrichtungsschritts (id aus get_setup_status). Werte sind ein Objekt { feldKey: wert }; Listen als Array. Betrifft immer den Standard-Klienten. Felder vom Typ "secret" (API-Schlüssel, Bot-Token) und die Telegram-Chat-ID werden abgelehnt: diese gibt der Nutzer selbst in der GUI ein – niemals im Chat. Den Zeitplan (CRON_SCHEDULE) nur ändern, wenn die KI-Aktionen freigeschaltet sind; sonst ihn weglassen. Mit skip=true wird ein optionaler Schritt übersprungen. Kostenlos, lokal.',
+    'Speichert die Antworten eines Einrichtungsschritts (id aus get_setup_status). Werte sind ein Objekt { feldKey: wert }; Listen als Array. Betrifft immer den Standard-Klienten. Felder vom Typ "secret" (API-Schlüssel, Bot-Token) und die Telegram-Chat-ID werden abgelehnt: diese gibt der Nutzer selbst in der GUI ein – niemals im Chat. Kostenrelevante Felder (Zeitplan CRON_SCHEDULE, Mindest-Score MIN_RELEVANCE_SCORE, Telegram-Benachrichtigungen an/aus) nur ändern, wenn die KI-Aktionen freigeschaltet sind; sonst ihren bisherigen Wert lassen (einfach weglassen). Mit skip=true wird ein optionaler Schritt übersprungen. Kostenlos, lokal.',
     schema({
       stepId: { type: 'string', description: 'Schritt-ID, z. B. "profile" oder "sources".' },
       values: { type: 'object', description: 'Feld-Werte { key: wert }.' },
@@ -265,7 +258,7 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
       if (!step) throw new Error(`Unbekannter Schritt "${args.stepId}". Gültig: ${(status.steps || []).map(s => s.id).join(', ')}`);
       const values = isObj(args.values) ? args.values : {};
       const byKey = Object.fromEntries((step.fields || []).map(f => [f.key, f]));
-      const secrets = Object.keys(values).filter(k => byKey[k]?.type === 'secret' || PROTECTED_SETTINGS_KEYS.includes(k));
+      const secrets = secretFieldsInStepBody({ id: step.id, values }, [step]);
       if (secrets.length) {
         throw new Error(`Die Felder ${secrets.join(', ')} sind geheim bzw. geschützt und können nicht über den Assistenten gesetzt werden. ` +
           'Bitte den Nutzer, sie selbst in der Job-Alert-GUI einzutragen (Einstellungen oder Einrichtungs-Assistent) – niemals Schlüssel im Chat teilen.');
@@ -389,7 +382,7 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
     });
 
   add('get_settings',
-    'Die Einstellungen (.env) mit aktuellem Wert. Geheime Werte (API-Schlüssel, Tokens, Chat-ID) werden nie angezeigt, nur ob sie gesetzt sind. Geschützte Einstellungen (Auto-Bewerbung, Login, MCP-Freischaltung, Datensicherung) sind als locked markiert und für den Assistenten nicht änderbar; kostenrelevante (Modelle, Zeitplan) als requiresUnlock – die gehen nur mit freigeschalteten KI-Aktionen. Kostenlos, nur lesend.',
+    'Die Einstellungen (.env) mit aktuellem Wert. Geheime Werte (API-Schlüssel, Tokens, Chat-ID) werden nie angezeigt, nur ob sie gesetzt sind. Geschützte Einstellungen (Auto-Bewerbung, Login, MCP-Freischaltung, Datensicherung) sind als locked markiert und für den Assistenten nicht änderbar; kostenrelevante (Modelle, Humanize, Zeitplan, Mindest-Score, Mindest-Beschreibungslänge, Telegram an/aus) als requiresUnlock – die gehen nur mit freigeschalteten KI-Aktionen. Kostenlos, nur lesend.',
     schema(),
     async () => {
       const r = await api.get('/api/settings');
@@ -405,21 +398,23 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
     });
 
   add('update_settings',
-    'Ändert Einstellungen (.env) als { KEY: wert }. Nicht erlaubt: geheime Felder (API-Schlüssel, Tokens, Chat-ID – die trägt der Nutzer selbst in der GUI ein) und geschützte Einstellungen (Auto-Bewerbung, Login, MCP-Freischaltung, Port, Datensicherung). Modelle, DOCS_HUMANIZE und Zeitplan nur bei freigeschalteten KI-Aktionen. Ein leerer Wert setzt auf den Standard zurück. Kostenlos, lokal; wirkt ab dem nächsten Lauf.',
+    'Ändert Einstellungen (.env) als { KEY: wert }. Nicht erlaubt: geheime Felder (API-Schlüssel, Tokens, Chat-ID – die trägt der Nutzer selbst in der GUI ein) und geschützte Einstellungen (Auto-Bewerbung, Login, MCP-Freischaltung, Port, Datensicherung). Kostenrelevante Einstellungen (Modelle, DOCS_HUMANIZE, Zeitplan, MIN_RELEVANCE_SCORE, MIN_DESCRIPTION_CHARS, TELEGRAM_NOTIFICATIONS, EXPIRY_NOTIFICATIONS) nur bei freigeschalteten KI-Aktionen. Ein leerer Wert setzt auf den Standard zurück. Kostenlos, lokal; wirkt ab dem nächsten Lauf.',
     schema({ settings: { type: 'object', description: 'Zu ändernde Einstellungen { KEY: wert }.' } }, ['settings']),
     async (args) => {
       const updates = isObj(args.settings) ? args.settings : null;
       if (!updates || !Object.keys(updates).length) throw new Error('settings muss ein nicht-leeres Objekt sein.');
-      const protectedKeys = Object.keys(updates).filter(k => PROTECTED_SETTINGS_KEYS.includes(k));
-      if (protectedKeys.length) throw new Error(`${PROTECTED_SETTING_REFUSAL} (${protectedKeys.join(', ')})`);
+      // Same rules as the server (mcp-policy.js), checked early for a clear
+      // message: protected keys need no lookup, secrets need the schema types.
+      // The cost gate is left to the server, which knows the unlock state.
+      const keys = Object.keys(updates);
+      const early = settingsRefusal(keys, {}, true);
+      if (early) throw new Error(early.error);
       const current = await api.get('/api/settings');
       const byKey = Object.fromEntries((current.settings || []).map(s => [s.key, s]));
-      const unknown = Object.keys(updates).filter(k => !byKey[k]);
+      const unknown = keys.filter(k => !byKey[k]);
       if (unknown.length) throw new Error(`Unbekannte Einstellung(en): ${unknown.join(', ')}`);
-      const secrets = Object.keys(updates).filter(k => byKey[k].type === 'secret');
-      if (secrets.length) {
-        throw new Error(`${secrets.join(', ')}: geheime Einstellungen setzt nur der Nutzer selbst in der GUI (Einstellungen) – niemals Schlüssel im Chat teilen.`);
-      }
+      const refusal = settingsRefusal(keys, byKey, true);
+      if (refusal) throw new Error(`${refusal.error} Geheime Werte trägt der Nutzer selbst in der GUI ein – niemals Schlüssel im Chat teilen.`);
       await api.put('/api/settings', { settings: updates });
       return { ok: true, changed: Object.keys(updates) };
     });
@@ -544,6 +539,25 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
   return { tools, prompts };
 }
 
+// ── Launch command for the connection snippets in Einstellungen ─────────────
+// Normally the running binary + the script. A Linux AppImage runs from a mount
+// point (/tmp/.mount_XXXX) that changes on every start, so a snippet naming it
+// would break with the next launch: there, start the AppImage file itself
+// ($APPIMAGE, stable) and resolve the script against the APPDIR its runtime
+// sets for that launch.
+export function mcpLaunchCommand({ execPath, scriptPath, env = process.env }) {
+  const appImage = (env.APPIMAGE || '').trim();
+  const appDir = (env.APPDIR || '').trim();
+  if (appImage && appDir) {
+    const rel = path.relative(appDir, scriptPath);
+    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+      const code = `import(require('url').pathToFileURL(require('path').join(process.env.APPDIR, ${JSON.stringify(rel)})).href)`;
+      return { command: appImage, args: ['-e', code] };
+    }
+  }
+  return { command: execPath, args: [scriptPath] };
+}
+
 // ── Real API wrapper: HTTP against the running GUI ──────────────────────────
 // Resolution order for the base URL: JOB_ALERT_URL → the endpoint file the GUI
 // server writes on start (the desktop app picks a free port) → GUI_PORT/3000.
@@ -560,17 +574,21 @@ export function pidAlive(pid) {
   catch (err) { return err?.code === 'EPERM'; }
 }
 
+// An endpoint file means a desktop install, whose GUI port is picked at start:
+// then it is the only address. A stale one (the app is closed) yields none —
+// guessing GUI_PORT/3000 would hand the request and the bearer token to
+// whatever else listens there. Without the file (git/Docker install) the
+// configured GUI_PORT is the GUI's address.
 export async function candidateBases(env, readFileImpl, isAlive = pidAlive) {
   const explicit = (env.JOB_ALERT_URL || '').trim();
   if (explicit) return [explicit.replace(/\/+$/, '')];
-  const out = [];
-  try {
-    const info = JSON.parse(await readFileImpl(endpointFilePath(), 'utf-8'));
-    if (info && typeof info.url === 'string' && info.url && isAlive(info.pid)) out.push(info.url.replace(/\/+$/, ''));
-  } catch { /* no endpoint file – fall back */ }
-  const fallback = `http://127.0.0.1:${env.GUI_PORT || 3000}`;
-  if (!out.includes(fallback)) out.push(fallback);
-  return out;
+  let info = null;
+  try { info = JSON.parse(await readFileImpl(endpointFilePath(), 'utf-8')); }
+  catch { /* no endpoint file – not the desktop app */ }
+  if (info && typeof info.url === 'string' && info.url) {
+    return isAlive(info.pid) ? [info.url.replace(/\/+$/, '')] : [];
+  }
+  return [`http://127.0.0.1:${env.GUI_PORT || 3000}`];
 }
 
 export function createHttpApi({ env = process.env, fetchImpl = globalThis.fetch, readFileImpl = readFile, timeoutMs = 120_000 } = {}) {
@@ -596,6 +614,7 @@ export function createHttpApi({ env = process.env, fetchImpl = globalThis.fetch,
         /* connection refused etc. – try the next candidate */
       }
     }
+    if (!bases.length) throw new Error('Job-Alert-App läuft nicht (keine laufende GUI gefunden) – bitte die App starten.');
     if (!res) throw new Error(`Job-Alert-GUI nicht erreichbar unter ${bases.join(' bzw. ')} – läuft die App?`);
 
     const text = await res.text();
