@@ -50,7 +50,7 @@ const SETUP_VERSION = 1;
 //        'select' (options; allowCustom keeps a value that isn't one of them) |
 //        'checks' (multi-select over options, stored as an array)
 // later: the GUI tab where the step's answers can be changed afterwards.
-const STEPS = [
+export const STEPS = [
   {
     id: 'language', title: 'Sprache', required: false, later: 'language',
     subtitle: 'In welcher Sprache du die Oberfläche und die KI-Texte haben möchtest.',
@@ -118,6 +118,8 @@ const STEPS = [
         placeholder: 'Maschinenbauingenieur mit Fokus auf additive Fertigung …' },
       { key: 'cv.skills.domain', store: 'profile', type: 'list',
         label: 'Fachliche Kompetenzen', help: 'Eine pro Zeile' },
+      { key: 'cv.skills.programming', store: 'profile', type: 'list',
+        label: 'Programmierung', help: 'Sprachen und Frameworks, eine pro Zeile, z. B. Python, SQL' },
       { key: 'cv.skills.tools', store: 'profile', type: 'list',
         label: 'Tools / Software', help: 'Eine pro Zeile, z. B. SolidWorks, Excel' },
       { key: 'cv.education', store: 'profile', type: 'list',

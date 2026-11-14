@@ -224,7 +224,7 @@
           <li>${t('wiz.finishLi3')}</li>
         </ol>
         <label class="su-check"><input type="checkbox" id="su-tour" checked> ${esc(t('wiz.tourAfter'))}</label>
-        <label class="su-check"><input type="checkbox" id="su-run-now" ${debug ? 'disabled' : 'checked'}> ${esc(t('wiz.runNow'))}</label>
+        <label class="su-check"><input type="checkbox" id="su-run-now"${debug ? ' disabled' : ''}> ${esc(t('wiz.runNow'))}</label>
         <p class="muted su-run-hint">${esc(debug ? t('wiz.debugNoRun') : t('wiz.runNowHint'))}</p>
       </div>`;
       el.next.textContent = t('wiz.finish');
