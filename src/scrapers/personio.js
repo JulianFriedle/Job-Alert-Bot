@@ -18,17 +18,23 @@ export function isPersonioUrl(url) {
   catch { return false; }
 }
 
+// The feed in the language the source asks for (`?language=en`), if any.
 export function feedUrl(url) {
   const u = new URL(url);
-  return `${u.protocol}//${u.host}/xml`;
+  const lang = u.searchParams.get('language');
+  return `${u.protocol}//${u.host}/xml${lang ? `?language=${encodeURIComponent(lang)}` : ''}`;
 }
 
-const unwrap = (s) => decodeEntities(String(s ?? '')
-  .replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/, '$1')).trim();
-const tag = (xml, name) => {
+// Element content with a CDATA wrapper removed — not decoded. HTML values go
+// through htmlToText, which decodes once after taking the tags out; decoding
+// first would turn an escaped "&lt; 3 Jahre" into a tag and delete the text.
+const raw = (s) => String(s ?? '').replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/, '$1');
+const unwrap = (s) => decodeEntities(raw(s)).trim();
+const rawTag = (xml, name) => {
   const m = xml.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`));
-  return m ? unwrap(m[1]) : '';
+  return m ? raw(m[1]) : '';
 };
+const tag = (xml, name) => unwrap(rawTag(xml, name));
 const allTags = (xml, name) =>
   [...xml.matchAll(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, 'g'))].map(m => m[1]);
 const htmlToText = (html) => decodeEntities(String(html)
@@ -54,7 +60,7 @@ export function parsePersonioXml(xml, siteUrl, companyName = '') {
     const offices = [tag(own, 'office'), ...allTags(additional, 'office').map(unwrap)].filter(Boolean);
     const sections = allTags(descriptions, 'jobDescription').map(d => {
       const heading = tag(d, 'name');
-      const body = htmlToText(tag(d, 'value'));
+      const body = htmlToText(rawTag(d, 'value'));
       return [heading, body].filter(Boolean).join('\n');
     }).filter(Boolean);
     jobs.push({
@@ -63,6 +69,7 @@ export function parsePersonioXml(xml, siteUrl, companyName = '') {
       location: [...new Set(offices)].join(', '),
       company: tag(own, 'subcompany') || companyName,
       description: sections.join('\n\n').slice(0, 4000),
+      viaFeed: true,   // see findJobIdBySourceTitle in the scheduler
     });
   }
   return jobs;

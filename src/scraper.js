@@ -1293,30 +1293,31 @@ async function personioJobs(source) {
   return { jobs: out, duplicates: 0, siteTotal: out.length };
 }
 
-async function scrapeCareerSource(source) {
-  if (!isPersonioUrl(source.url)) return scrapeSource(source);
+// Exported with injectable page/feed readers for tests.
+export async function scrapeCareerSource(source, { scrapePage = scrapeSource, readFeed = personioJobs } = {}) {
+  if (!isPersonioUrl(source.url)) return scrapePage(source);
   if (source.personioFeed === true) {
-    try { return await personioJobs(source); }
+    try { return await readFeed(source); }
     catch (err) {
       if (isAborted()) throw err;
       log(`Personio-Feed ${source.name}: ${err.message} — versuche die Seite`);
-      return scrapeSource(source);
+      return scrapePage(source);
     }
   }
   let result;
   try {
-    result = await scrapeSource(source);
+    result = await scrapePage(source);
     if (result.jobs.length > 0) return result;
   } catch (err) {
     if (isAborted()) throw err;
     log(`${source.name}: Seite fehlgeschlagen (${err.message.split('\n')[0]}) — versuche den Personio-Feed`);
-    try { return await personioJobs(source); }
+    try { return await readFeed(source); }
     catch (feedErr) { log(`Personio-Feed ${source.name}: ${feedErr.message}`); throw err; }
   }
   if (isAborted()) return result;
   log(`${source.name}: 0 Stellen auf der Seite — versuche den Personio-Feed`);
   try {
-    const feed = await personioJobs(source);
+    const feed = await readFeed(source);
     return feed.jobs.length > 0 ? feed : result;
   } catch (feedErr) {
     log(`Personio-Feed ${source.name}: ${feedErr.message}`);

@@ -8,7 +8,7 @@ import {
   isNewJob, saveJob, markAnalyzed, markNotified, getUnanalyzedJobs,
   getRelevantUnnotifiedJobs, getRelevantCountBySource, updateLastSeenBatch,
   getJobsToExpire, markExpired, saveRunSnapshot, getEnabledClients, getClient,
-  checkpointWal, getJobById, createApplication, recordDescriptionAttempt,
+  checkpointWal, getJobById, createApplication, recordDescriptionAttempt, findJobIdBySourceTitle,
   getJobsWithSummary, reopenForAnalysis,
 } from './database.js';
 import { analyzeJob } from './analyzer.js';
@@ -348,13 +348,23 @@ async function runClientPipeline(client) {
   }
   log(`⏱  Scraping: ${tock('scrape')}`);
 
-  // 2. Mark every scraped job as seen (for expiry tracking), then filter to new
-  updateLastSeenBatch(clientId, scrapedJobs.map(j => j.id));
+  // 2. Mark every scraped job as seen (for expiry tracking), then filter to new.
+  // A job read from a feed (Personio fallback) can carry a different URL — so a
+  // different id — than the same posting saved from the page: it then stands
+  // for that row (kept alive, not new again, no second alert).
+  const feedAliases = new Map(); // feed job id → existing row id
+  for (const job of scrapedJobs) {
+    if (!job.viaFeed || !isNewJob(clientId, job.id)) continue;
+    const existing = findJobIdBySourceTitle(clientId, job.source, job.title);
+    if (existing && existing !== job.id) feedAliases.set(job.id, existing);
+  }
+  if (feedAliases.size > 0) log(`${feedAliases.size} Stelle(n) aus dem Feed schon von der Seite bekannt — nicht erneut bewertet`);
+  updateLastSeenBatch(clientId, [...scrapedJobs.map(j => j.id), ...feedAliases.values()]);
   // A new posting found by two sources is processed once (one detail fetch, one
   // analysis, counted as new for one source). "Gefunden" per source still counts
   // every copy — each source did list it.
   const { unique: newJobs, dropped: newDupes } = uniqueJobsById(
-    scrapedJobs.filter(job => isNewJob(clientId, job.id)), sources.map(s => s.name));
+    scrapedJobs.filter(job => !feedAliases.has(job.id) && isNewJob(clientId, job.id)), sources.map(s => s.name));
   if (newDupes.length > 0) log(`${newDupes.length} neue Stelle(n) über mehrere Quellen doppelt gefunden — jeweils nur einmal übernommen`);
   log(`${scrapedJobs.length} scraped, ${newJobs.length} new`);
 

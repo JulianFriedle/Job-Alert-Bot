@@ -42,7 +42,8 @@ test('recognizes Personio career sites and their feed URL', () => {
   assert.equal(isPersonioUrl('https://www.personio.de/karriere'), false);
   assert.equal(isPersonioUrl('https://evil.example/jobs.personio.de'), false);
   assert.equal(isPersonioUrl('kein url'), false);
-  assert.equal(feedUrl('https://apworks.jobs.personio.de/?language=de#x'), 'https://apworks.jobs.personio.de/xml');
+  assert.equal(feedUrl('https://apworks.jobs.personio.de/?language=de#x'), 'https://apworks.jobs.personio.de/xml?language=de');
+  assert.equal(feedUrl('https://apworks.jobs.personio.de/jobs'), 'https://apworks.jobs.personio.de/xml');
 });
 
 test('parses positions with title, URL, offices, company and full description', () => {
@@ -72,4 +73,44 @@ test('fetch: reads /xml, rejects HTTP errors and non-Personio answers', async ()
     { fetchImpl: async () => ({ ok: false, status: 404, text: async () => '' }) }), /HTTP 404/);
   await assert.rejects(fetchPersonioJobs({ url: 'https://x.jobs.personio.de' },
     { fetchImpl: async () => ({ ok: true, status: 200, text: async () => '<html>Login</html>' }) }), /unerwartetes Format/);
+});
+
+test('escaped < and > in a description survive (decoded once, after the tags are gone)', () => {
+  const xml = `<workzag-jobs><position><id>1</id><name>Ingenieur Test</name><jobDescriptions><jobDescription>
+    <name>Profil</name><value><![CDATA[<p>Erfahrung &lt; 3 Jahre, Gehalt &gt; 50k, C++ &lt;-&gt; Python, &amp;lt;literal&amp;gt;</p>]]></value>
+  </jobDescription></jobDescriptions></position></workzag-jobs>`;
+  const [job] = parsePersonioXml(xml, 'https://x.jobs.personio.de');
+  assert.equal(job.description, 'Profil\nErfahrung < 3 Jahre, Gehalt > 50k, C++ <-> Python, &lt;literal&gt;');
+  assert.equal(job.viaFeed, true);
+});
+
+test('a ?language= on the source URL is passed to the feed', () => {
+  assert.equal(feedUrl('https://x.jobs.personio.de/?language=en'), 'https://x.jobs.personio.de/xml?language=en');
+});
+
+// ── Page / feed control flow ─────────────────────────────────────────────────
+const { scrapeCareerSource } = await import('../src/scraper.js');
+const page = (jobs, extra = {}) => async () => ({ jobs, duplicates: 0, siteTotal: null, ...extra });
+const feed = (jobs) => async () => ({ jobs, duplicates: 0, siteTotal: jobs.length });
+const boom = (msg) => async () => { throw new Error(msg); };
+const P = { name: 'APworks', url: 'https://apworks.jobs.personio.de' };
+
+test('control flow: page first, feed when the page fails or finds nothing', async () => {
+  const one = [{ id: 'p1' }];
+  const viaFeed = [{ id: 'f1' }];
+  assert.deepEqual((await scrapeCareerSource(P, { scrapePage: page(one), readFeed: feed(viaFeed) })).jobs, one, 'a working page wins');
+  assert.deepEqual((await scrapeCareerSource(P, { scrapePage: boom('Timeout'), readFeed: feed(viaFeed) })).jobs, viaFeed, 'page throws → feed');
+  const fromEmpty = await scrapeCareerSource(P, { scrapePage: page([], { blocked: true, error: 'x' }), readFeed: feed(viaFeed) });
+  assert.deepEqual(fromEmpty.jobs, viaFeed, 'page empty → feed');
+  assert.equal(fromEmpty.blocked, undefined, 'a complete feed result is not incomplete');
+  const bothEmpty = await scrapeCareerSource(P, { scrapePage: page([], { blocked: true }), readFeed: feed([]) });
+  assert.equal(bothEmpty.blocked, true, 'an empty feed keeps the page result');
+  await assert.rejects(scrapeCareerSource(P, { scrapePage: boom('Timeout 15000ms'), readFeed: boom('HTTP 404') }), /Timeout 15000ms/,
+    'both fail → the page error, not the feed one');
+  assert.deepEqual((await scrapeCareerSource({ ...P, personioFeed: true }, { scrapePage: page(one), readFeed: feed(viaFeed) })).jobs,
+    viaFeed, 'personioFeed: true → feed first');
+  assert.deepEqual((await scrapeCareerSource({ ...P, personioFeed: true }, { scrapePage: page(one), readFeed: boom('HTTP 500') })).jobs,
+    one, '… and the page as fallback');
+  assert.deepEqual((await scrapeCareerSource({ name: 'X', url: 'https://x.example/jobs' }, { scrapePage: page(one), readFeed: boom('never') })).jobs,
+    one, 'not Personio → page only');
 });
