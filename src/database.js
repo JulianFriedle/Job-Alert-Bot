@@ -98,6 +98,7 @@ function createSchema(db) {
       status      TEXT,
       easy_apply  INTEGER,
       platform    TEXT,
+      desc_attempts INTEGER DEFAULT 0,
       PRIMARY KEY (client_id, id)
     );
   `);
@@ -350,6 +351,12 @@ function migrateSchema(db) {
       throw err;
     }
   }
+
+  // How often a too-short description was fetched again (after the rebuild
+  // above, so the rebuilt table gets it too).
+  const jobColsNow = db.prepare("PRAGMA table_info(jobs)").all().map(r => r.name);
+  if (!jobColsNow.includes('desc_attempts'))
+    db.exec('ALTER TABLE jobs ADD COLUMN desc_attempts INTEGER DEFAULT 0');
 
   // Per-source problem of a run (error | blocked | empty) + the error message,
   // behind the Run tab's GitHub problem report.
@@ -659,6 +666,28 @@ export function getJobsWithEmptyDescription(clientId) {
     // Manual jobs ("+ Stelle") are never scraped or analyzed, not even here.
     "SELECT * FROM jobs WHERE client_id = ? AND (description IS NULL OR description = '') AND (expired = 0 OR expired IS NULL) AND source IS NOT 'Manuell'"
   ).all(clientId);
+}
+
+// Candidates for `npm run refetch-descriptions`: every live scraped job that
+// is either empty, still unanalyzed, or was given up for a missing description.
+// Jobs that were really analyzed keep their score — the caller decides what
+// counts as too short (in JS, the same check the pipeline uses).
+export function getDescriptionRefetchCandidates(clientId, givenUpSummary) {
+  return db.prepare(`
+    SELECT * FROM jobs
+    WHERE client_id = ? AND (expired = 0 OR expired IS NULL) AND source IS NOT 'Manuell'
+      AND (description IS NULL OR description = '' OR relevant IS NULL OR summary = ?)
+  `).all(clientId, givenUpSummary);
+}
+
+// Record one more attempt to fetch a job's description. The caller passes the
+// text to keep (it never trades a stored description for a shorter one).
+export function recordDescriptionAttempt(clientId, id, description) {
+  db.prepare(`
+    UPDATE jobs
+    SET description = ?, desc_attempts = COALESCE(desc_attempts, 0) + 1
+    WHERE client_id = ? AND id = ?
+  `).run(description ?? '', clientId, id);
 }
 
 export function updateJobDescription(clientId, id, description) {
