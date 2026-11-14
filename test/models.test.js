@@ -94,3 +94,29 @@ test('an unknown analyzer model is reported once and never retried', async () =>
     server.close();
   }
 });
+
+// ── Model dropdown (#43) ─────────────────────────────────────────────────────
+const { listAvailableModels } = await import('../src/models.js');
+
+test('available models: newest first, cached per key for an hour, no key = error', async () => {
+  let calls = 0;
+  const makeClient = () => ({ models: { list: async function* () {
+    calls++;
+    yield { id: 'claude-haiku-4-5', display_name: 'Claude Haiku 4.5', created_at: '2025-10-01T00:00:00Z' };
+    yield { id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5', created_at: '2026-10-01T00:00:00Z' };
+    yield { display_name: 'kaputt ohne id' };
+  } } });
+  let t = 1_000_000;
+  const now = () => t;
+  const a = await listAvailableModels({ apiKey: 'sk-test-1', makeClient, now });
+  assert.deepEqual(a.map(m => m.id), ['claude-opus-5-5', 'claude-haiku-4-5']);
+  assert.equal(a[0].name, 'Claude Opus 5.5');
+  await listAvailableModels({ apiKey: 'sk-test-1', makeClient, now });
+  assert.equal(calls, 1, 'cached');
+  t += 61 * 60 * 1000;
+  await listAvailableModels({ apiKey: 'sk-test-1', makeClient, now });
+  assert.equal(calls, 2, 'refreshed after an hour');
+  await listAvailableModels({ apiKey: 'sk-test-2', makeClient, now });
+  assert.equal(calls, 3, 'another key, its own list');
+  await assert.rejects(listAvailableModels({ apiKey: '  ', makeClient, now }), /Kein Anthropic API-Key/);
+});

@@ -4,7 +4,7 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 // The active tenant. Data requests are auto-scoped with ?clientId=…; a handful of
 // global/operator endpoints (below) are exempt.
 let currentClientId = null;
-const CLIENT_AGNOSTIC = ['/api/clients', '/api/login', '/api/logout', '/api/auth', '/api/settings', '/api/setup', '/api/update', '/api/restart', '/api/backups'];
+const CLIENT_AGNOSTIC = ['/api/clients', '/api/login', '/api/logout', '/api/auth', '/api/settings', '/api/setup', '/api/update', '/api/restart', '/api/backups', '/api/models'];
 const api = async (url, opts) => {
   if (currentClientId && url.startsWith('/api/') && !CLIENT_AGNOSTIC.some(p => url.startsWith(p))) {
     url += (url.includes('?') ? '&' : '?') + 'clientId=' + encodeURIComponent(currentClientId);
@@ -1199,8 +1199,24 @@ function renderSettings() {
       <div class="setting-list">
         ${settingsSchema.filter(s => s.group === g).map(settingField).join('')}
       </div>
-    </div>`).join('');
+    </div>`).join('') + '<datalist id="model-options"></datalist>';
   $('#settings-msg').textContent = '';
+  if (settingsSchema.some(s => s.models)) fillModelOptions();
+}
+
+// Fill the model dropdown once per page (the server caches for an hour). On
+// any problem the fields simply stay free text.
+let modelOptions = null;
+async function fillModelOptions() {
+  try {
+    if (!modelOptions) {
+      const r = await api('/api/models');
+      if (!r.models?.length) return;
+      modelOptions = r.models;
+    }
+    const dl = $('#model-options');
+    if (dl) dl.innerHTML = modelOptions.map(m => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('');
+  } catch { /* free text it is */ }
 }
 
 function settingField(s) {
@@ -1224,8 +1240,11 @@ function settingField(s) {
       <span class="set-switch-track"></span>
     </label>`;
   } else {
-    control = `<input id="${id}" class="set-input" type="text" ${da}
-      value="${esc(s.value)}" placeholder="${esc(s.default)}" spellcheck="false">`;
+    // Model fields offer the models the key can use (datalist = dropdown that
+    // still accepts any ID typed by hand).
+    const list = s.models ? ' list="model-options"' : '';
+    control = `<input id="${id}" class="set-input" type="text" ${da}${list}
+      value="${esc(s.value)}" placeholder="${esc(s.default)}" spellcheck="false" autocomplete="off">`;
   }
   const def = (s.type !== 'secret' && s.type !== 'bool' && s.default) ? ` <span class="set-default">${esc(t('settings.defaultPrefix'))}<code>${esc(s.default)}</code></span>` : '';
   return `<div class="setting">
