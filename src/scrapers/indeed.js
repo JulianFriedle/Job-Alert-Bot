@@ -3,7 +3,7 @@
 // including the `indeedApplyEnabled` flag → easyApply is known at scrape time.
 // Indeed sits behind Cloudflare: challenges are detected and reported as a
 // blocked (empty) result instead of throwing, so the run continues.
-import { generateId, isThinDescription, minDescriptionChars, DEFAULT_MIN_DESCRIPTION_CHARS } from '../scraper.js';
+import { generateId } from '../scraper.js';
 import { launchPlatformBrowser, newHardenedContext, humanDelay, isChallengePage } from './browser.js';
 import { isAborted } from '../run-control.js';
 
@@ -15,13 +15,18 @@ function log(msg) {
   console.log(`[${new Date().toISOString()}] [indeed] ${msg}`);
 }
 
-// The search card's snippet saves the detail-page visit when it is a real
-// description; a short teaser (the usual case) is dropped so fetchDescriptions
-// still loads the full posting. Never below the default floor: with
-// MIN_DESCRIPTION_CHARS=0 every teaser would otherwise replace the posting.
-export function snippetAsDescription(snippet) {
-  const floor = Math.max(minDescriptionChars(), DEFAULT_MIN_DESCRIPTION_CHARS);
-  return isThinDescription(snippet, floor) ? '' : String(snippet).slice(0, 4000);
+// The snippet arrives as HTML: tags are stripped, entities decoded.
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+  auml: 'ä', ouml: 'ö', uuml: 'ü', Auml: 'Ä', Ouml: 'Ö', Uuml: 'Ü', szlig: 'ß',
+  ndash: '–', mdash: '—', hellip: '…', bull: '•', euro: '€' };
+export function decodeEntities(s) {
+  return String(s ?? '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+    if (e[0] === '#') {
+      const code = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : m;
+    }
+    return ENTITIES[e] ?? m;
+  });
 }
 
 function buildSearchUrl(search, start) {
@@ -55,7 +60,7 @@ export function extractJobcards(mosaic) {
       easyApply: (r.indeedApplyEnabled ?? r.indeedApplyable) == null
         ? null
         : Boolean(r.indeedApplyEnabled ?? r.indeedApplyable),
-      snippet: String(r.snippet || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+      snippet: decodeEntities(String(r.snippet || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim(),
     }));
 }
 
@@ -142,7 +147,10 @@ export async function scrape(source) {
             url: jobUrl,
             location: c.location,
             company: c.company,
-            description: snippetAsDescription(c.snippet),
+            description: '', // detail page text is fetched later (fetchDescriptions)
+            // Stands in when the detail fetch fails or comes back too short
+            // (withSnippetFallback in scraper.js) — never instead of the posting.
+            snippet: c.snippet,
             source: source.name,
             platform: 'indeed',
             easyApply: c.easyApply == null ? null : (c.easyApply ? 1 : 0),

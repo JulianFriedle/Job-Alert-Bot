@@ -3,7 +3,7 @@ import cron from 'node-cron';
 import { createWriteStream, mkdirSync } from 'fs';
 import path from 'path';
 
-import { scrapeAll, fetchDescriptions, minDescriptionChars, isThinDescription, DESC_MISSING_SUMMARY } from './scraper.js';
+import { scrapeAll, fetchDescriptions, minDescriptionChars, isThinDescription, DESC_MISSING_SUMMARY, uniqueJobsById } from './scraper.js';
 import {
   isNewJob, saveJob, markAnalyzed, markNotified, getUnanalyzedJobs,
   getRelevantUnnotifiedJobs, getRelevantCountBySource, updateLastSeenBatch,
@@ -277,7 +277,12 @@ async function runClientPipeline(client) {
 
   // 2. Mark every scraped job as seen (for expiry tracking), then filter to new
   updateLastSeenBatch(clientId, scrapedJobs.map(j => j.id));
-  const newJobs = scrapedJobs.filter(job => isNewJob(clientId, job.id));
+  // A new posting found by two sources is processed once (one detail fetch, one
+  // analysis, counted as new for one source). "Gefunden" per source still counts
+  // every copy — each source did list it.
+  const { unique: newJobs, dropped: newDupes } = uniqueJobsById(
+    scrapedJobs.filter(job => isNewJob(clientId, job.id)), sources.map(s => s.name));
+  if (newDupes.length > 0) log(`${newDupes.length} neue Stelle(n) über mehrere Quellen doppelt gefunden — jeweils nur einmal übernommen`);
   log(`${scrapedJobs.length} scraped, ${newJobs.length} new`);
 
   // 3. Title filters — skip structurally irrelevant jobs before touching Claude
