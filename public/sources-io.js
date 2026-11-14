@@ -58,17 +58,13 @@ export function parseSourcesFile(text) {
 }
 
 // `merge`: the current list plus every imported source it doesn't have yet
-// (existing ones are kept as they are). `replace`: the imported list.
+// (the current list is kept exactly as it is). `replace`: exactly the file —
+// two entries with the same URL may be intentional (different jobUrlPattern …).
 export function combineSources(current, imported, mode) {
-  const seen = new Set();
-  const dedupe = (list) => list.filter(s => { const k = sourceKey(s); if (seen.has(k)) return false; seen.add(k); return true; });
-  if (mode === 'replace') {
-    const sources = dedupe(imported);
-    return { sources, added: sources.length, skipped: imported.length - sources.length };
-  }
-  const kept = dedupe(current);
-  const added = dedupe(imported);
-  return { sources: [...kept, ...added], added: added.length, skipped: imported.length - added.length };
+  if (mode === 'replace') return { sources: [...imported], added: imported.length, skipped: 0 };
+  const seen = new Set(current.map(sourceKey));
+  const added = imported.filter(s => { const k = sourceKey(s); if (seen.has(k)) return false; seen.add(k); return true; });
+  return { sources: [...current, ...added], added: added.length, skipped: imported.length - added.length };
 }
 
 // How many imported sources are new against the current list.

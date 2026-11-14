@@ -2244,6 +2244,7 @@ function switchClient(id) {
   // Invalidate per-client caches so the next tab visit refetches for this client.
   sourcesLoaded = profileLoaded = promptsLoaded = false;
   for (const k of Object.keys(cfgVersion)) { cfgVersion[k] = null; cfgDirty[k] = false; cfgSeq[k]++; }
+  closeSourcesImport();   // a file read for the previous client
   // Refresh whatever is on screen for the new client.
   loadJobs();
   const active = $('.tab.active')?.dataset.tab;
@@ -2533,15 +2534,27 @@ $('#filters-test')?.addEventListener('click', async () => {
 // jobs.json-compatible file with every per-source field. An import only fills
 // the form — "Speichern" then saves it, with the usual stale-data check.
 let pendingImport = null;
+const sourcesIO = () => {
+  if (window.SourcesIO) return window.SourcesIO;
+  showSourcesMsg(t('sources.ioMissing'), 'err');
+  return null;
+};
+function closeSourcesImport() {
+  pendingImport = null;
+  const panel = $('#sources-import');
+  if (panel) panel.hidden = true;
+}
 
 $('#export-sources')?.addEventListener('click', async () => {
+  const io = sourcesIO();
+  if (!io) return;
   try {
     const { sources } = await api('/api/sources');
     const client = (clientsList || []).find(c => c.id === currentClientId);
     const blob = new Blob([JSON.stringify({ sources }, null, 2) + '\n'], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = window.SourcesIO.exportFileName(client && client.id !== defaultClientId ? client.name : '');
+    a.download = io.exportFileName(client && client.id !== defaultClientId ? client.name : '');
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     showSourcesMsg(t('sources.exported').replace('{n}', sources.length), 'ok');
@@ -2554,11 +2567,15 @@ $('#import-sources-file')?.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   e.target.value = '';   // the same file can be picked again
   if (!file) return;
+  const io = sourcesIO();
+  if (!io) return;
+  // An incomplete row would make the counts wrong: say so instead.
+  const current = collectSourcesForm();
+  if (!current) { closeSourcesImport(); return; }
   try {
-    const { valid, invalid } = window.SourcesIO.parseSourcesFile(await file.text());
-    const current = $$('#source-list .source-row').length ? (collectSourcesForm() || []) : [];
+    const { valid, invalid } = io.parseSourcesFile(await file.text());
     pendingImport = valid;
-    const fresh = window.SourcesIO.countNew(current, valid);
+    const fresh = io.countNew(current, valid);
     $('#sources-import-summary').textContent = t('sources.importSummary')
       .replace('{file}', file.name).replace('{n}', valid.length)
       .replace('{new}', fresh).replace('{known}', valid.length - fresh)
@@ -2569,24 +2586,23 @@ $('#import-sources-file')?.addEventListener('change', async (e) => {
     $('#sources-import-replace').disabled = valid.length === 0;
     $('#sources-import').hidden = false;
   } catch (err) {
-    pendingImport = null;
-    $('#sources-import').hidden = true;
+    closeSourcesImport();
     showSourcesMsg(t('toast.error') + err.message, 'err');
   }
 });
 
 function applyImport(mode) {
-  if (!pendingImport) return;
+  const io = sourcesIO();
+  if (!pendingImport || !io) return;
   const current = mode === 'merge' ? collectSourcesForm() : [];
   if (!current) return;
-  const { sources, added } = window.SourcesIO.combineSources(current, pendingImport, mode);
+  const { sources, added, skipped } = io.combineSources(current, pendingImport, mode);
   renderSources(sources);
   cfgDirty.sources = true;
-  pendingImport = null;
-  $('#sources-import').hidden = true;
+  closeSourcesImport();
   showSourcesMsg(t(mode === 'merge' ? 'sources.importedMerge' : 'sources.importedReplace')
-    .replace('{n}', added).replace('{total}', sources.length), 'ok');
+    .replace('{n}', added).replace('{skipped}', skipped).replace('{total}', sources.length), 'ok');
 }
 $('#sources-import-merge')?.addEventListener('click', () => applyImport('merge'));
 $('#sources-import-replace')?.addEventListener('click', () => applyImport('replace'));
-$('#sources-import-cancel')?.addEventListener('click', () => { pendingImport = null; $('#sources-import').hidden = true; });
+$('#sources-import-cancel')?.addEventListener('click', closeSourcesImport);

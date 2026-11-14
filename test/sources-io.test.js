@@ -41,8 +41,11 @@ test('merge adds only new sources and keeps every field; replace takes the file'
   assert.deepEqual(m.sources.map(s => s.name), ['ACME (mein Name)', 'LinkedIn Suche', 'Beta']);
   assert.equal(m.added, 1);
   assert.equal(m.sources[1].managedBy, 'wizard', 'hidden fields survive');
-  const r = combineSources(current, [A, B, B], 'replace');
-  assert.deepEqual(r.sources, [A, B]);
+  assert.equal(m.skipped, 2, 'ACME known, second Beta a duplicate');
+  // Replace takes the file as it is — same-URL entries may be intentional.
+  const twin = { ...B, jobUrlPattern: '/stelle/' };
+  const r = combineSources(current, [A, B, twin], 'replace');
+  assert.deepEqual(r.sources, [A, B, twin]);
   assert.equal(r.sources[0].maxPages, 10);
 });
 
