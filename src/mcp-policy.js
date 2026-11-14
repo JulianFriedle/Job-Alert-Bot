@@ -149,14 +149,16 @@ export function secretFieldsInStepBody(body, steps, schemaByKey = {}) {
 
 // Cost-relevant wizard fields whose value would change while the actions are
 // locked. A step is saved as a whole, so an unchanged value (`current(key)`)
-// must not block the other answers of that step.
-export function costFieldsInStepBody(body, steps, current, actionsEnabled = false) {
+// must not block the other answers of that step. Empty means "unset", i.e.
+// the default (`defaultOf(key)`), on both sides.
+export function costFieldsInStepBody(body, steps, current, actionsEnabled = false, defaultOf = () => '') {
   if (actionsEnabled) return [];
   const step = (steps || []).find(s => s.id === body?.id);
   if (!step || !body.values || typeof body.values !== 'object') return [];
+  const norm = (k, v) => String(v ?? '').trim() || String(defaultOf(k) ?? '').trim();
   return step.fields
     .filter(f => COST_SETTINGS_KEYS.includes(f.key) && body.values[f.key] != null
-      && String(body.values[f.key]).trim() !== String(current(f.key) ?? '').trim())
+      && norm(f.key, body.values[f.key]) !== norm(f.key, current(f.key)))
     .map(f => f.key);
 }
 

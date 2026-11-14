@@ -273,12 +273,17 @@ export function createToolkit({ api, env = process.env, readTemplate } = {}) {
       const unknown = Object.keys(values).filter(k => !byKey[k]);
       if (unknown.length) throw new Error(`Unbekannte Felder für Schritt "${step.id}": ${unknown.join(', ')}. Gültig: ${Object.keys(byKey).join(', ')}`);
       // The wizard saves a step as a whole and empties every field it doesn't
-      // get: keep the stored answers of the fields not passed. Secrets and the
-      // redacted ones stay out — the server keeps their stored values.
+      // get: keep the effective answers of the fields not passed. The status
+      // shows an unset setting as '' — its effective value is the default (an
+      // empty toggle would be saved as "off", an empty schedule as a change).
+      // Secrets and the redacted ones stay out — the server keeps their stored
+      // values.
       const keep = {};
       for (const f of step.fields || []) {
         if (f.type === 'secret' || step.secretsSet?.[f.key] !== undefined || f.key in values) continue;
-        if (step.values && f.key in step.values) keep[f.key] = step.values[f.key];
+        if (!step.values || !(f.key in step.values)) continue;
+        const v = step.values[f.key];
+        keep[f.key] = (isEmptyValue(v) && f.default != null && f.default !== '') ? f.default : v;
       }
       const r = await api.put('/api/setup/step', { id: step.id, values: { ...keep, ...values }, skip: Boolean(args.skip) });
       const summary = summarizeSetupStatus(r.status || {});

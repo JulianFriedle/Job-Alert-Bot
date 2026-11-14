@@ -433,6 +433,12 @@ test('a wizard step may keep the schedule unchanged while locked, not change it'
   assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '0 * * * *', MIN_RELEVANCE_SCORE: 5 } }, WIZARD_STEPS, current, false), []);
   assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '* * * * *' } }, WIZARD_STEPS, current, false), ['CRON_SCHEDULE']);
   assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '* * * * *' } }, WIZARD_STEPS, current, true), []);
+  // Fresh install: nothing stored, the status shows '' — empty on either side means the default.
+  const def = (k) => ({ CRON_SCHEDULE: '0 * * * *' })[k];
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '', MIN_RELEVANCE_SCORE: '6' } }, WIZARD_STEPS, () => undefined, false, def), []);
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '0 * * * *' } }, WIZARD_STEPS, () => '', false, def), []);
+  assert.deepEqual(costFieldsInStepBody({ id: tuning.id, values: { CRON_SCHEDULE: '' } }, WIZARD_STEPS, () => '0 8 * * *', false, def), ['CRON_SCHEDULE'],
+    'clearing a custom schedule is a change too');
 });
 
 test('a stale endpoint file (its process is gone) is not used', async () => {
@@ -461,8 +467,9 @@ test('save_setup_step keeps the stored answers of fields it was not given', asyn
     values: { 'cv.name': 'Alt', 'cv.summary': 'Bleibt', 'cv.skills.tools': ['Excel'] },
   }, {
     id: 'telegram', title: 'Telegram', required: true, complete: false, pending: true,
-    fields: [{ key: 'TELEGRAM_NOTIFICATIONS', type: 'toggle' }, { key: 'TELEGRAM_BOT_TOKEN', type: 'secret' }, { key: 'TELEGRAM_CHAT_ID', type: 'text' }],
-    values: { TELEGRAM_NOTIFICATIONS: 'on', TELEGRAM_BOT_TOKEN: '', TELEGRAM_CHAT_ID: '' },
+    fields: [{ key: 'TELEGRAM_NOTIFICATIONS', type: 'toggle' }, { key: 'TELEGRAM_BOT_TOKEN', type: 'secret' }, { key: 'TELEGRAM_CHAT_ID', type: 'text' },
+      { key: 'EXPIRY_NOTIFICATIONS', type: 'toggle', default: 'on' }],
+    values: { TELEGRAM_NOTIFICATIONS: 'on', TELEGRAM_BOT_TOKEN: '', TELEGRAM_CHAT_ID: '', EXPIRY_NOTIFICATIONS: '' },
     secretsSet: { TELEGRAM_BOT_TOKEN: true, TELEGRAM_CHAT_ID: true },
   }] };
   const { call, api } = setup({ 'GET /api/setup/status': status, 'PUT /api/setup/step': { ok: true, status } });
@@ -470,6 +477,6 @@ test('save_setup_step keeps the stored answers of fields it was not given', asyn
   assert.deepEqual(api.calls.find(c => c.method === 'PUT').body.values,
     { 'cv.name': 'Neu', 'cv.summary': 'Bleibt', 'cv.skills.tools': ['Excel'] });
   await call('save_setup_step', { stepId: 'telegram', values: { TELEGRAM_NOTIFICATIONS: 'off' } });
-  assert.deepEqual(api.calls.filter(c => c.method === 'PUT')[1].body.values, { TELEGRAM_NOTIFICATIONS: 'off' },
-    'redacted fields are left to the server, not sent back empty');
+  assert.deepEqual(api.calls.filter(c => c.method === 'PUT')[1].body.values, { TELEGRAM_NOTIFICATIONS: 'off', EXPIRY_NOTIFICATIONS: 'on' },
+    'redacted fields are left to the server; an unset toggle keeps its default instead of turning off');
 });

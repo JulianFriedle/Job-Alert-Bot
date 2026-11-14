@@ -792,13 +792,17 @@ const server = http.createServer(async (req, res) => {
               log(`MCP: Einrichtungsschritt abgelehnt (${secrets.join(', ')})`);
               return sendJson(res, 400, { error: `${secrets.join(', ')}: geheime oder geschützte Felder trägt der Nutzer selbst in der GUI ein, nicht der KI-Assistent.` });
             }
-            const current = (k) => process.env[k] ?? SCHEMA_BY_KEY[k]?.default ?? '';
-            const cost = costFieldsInStepBody(body, SETUP_STEPS, current, mcpActionsEnabled());
+            // Stored values: the .env file (it may have been edited by hand),
+            // else the process environment (Docker env vars).
+            const envMap = await readEnvMap();
+            const current = (k) => envMap[k] ?? process.env[k] ?? '';
+            const defaultOf = (k) => SCHEMA_BY_KEY[k]?.default ?? '';
+            const cost = costFieldsInStepBody(body, SETUP_STEPS, current, mcpActionsEnabled(), defaultOf);
             if (cost.length) {
               log(`MCP: Einrichtungsschritt abgelehnt, kostenrelevant (${cost.join(', ')})`);
               return sendJson(res, 400, { error: `${COST_SETTING_REFUSAL} (${cost.join(', ')})` });
             }
-            const pinned = pinGuardedStepFields(body, SETUP_STEPS, SCHEMA_BY_KEY, (k) => process.env[k] ?? '');
+            const pinned = pinGuardedStepFields(body, SETUP_STEPS, SCHEMA_BY_KEY, current);
             ctx.readBody = async () => (pinned === body ? raw : JSON.stringify(pinned));
           }
           // The Telegram test goes to the stored chat only, never to one the
