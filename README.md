@@ -57,6 +57,10 @@ src/pdf.js                ← HTML → PDF via Playwright's Chromium
 templates/                ← Document CSS (A4), anonymous example templates, default humanize prompt
 src/server.js             ← Web GUI server (npm run gui) — built-in http, operator login + client CRUD
 src/setup.js              ← Guided setup wizard (steps, validation, debug sandbox)
+src/mcp-server.js         ← MCP server (stdio) for Claude Desktop / Claude Code (npm run mcp)
+├── src/mcp-protocol.js   ← Hand-rolled JSON-RPC/MCP message handler (no SDK dependency)
+├── src/mcp-tools.js      ← Tools + prompts; talks to the running GUI over HTTP
+└── src/mcp-policy.js     ← Which routes are gated / forbidden for the assistant (shared with server.js)
 src/backup.js             ← Database backups (daily/manual/upload snapshots, retention)
 src/paths.js              ← Where state lives: next to the code, or APP_DATA_DIR (desktop app)
 src/env.js                ← Loads .env (imported first by every entry point)
@@ -311,6 +315,10 @@ Behavior is controlled by environment variables (all optional — defaults shown
 | `APPLY_DAILY_CAP` | `10` | Max submitted applications per client+platform+day (LinkedIn/Indeed hard-capped at 5) |
 | `APPLY_COOLDOWN_MINUTES` | `15` | Minimum minutes between two submissions on the same platform |
 | `APPLY_HEADFUL` | `false` | Show the apply browser window (for first logins with 2FA) |
+| `MCP_ALLOW_ACTIONS` | `false` | The red button in **Einstellungen → MCP-Server**: `true` lets the AI assistant trigger paid / outward-facing actions (see [AI assistant (MCP)](#ai-assistant-mcp)) |
+| `MCP_API_TOKEN` | — | Token the MCP server logs in with when `AUTH_ENABLED=true` (otherwise not needed) |
+| `JOB_ALERT_URL` | *(auto)* | Read by the MCP process only: GUI address override. Default: `mcp-endpoint.json` (written by the desktop app on start), else `http://127.0.0.1:$GUI_PORT`. Not in the settings form |
+| `MCP_CLIENT_ID` | *(default client)* | Read by the MCP process only: client the assistant works on when a tool gets no `clientId`. Not in the settings form |
 
 > **Per-client vs global.** `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, models and the auth/server
 > vars above are **global** (operator-wide). A client's **CV, sources, filters, prompts, Telegram
@@ -532,7 +540,7 @@ npm run gui          # → http://localhost:3000  (set GUI_PORT to change)
 | **Lauf** | Start `node index.js --once` and watch color-coded logs stream live (Server-Sent Events). Jobs auto-refresh when the run finishes. **Lauf stoppen** aborts a running pipeline: the run winds down at the next source/page boundary, keeps every job found so far, and skips the remaining stages (notifications, expiry check, statistics, export) so a partial pass can't distort them. If it hasn't exited after `RUN_STOP_GRACE_MS` (default 45 s) it is force-killed. Nothing already paid for is thrown away: each job is stored as soon as its description has been fetched, and every AI score written the moment it is scored — a stopped run leaves them in the DB, and the next run picks up where it left off instead of re-scraping. Jobs whose detail page was still loading are *not* stored (an empty description would be scored as a blank posting), so they are simply fetched again next time. **Letzte Läufe** lists recent runs per source; a source that threw an error, was blocked, or found **0 jobs** is flagged in red with a **Problem melden** button. It opens a preview of a GitHub issue (source, URL without query string, error message, recent found-counts, version) that you can edit, then opens the pre-filled issue form on GitHub, where you submit it yourself — the bot sends nothing. Platform sources are reported by type only, never with their search terms. |
 | **Klienten** | *Hidden unless `CLIENTS_ENABLED=true`.* Create/edit/delete clients (tenants): name, Telegram chat id, active toggle, Telegram & expiry toggles, optional min-score. A **Telegram-Test** button verifies the chat id. Clients receive Telegram alerts only — they have no GUI access. |
 | **Statistik** | Application heatmap, top sources/companies, run history, and a per-run overview table. |
-| **Einstellungen** | Edit every `.env` variable from a form (incl. the SaaS auth vars); switch **theme** and **language** (see below); manage **database backups** (create / upload / download / restore — see [Backups](#backups)); update the app (**Updates** card: `git pull` for a source install, release download + install in the desktop app); restart the GUI; and re-open or test the **setup wizard**; and replay the **guided tour**. |
+| **Einstellungen** | Edit every `.env` variable from a form (incl. the SaaS auth vars); the **MCP-Server (KI-Assistent)** group holds the red unlock button for paid AI actions plus copy-ready connection snippets for Claude Desktop / Claude Code (see [AI assistant (MCP)](#ai-assistant-mcp)); switch **theme** and **language** (see below); manage **database backups** (create / upload / download / restore — see [Backups](#backups)); update the app (**Updates** card: `git pull` for a source install, release download + install in the desktop app); restart the GUI; and re-open or test the **setup wizard**; and replay the **guided tour**. |
 
 All tabs operate on the **active client**. Out of the box the multi-client UI is off
 (`CLIENTS_ENABLED=false`): there is no **Klienten** tab and no client selector, and everything
@@ -629,6 +637,96 @@ npm install -g pm2
 pm2 start index.js --name job-alert
 pm2 save         # persist across reboots
 ```
+
+## AI assistant (MCP)
+
+The app ships an [MCP](https://modelcontextprotocol.io) server (`npm run mcp`,
+`src/mcp-server.js`, stdio) so you can drive the bot from **Claude Desktop** or **Claude Code**:
+ask for this week's best jobs, let Claude walk you through the initial setup, or fill your
+profile from a CV you drop into the chat. It needs no extra dependency and talks to the
+**running GUI over HTTP** — never to the database directly — so login, client scoping and
+validation stay in one place. The app (or `npm run gui`) must be running; if it isn't, the tools
+answer with a clear "GUI nicht erreichbar" message.
+
+**Connect it.** Open **Einstellungen → MCP-Server (KI-Assistent)** — it shows a ready-to-paste
+snippet for each client, with a copy button:
+
+- *Claude Desktop:* Settings → Developer → Edit config, add the block to `claude_desktop_config.json`, restart Claude.
+- *Claude Code:* run the displayed `claude mcp add job-alert …` command.
+
+By hand it looks like this (paths are examples; the desktop app additionally needs
+`"ELECTRON_RUN_AS_NODE": "1"` and `APP_DATA_DIR` — the snippet in Einstellungen has them right):
+
+```json
+{
+  "mcpServers": {
+    "job-alert": {
+      "command": "node",
+      "args": ["/path/to/Job-Alert-Bot/src/mcp-server.js"],
+      "env": { "APP_DATA_DIR": "/path/to/Job-Alert-Bot" }
+    }
+  }
+}
+```
+
+The desktop app picks a free port and writes its address to `mcp-endpoint.json` in its data
+folder on start, which the MCP process reads. Elsewhere the MCP process uses
+`http://127.0.0.1:$GUI_PORT` from `.env`; override either with `JOB_ALERT_URL`. Tools take an optional
+`clientId` (default: `MCP_CLIENT_ID`, else the default client).
+
+**Tools, by tier**
+
+| Tier | Tools | Cost |
+|---|---|---|
+| **Lesen** | `list_clients`, `get_overview`, `list_jobs`, `get_job`, `list_runs`, `get_run_report`, `get_run_status`, `get_run_log`, `list_applications`, `get_document_status` | free |
+| **Einrichtung & Profil** | `get_setup_status`, `save_setup_step`, `get_profile`, `get_profile_template`, `update_profile`, `get_sources`, `update_sources`, `add_source`, `get_filters`, `update_filters`, `get_prompts`, `get_settings`, `update_settings` | free, local |
+| **Pflege** | `set_job_status`, `ignore_job`, `add_manual_job` | free, local |
+| **Aktionen** (locked) | `start_run`, `stop_run`, `generate_documents`, `generate_cover_letter`, `send_telegram_test`, `enqueue_application` | Anthropic tokens / Telegram / queue |
+
+Prompts (`einrichtung`, `profil_aus_lebenslauf`, `jobs_der_woche`) appear in Claude as ready-made
+workflows. `update_profile` is a JSON merge-patch (arrays replace) and, like `update_sources`,
+sends the version it read, so a concurrent edit is reported as a conflict instead of overwritten.
+
+**The red button.** The **Aktionen** tools are always listed but refuse until you click
+**Kostenpflichtige KI-Aktionen freischalten** (after a confirmation) in
+**Einstellungen → MCP-Server**. Unlocked, the assistant may start runs (Anthropic cost per
+analyzed job — a large backlog is quickly several euros), generate tailored documents and cover
+letters (stronger model, up to 4 calls per click), send Telegram test messages and *prepare*
+applications. The same button guards the settings that make every later run cost more:
+`ANALYZER_MODEL`, `COVER_LETTER_MODEL`, `DOCS_HUMANIZE` and `CRON_SCHEDULE` — while locked, the
+assistant can read but not change them (also not through the wizard). **Wieder sperren** locks it
+again; the switch is checked on every call, so it applies immediately. The GUI server refuses
+these requests from the MCP process itself (403), not only the MCP tools.
+
+What stays open while locked: sources, filters, profile and the other settings are setup work and
+free to change — but the next **scheduled** run acts on them. A long list of new sources or a broad
+job-board search means more jobs to analyze; a lower `MIN_RELEVANCE_SCORE` means more Telegram
+alerts to your own chat. Look over what the assistant changed (it tells you; the server logs
+`MCP: …` lines for refused attempts).
+
+**Never exposed** — not even when unlocked, because they stay with you: approving, discarding
+or retrying applications (submission always needs your explicit go-ahead in the GUI/Telegram;
+`APPLY_DRY_RUN` and the daily caps are untouched), platform credentials, CV upload/delete,
+backups and restore, updates, restart, creating/deleting clients, deleting or re-humanizing
+documents. The assistant also cannot change `MCP_ALLOW_ACTIONS` itself, nor the auto-apply
+settings, login settings (`AUTH_ENABLED`, operator password, `SESSION_SECRET`), `CREDENTIALS_KEY`,
+`GUI_PORT`, where alerts go (`TELEGRAM_CHAT_ID`; a Telegram test always goes to the stored chat),
+the backup settings (`BACKUP_ENABLED`, `BACKUP_RETENTION_DAYS`) or `ISSUE_REPO`. `list_clients`
+gets ids and names only.
+
+**Security notes.** API keys and tokens never go through the chat: `get_settings` /
+`get_setup_status` only report *whether* a secret is set, and `update_settings` /
+`save_setup_step` refuse secret fields — enter them in the GUI yourself. With `AUTH_ENABLED=true`
+set `MCP_API_TOKEN` in Einstellungen (any long random string); the MCP process reads it from
+the same `.env` and logs in with it as a bearer token. Every action call is logged in the GUI
+server's output (`MCP: …`).
+
+**What the lock is not.** It recognizes the assistant by the header its MCP process sends (or
+the `MCP_API_TOKEN`). It reliably limits what the assistant can do *through the MCP tools* — it is
+no sandbox against an agent that also has a shell or network access on the same machine: Claude
+Code with terminal access could call the GUI's HTTP API directly, or read `.env`, like any other
+local program (with `AUTH_ENABLED=false` the GUI trusts every local caller). Give such an agent
+only the permissions you would give it anyway.
 
 ## Releases (maintainers)
 

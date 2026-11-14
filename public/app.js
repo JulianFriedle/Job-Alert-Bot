@@ -4,7 +4,7 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 // The active tenant. Data requests are auto-scoped with ?clientId=…; a handful of
 // global/operator endpoints (below) are exempt.
 let currentClientId = null;
-const CLIENT_AGNOSTIC = ['/api/clients', '/api/login', '/api/logout', '/api/auth', '/api/settings', '/api/setup', '/api/update', '/api/restart', '/api/backups', '/api/models'];
+const CLIENT_AGNOSTIC = ['/api/clients', '/api/login', '/api/logout', '/api/auth', '/api/settings', '/api/mcp', '/api/setup', '/api/update', '/api/restart', '/api/backups', '/api/models'];
 const api = async (url, opts) => {
   if (currentClientId && url.startsWith('/api/') && !CLIENT_AGNOSTIC.some(p => url.startsWith(p))) {
     url += (url.includes('?') ? '&' : '?') + 'clientId=' + encodeURIComponent(currentClientId);
@@ -1199,10 +1199,71 @@ function renderSettings() {
       <div class="setting-list">
         ${settingsSchema.filter(s => s.group === g).map(settingField).join('')}
       </div>
+      ${g === MCP_GROUP ? '<div class="mcp-info" id="mcp-info"></div>' : ''}
     </div>`).join('');
   $('#settings-msg').textContent = '';
+  if ($('#mcp-info')) loadMcpInfo();
   if (settingsSchema.some(s => s.models)) fillModelOptions();
 }
+
+// The settings group that holds the AI-assistant (MCP) switch + connection info.
+// Must match the group heading in SETTINGS_SCHEMA (src/server.js).
+const MCP_GROUP = 'MCP-Server (KI-Assistent)';
+
+async function loadMcpInfo() {
+  const box = $('#mcp-info');
+  if (!box) return;
+  try {
+    const info = await api('/api/mcp/info');
+    const desktop = JSON.stringify(info.launch.desktopConfig, null, 2);
+    const code = info.launch.claudeCodeCommand;
+    box.innerHTML = `
+      <p class="mcp-state ${info.actionsEnabled ? 'on' : ''}">${esc(t(info.actionsEnabled ? 'mcp.state.unlocked' : 'mcp.state.locked'))}
+        · ${esc(t('mcp.endpoint'))} <code>${esc(info.endpoint)}</code>
+        · ${esc(t(info.tokenSet ? 'mcp.token.set' : 'mcp.token.unset'))}</p>
+      <p class="set-help">${esc(t('mcp.connectHint'))}</p>
+      <div class="mcp-snippet">
+        <div class="mcp-snippet-head"><strong>${esc(t('mcp.desktopLabel'))}</strong>
+          <button type="button" class="btn btn-ghost" data-mcp-copy="desktop">${esc(t('mcp.copy'))}</button></div>
+        <pre>${esc(desktop)}</pre>
+      </div>
+      <div class="mcp-snippet">
+        <div class="mcp-snippet-head"><strong>${esc(t('mcp.codeLabel'))}</strong>
+          <button type="button" class="btn btn-ghost" data-mcp-copy="code">${esc(t('mcp.copy'))}</button></div>
+        <pre>${esc(code)}</pre>
+      </div>`;
+    box._snippets = { desktop, code };
+  } catch (err) {
+    box.textContent = t('mcp.loadError') + err.message;
+  }
+}
+
+async function setMcpActions(on) {
+  try {
+    await api('/api/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: { MCP_ALLOW_ACTIONS: on ? 'true' : 'false' } }),
+    });
+    toast(t(on ? 'mcp.toastUnlocked' : 'mcp.toastLocked'));
+    loadSettings();
+  } catch (err) { toast(t('toast.error') + err.message); }
+}
+
+$('#settings-groups').addEventListener('click', async (e) => {
+  const toggle = e.target.closest('[data-mcp-toggle]');
+  if (toggle) {
+    // Unlocking is the only step that needs a deliberate confirmation.
+    if (toggle.dataset.mcpToggle === 'unlock') { if (confirm(t('mcp.confirm'))) setMcpActions(true); }
+    else setMcpActions(false);
+    return;
+  }
+  const copy = e.target.closest('[data-mcp-copy]');
+  if (copy) {
+    const text = $('#mcp-info')?._snippets?.[copy.dataset.mcpCopy] || '';
+    try { await navigator.clipboard.writeText(text); toast(t('mcp.copied')); }
+    catch { toast(t('mcp.copyFailed')); }
+  }
+});
 
 // Fill the model pickers. The list is kept for the page (the server caches it
 // for an hour); a failure is remembered for a minute so reopening the tab
@@ -1251,6 +1312,14 @@ function settingField(s) {
       <input id="${id}" class="set-input" type="password" ${da} value="${esc(s.value)}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false">
       <button type="button" class="btn btn-ghost set-reveal" title="${esc(t('settings.revealTitle'))}">👁</button>
     </div>`;
+  } else if (s.type === 'danger') {
+    // Not a .set-input: the general Save button must never touch it. The red
+    // button saves immediately (see the click handler below).
+    const on = ['true', '1', 'on', 'yes'].includes(String(s.value).toLowerCase());
+    control = on
+      ? `<div class="mcp-banner" role="alert">${esc(t('mcp.unlocked'))}</div>
+         <button type="button" id="${id}" class="btn" data-mcp-toggle="lock">${esc(t('mcp.lock'))}</button>`
+      : `<button type="button" id="${id}" class="btn btn-red" data-mcp-toggle="unlock">${esc(t('mcp.unlock'))}</button>`;
   } else if (s.type === 'int') {
     control = `<input id="${id}" class="set-input set-num" type="number" ${da}
       value="${esc(s.value)}" placeholder="${esc(s.default)}"${s.min != null ? ` min="${s.min}"` : ''}${s.max != null ? ` max="${s.max}"` : ''}>`;
@@ -1272,7 +1341,7 @@ function settingField(s) {
       </div><p class="set-help model-pick-note" data-for="${id}" hidden></p>`;
     }
   }
-  const def = (s.type !== 'secret' && s.type !== 'bool' && s.default) ? ` <span class="set-default">${esc(t('settings.defaultPrefix'))}<code>${esc(s.default)}</code></span>` : '';
+  const def = (s.type !== 'secret' && s.type !== 'bool' && s.type !== 'danger' && s.default) ? ` <span class="set-default">${esc(t('settings.defaultPrefix'))}<code>${esc(s.default)}</code></span>` : '';
   return `<div class="setting">
     <label class="set-label" for="${id}">${esc(tSetLabel(s.key, s.label))} ${req}</label>
     <div class="set-control">${control}</div>

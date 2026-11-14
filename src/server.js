@@ -26,7 +26,13 @@ import { previewFilters } from './filters.js';
 import { DEFAULT_ANALYZER_MODEL, DEFAULT_WRITER_MODEL, listAvailableModels } from './models.js';
 import { buildJobsCsv, filterJobs, csvFileName } from './csv-export.js';
 import { sendTelegramTest } from './notifier.js';
-import { handleSetupApi } from './setup.js';
+import { handleSetupApi, STEPS as SETUP_STEPS } from './setup.js';
+import {
+  MCP_HEADER, ACTIONS_REFUSAL, FORBIDDEN_REFUSAL, COST_SETTING_REFUSAL,
+  isMcpActionRoute, isMcpForbiddenRoute, mcpActionsEnabled, settingsRefusal, costFieldsInStepBody,
+  pinGuardedStepFields,
+  secretFieldsInStepBody, redactSetupSecrets,
+} from './mcp-policy.js';
 import { DEFAULT_PROMPTS, PROMPT_FIELDS, minimizePromptOverrides } from './prompts.js';
 import { getProfile, getSources, getFilters, getPrompts } from './client-config.js';
 import { PLATFORM_TYPES } from './scrapers/index.js';
@@ -36,7 +42,7 @@ import {
   setPlatformCredentials, deletePlatformCredentials,
 } from './credentials.js';
 import { sessionPath, getAuthenticatedContext } from './platform-login.js';
-import { APP_ROOT, DATA_DIR, ENV_FILE, IS_DESKTOP } from './paths.js';
+import { APP_ROOT, DATA_HOME, DATA_DIR, ENV_FILE, IS_DESKTOP } from './paths.js';
 import { launchPlatformBrowser } from './scrapers/browser.js';
 import { parseQuestions, applyAnswer, unansweredRequired } from './questions.js';
 import {
@@ -148,9 +154,21 @@ function parseCookies(req) {
   return out;
 }
 
+// The MCP server (src/mcp-server.js) authenticates with a static bearer token
+// (MCP_API_TOKEN) instead of a login cookie. Read at request time so a token
+// saved in Einstellungen applies immediately.
+function hasValidBearer(req) {
+  const token = process.env.MCP_API_TOKEN;
+  const header = String(req.headers.authorization || '');
+  if (!token || !header.startsWith('Bearer ')) return false;
+  const given = Buffer.from(header.slice(7).trim());
+  const want = Buffer.from(token);
+  return given.length === want.length && crypto.timingSafeEqual(given, want);
+}
+
 function isAuthenticated(req) {
   if (!AUTH_ENABLED) return true;
-  return Boolean(verifySession(parseCookies(req).session));
+  return Boolean(verifySession(parseCookies(req).session)) || hasValidBearer(req);
 }
 
 // Whether the session cookie should carry the `Secure` flag (browser only sends
@@ -248,6 +266,11 @@ const SETTINGS_SCHEMA = [
     help: 'scrypt-Hash des Betreiber-Passworts. Erzeugen mit: npm run hash-password -- "<passwort>"' },
   { key: 'SESSION_SECRET', group: 'Sicherheit (SaaS)', label: 'Session-Secret', type: 'secret',
     help: 'Zufälliger String zum Signieren der Login-Sitzungen (sonst bei jedem Neustart neu → Logout). Neustart nötig.' },
+
+  { key: 'MCP_ALLOW_ACTIONS', group: 'MCP-Server (KI-Assistent)', label: 'Kostenpflichtige KI-Aktionen', type: 'danger', default: 'false',
+    help: 'Gesperrt: Der KI-Assistent (Claude Desktop / Claude Code über MCP) kann Jobs, Läufe, Profil und Einstellungen lesen und pflegen, aber nichts auslösen, das Geld kostet oder nach außen wirkt. Freigeschaltet darf er Läufe starten (Anthropic-Kosten pro Job), Unterlagen und Anschreiben erstellen, Telegram-Nachrichten senden, Bewerbungen vorbereiten sowie Modelle und Zeitplan ändern. Abgesendet wird nie ohne deine Freigabe.' },
+  { key: 'MCP_API_TOKEN', group: 'MCP-Server (KI-Assistent)', label: 'MCP-Zugangstoken', type: 'secret',
+    help: 'Nur nötig, wenn das Login aktiv ist (AUTH_ENABLED): Der MCP-Server meldet sich damit an der GUI an. Beliebiger langer Zufallsstring; derselbe Wert muss in der MCP-Konfiguration als MCP_API_TOKEN stehen.' },
 ];
 const SCHEMA_BY_KEY = Object.fromEntries(SETTINGS_SCHEMA.map(s => [s.key, s]));
 
@@ -564,6 +587,47 @@ async function serveStatic(req, res, urlPath) {
   }
 }
 
+// ── MCP (AI assistant) ──────────────────────────────────────────────────────
+// Requests from src/mcp-server.js carry the MCP header (or the MCP bearer token).
+// They are subject to the rules in mcp-policy.js: action routes need the red
+// button (MCP_ALLOW_ACTIONS, read at request time), some routes are never
+// reachable, and protected settings cannot be written.
+let mcpEndpointUrl = '';
+
+function mcpActionLabel(pathname) {
+  if (pathname === '/api/run') return 'Lauf gestartet';
+  if (pathname === '/api/run/stop') return 'Lauf-Stopp angefordert';
+  if (/\/documents$/.test(pathname)) return 'Unterlagen-Erstellung gestartet';
+  if (/\/cover-letter$/.test(pathname)) return 'Anschreiben erzeugt';
+  if (/telegram-test$/.test(pathname)) return 'Telegram-Testnachricht gesendet';
+  if (pathname === '/api/applications') return 'Bewerbung vorbereitet';
+  return 'Aktion ausgeführt';
+}
+
+function shellQuote(v) {
+  if (/^[A-Za-z0-9_@%+=:,./\\-]+$/.test(v)) return v;
+  // cmd.exe / PowerShell don't know single quotes ("C:\Program Files\…").
+  if (process.platform === 'win32') return `"${String(v).replace(/"/g, '\\"')}"`;
+  return `'${String(v).replace(/'/g, `'\\''`)}'`;
+}
+
+// Ready-to-paste connection snippets for Claude Desktop and Claude Code.
+function mcpLaunchInfo() {
+  const scriptPath = path.join(ROOT, 'src', 'mcp-server.js');
+  // APP_DATA_DIR makes src/env.js read the right .env (and paths.js the right
+  // data folder) no matter which working directory the client starts us in.
+  const env = {};
+  if (IS_DESKTOP) env.ELECTRON_RUN_AS_NODE = '1';
+  env.APP_DATA_DIR = DATA_HOME;
+  if (process.env.ENV_FILE_PATH) env.ENV_FILE_PATH = process.env.ENV_FILE_PATH;
+  const entry = { command: process.execPath, args: [scriptPath], env };
+  const envFlags = Object.entries(env).map(([k, v]) => `-e ${k}=${shellQuote(v)}`).join(' ');
+  return {
+    desktopConfig: { mcpServers: { 'job-alert': entry } },
+    claudeCodeCommand: `claude mcp add job-alert ${envFlags} -- ${shellQuote(process.execPath)} ${shellQuote(scriptPath)}`,
+  };
+}
+
 // ── Router ───────────────────────────────────────────────────────────────--
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -612,10 +676,40 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 401, { error: 'Nicht angemeldet' });
       }
 
+      // ---- MCP gate: rules for requests from the AI assistant ----
+      const fromMcp = req.headers[MCP_HEADER] !== undefined || hasValidBearer(req);
+      if (fromMcp) {
+        if (isMcpForbiddenRoute(method, pathname)) {
+          log(`MCP: Zugriff gesperrt – ${method} ${pathname}`);
+          return sendJson(res, 403, { error: FORBIDDEN_REFUSAL });
+        }
+        if (isMcpActionRoute(method, pathname)) {
+          if (!mcpActionsEnabled()) {
+            log(`MCP: Aktion gesperrt (nicht freigeschaltet) – ${method} ${pathname}`);
+            return sendJson(res, 403, { error: ACTIONS_REFUSAL, locked: true });
+          }
+          log(`MCP: ${mcpActionLabel(pathname)} (Klient ${url.searchParams.get('clientId') || DEFAULT_CLIENT_ID})`);
+        }
+      }
+
+      // GET /api/mcp/info — state of the AI-assistant (MCP) integration + connection snippets
+      if (method === 'GET' && pathname === '/api/mcp/info') {
+        return sendJson(res, 200, {
+          actionsEnabled: mcpActionsEnabled(),
+          tokenSet: Boolean(process.env.MCP_API_TOKEN),
+          endpoint: mcpEndpointUrl || `http://127.0.0.1:${PORT}`,
+          launch: mcpLaunchInfo(),
+        });
+      }
+
       // ---- Clients (tenant management) ----
       // GET /api/clients — list (secrets included; operator owns them)
       if (method === 'GET' && pathname === '/api/clients') {
-        return sendJson(res, 200, { clients: getClients(), defaultClientId: DEFAULT_CLIENT_ID });
+        // The assistant gets ids and names only — no chat ids or settings.
+        const clients = fromMcp
+          ? getClients().map(c => ({ id: c.id, name: c.name, enabled: c.enabled }))
+          : getClients();
+        return sendJson(res, 200, { clients, defaultClientId: DEFAULT_CLIENT_ID });
       }
       // POST /api/clients — create
       if (method === 'POST' && pathname === '/api/clients') {
@@ -662,7 +756,10 @@ const server = http.createServer(async (req, res) => {
         const client = getClient(id);
         if (!client) return sendJson(res, 404, { error: 'Klient nicht gefunden' });
         let chatId = client.telegram_chat_id;
-        try { chatId = (JSON.parse(await readBody(req) || '{}').telegram_chat_id || chatId); } catch { /* use stored */ }
+        // The assistant may only test the stored chat, never name another one.
+        if (!fromMcp) {
+          try { chatId = (JSON.parse(await readBody(req) || '{}').telegram_chat_id || chatId); } catch { /* use stored */ }
+        }
         try {
           await sendTelegramTest(chatId);
           return sendJson(res, 200, { ok: true });
@@ -682,7 +779,37 @@ const server = http.createServer(async (req, res) => {
 
       // ---- Setup wizard (delegated to setup.js) ----
       if (pathname.startsWith('/api/setup')) {
-        const handled = await handleSetupApi(req, res, url, { sendJson, readBody });
+        const ctx = { sendJson, readBody };
+        if (fromMcp) {
+          // The assistant never sees secret values and never writes secret fields.
+          ctx.sendJson = (r, status, obj) => sendJson(r, status, redactSetupSecrets(obj, SCHEMA_BY_KEY));
+          if (method === 'PUT' && pathname === '/api/setup/step') {
+            const raw = await readBody(req);
+            let body = {};
+            try { body = JSON.parse(raw || '{}'); } catch { /* handleSetupApi reports the bad JSON */ }
+            const secrets = secretFieldsInStepBody(body, SETUP_STEPS, SCHEMA_BY_KEY);
+            if (secrets.length) {
+              log(`MCP: Einrichtungsschritt abgelehnt (${secrets.join(', ')})`);
+              return sendJson(res, 400, { error: `${secrets.join(', ')}: geheime oder geschützte Felder trägt der Nutzer selbst in der GUI ein, nicht der KI-Assistent.` });
+            }
+            // Stored values: the .env file (it may have been edited by hand),
+            // else the process environment (Docker env vars).
+            const envMap = await readEnvMap();
+            const current = (k) => envMap[k] ?? process.env[k] ?? '';
+            const defaultOf = (k) => SCHEMA_BY_KEY[k]?.default ?? '';
+            const cost = costFieldsInStepBody(body, SETUP_STEPS, current, mcpActionsEnabled(), defaultOf);
+            if (cost.length) {
+              log(`MCP: Einrichtungsschritt abgelehnt, kostenrelevant (${cost.join(', ')})`);
+              return sendJson(res, 400, { error: `${COST_SETTING_REFUSAL} (${cost.join(', ')})` });
+            }
+            const pinned = pinGuardedStepFields(body, SETUP_STEPS, SCHEMA_BY_KEY, current);
+            ctx.readBody = async () => (pinned === body ? raw : JSON.stringify(pinned));
+          }
+          // The Telegram test goes to the stored chat only, never to one the
+          // assistant names.
+          if (method === 'POST' && pathname === '/api/setup/test-telegram') ctx.readBody = async () => '{}';
+        }
+        const handled = await handleSetupApi(req, res, url, ctx);
         if (handled) return;
       }
 
@@ -1319,7 +1446,7 @@ const server = http.createServer(async (req, res) => {
             default: s.default ?? '', required: !!s.required, help: s.help,
             min: s.min, max: s.max, models: !!s.models,
           };
-          if (s.type === 'secret') { out.isSet = hasValue; out.value = (hasValue && !AUTH_ENABLED) ? raw : ''; }
+          if (s.type === 'secret') { out.isSet = hasValue; out.value = (hasValue && !AUTH_ENABLED && !fromMcp) ? raw : ''; }
           else out.value = hasValue ? raw : (s.default ?? '');   // prefill effective value
           return out;
         });
@@ -1334,6 +1461,14 @@ const server = http.createServer(async (req, res) => {
         const updates = incoming && incoming.settings;
         if (!updates || typeof updates !== 'object')
           return sendJson(res, 400, { error: 'Erwarte { settings: { KEY: value } }' });
+
+        if (fromMcp) {
+          const refusal = settingsRefusal(Object.keys(updates), SCHEMA_BY_KEY, mcpActionsEnabled());
+          if (refusal) {
+            log(`MCP: Änderung geschützter Einstellungen abgelehnt (${refusal.keys.join(', ')})`);
+            return sendJson(res, 400, { error: refusal.error });
+          }
+        }
 
         const final = { ...(await readEnvMap()) };   // keep any unknown/extra keys
         const errors = [];
@@ -1350,7 +1485,10 @@ const server = http.createServer(async (req, res) => {
             continue;
           }
           if (val === '') { delete final[key]; continue; }   // unset → code default applies
-          if (s.type === 'int') {
+          if (s.type === 'danger') {
+            // Boolean switch behind a confirm dialog (the red button) — normalize.
+            final[key] = ['true', '1', 'on', 'yes'].includes(val.toLowerCase()) ? 'true' : 'false';
+          } else if (s.type === 'int') {
             if (!/^-?\d+$/.test(val)) { errors.push(`${s.label}: muss eine ganze Zahl sein`); continue; }
             const n = Number(val);
             if (s.min != null && n < s.min) { errors.push(`${s.label}: mindestens ${s.min}`); continue; }
@@ -1404,6 +1542,13 @@ const server = http.createServer(async (req, res) => {
       // GET /api/run/status
       if (method === 'GET' && pathname === '/api/run/status') {
         return sendJson(res, 200, { active: run.active, startedAt: run.startedAt, stopping: run.stopping });
+      }
+
+      // GET /api/run/logs?tail=N — last N lines of the in-memory run log (default 100, max 800)
+      if (method === 'GET' && pathname === '/api/run/logs') {
+        const raw = parseInt(url.searchParams.get('tail'), 10);
+        const tail = Number.isFinite(raw) ? Math.min(Math.max(raw, 1), LOG_CAP) : 100;
+        return sendJson(res, 200, { active: run.active, total: run.logs.length, lines: run.logs.slice(-tail) });
       }
 
       // GET /api/run/stream — Server-Sent Events of live logs
@@ -1567,7 +1712,21 @@ server.on('error', (err) => {
     process.exit(1);
   }
 });
-server.listen(PORT, HOST, () => log(`GUI ready → http://localhost:${PORT}`));
+server.listen(PORT, HOST, () => {
+  log(`GUI ready → http://localhost:${PORT}`);
+  const port = server.address()?.port || PORT;
+  mcpEndpointUrl = `http://127.0.0.1:${port}`;
+  // Tell the MCP server where we listen: the desktop app picks its port
+  // dynamically. Desktop only — a dev/test instance or the operator sandbox
+  // shares data/ with the real GUI and would otherwise point the assistant at
+  // the wrong database. Best effort — a failure must never take the GUI down.
+  if (IS_DESKTOP) try {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFile(path.join(DATA_DIR, 'mcp-endpoint.json'),
+      JSON.stringify({ url: mcpEndpointUrl, pid: process.pid, startedAt: new Date().toISOString() }), 'utf-8')
+      .catch(err => log(`MCP-Endpunktdatei nicht geschrieben: ${err.message}`));
+  } catch (err) { log(`MCP-Endpunktdatei nicht geschrieben: ${err.message}`); }
+});
 
 // Daily DB backup: check on startup, then every 6h so a long-running server still
 // creates one after crossing midnight. Idempotent — skips if today's already exists.
