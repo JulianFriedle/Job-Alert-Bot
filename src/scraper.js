@@ -12,6 +12,7 @@ import { isAborted } from './run-control.js';
 import { isNonJobLink } from './link-filter.js';
 import { cleanJobTitle } from './title-cleanup.js';
 import { createPaginationGuard } from './pagination-guard.js';
+import { createCrossChannelDedup } from './job-identity.js';
 import { isPersonioUrl, fetchPersonioJobs } from './scrapers/personio.js';
 import { CONFIG_DIR } from './paths.js';
 
@@ -42,6 +43,11 @@ async function extractJobsAndPagination(page, source = {}) {
       'a[href*="/vacancy/"]',
       'a[href*="/stellenangebote/"]',
       'a[href*="/stellen/"]',
+      // Hyphenated listing paths with the posting below them:
+      // Liebherr /karriere/offene-stellen/85537-de-3364214, Bausch+Ströbel /karriere/ihre-bewerbung/unsere-jobs/2026-113
+      // — but not a link to the listing itself (".../offene-stellen/").
+      'a[href*="-stellen/"]:not([href$="-stellen/"])',
+      'a[href*="-jobs/"]:not([href$="-jobs/"])',
       'a[href*="/stelle/"]',
       'a[href*="/anzeige/"]',
       'a[href*="/jobangebot"]',
@@ -67,7 +73,9 @@ async function extractJobsAndPagination(page, source = {}) {
     const processEl = (el) => {
       const href = el.href;
       if (!href || seen.has(href)) return;
-      if (/^(#|javascript:|mailto:|tel:)/i.test(href)) return;
+      // el.href is absolute, so anything but http(s) is a pseudo link —
+      // javascript:, mailto:, tel:, or a typo like "javscript:;" (Rolls-Royce).
+      if (!/^https?:/i.test(href)) return;
 
       // Skip fragment links that stay on the same page (sort/filter buttons)
       // Allow cross-domain links if their path looks like a job detail page
@@ -87,10 +95,14 @@ async function extractJobsAndPagination(page, source = {}) {
       } catch (_) {}
 
       // Skip navigation chrome (language switchers, footers, etc.)
-      if (el.closest(
-        'nav, header, footer, [role="navigation"], ' +
-        '[class*="language"], [class*="lang-switch"], [class*="locale"], select'
-      )) return;
+      if (el.closest('nav, header, footer, [role="navigation"], select')) return;
+      // Language/locale switchers by class name. A page-wide wrapper can carry
+      // such a class too — Schunk's <body class="… language-de"> dropped every
+      // link on the page — so a match that wraps <main> or is <body>/<html> is
+      // the page, not a switcher.
+      const switcher = el.closest('[class*="language"], [class*="lang-switch"], [class*="locale"]');
+      if (switcher && switcher !== document.body && switcher !== document.documentElement &&
+          !switcher.querySelector('main, [role="main"]')) return;
 
       // innerText keeps a break between block elements, so a title and the
       // location in the next <div> don't run together ("ZeitpunktStuttgart").
@@ -191,7 +203,7 @@ async function extractJobsAndPagination(page, source = {}) {
     );
     for (const el of containerEls) {
       const href = el.href;
-      if (!href || seen.has(href) || /^(#|javascript:)/i.test(href)) continue;
+      if (!href || seen.has(href) || !/^https?:/i.test(href)) continue; // also "javscript:;" (Rolls-Royce)
       seen.add(href);
       links.push(href);
     }
@@ -200,7 +212,7 @@ async function extractJobsAndPagination(page, source = {}) {
     if (links.length === 0) {
       for (const el of document.querySelectorAll('a[href]')) {
         const href = el.href;
-        if (!href || seen.has(href) || /^(#|javascript:)/i.test(href)) continue;
+        if (!href || seen.has(href) || !/^https?:/i.test(href)) continue;
         if (href.split('#')[0] === currentUrl.split('#')[0]) continue; // same page, different fragment
         if (/[?&](page|pg|p|startrow|start|offset|from|searchpage)=\d+/i.test(href)) {
           seen.add(href);
@@ -229,7 +241,8 @@ async function clickLoadMore(page) {
   const textPatterns = [
     'mehr laden', 'mehr anzeigen', 'weitere stellen', 'weitere jobs',
     'mehr jobs', 'alle anzeigen', 'load more', 'show more', 'more jobs',
-    'weitere ergebnisse', 'more results',
+    // SuccessFactors tile layout: "Weitere Suchergebnisse" / "More search results" (Karl Storz)
+    'weitere (such)?ergebnisse', 'more (search )?results',
   ];
 
   return await page.evaluate(({ cssCandidates, textPatterns }) => {
@@ -417,11 +430,39 @@ async function extractTotalCount(page) {
       /(\d{2,})\s+(?:Stellenangebote|Jobangebote)/i,
     ];
     for (const p of patterns) {
-      const m = text.match(p);
-      if (m) return parseInt(m[1], 10);
+      for (const m of text.matchAll(new RegExp(p.source, 'gi'))) {
+        // A card's location line "Winnenden, DE, 71364" followed by the next
+        // card's "Job…" reads as "71364 Jobs" (Kärcher) — a postal code, not a count.
+        const before = text.slice(Math.max(0, m.index - 8), m.index);
+        if (/,\s*[A-Z]{2},\s*$/.test(before)) continue;
+        return parseInt(m[1], 10);
+      }
     }
     return null;
   }).catch(() => null);
+}
+
+// Recognize a bot-protection or refusal page instead of a career page. Only
+// consulted when page 1 yielded nothing, so a 403 that still renders a
+// normal listing is never thrown away. Returns a German reason or null.
+export function blockPageReason({ status = null, title = '', text = '' } = {}) {
+  const t = String(title).trim();
+  const body = String(text).replace(/\s+/g, ' ').trim();
+  if (/^(access denied|attention required|just a moment|forbidden|403 forbidden|zugriff verweigert)\b/i.test(t) ||
+      /^access denied you don't have permission to access/i.test(body)) {
+    return `Zugriff verweigert (Bot-Schutz${status ? `, HTTP ${status}` : ''}) – Seite "${t.slice(0, 60)}"`;
+  }
+  if (status === 401 || status === 403 || status === 429) {
+    return `Zugriff verweigert (HTTP ${status})`;
+  }
+  return null;
+}
+
+// Azure Cognitive Search behind j2w / SAP SuccessFactors career sites (Schaeffler).
+// Same response shape ({ '@odata.count', value: [{ applyUrl, title, … }] }) on
+// both hosts; the vendor moved from *.search.windows.net to its own API in 2026.
+export function isAzureSearchApi(url) {
+  return /\.search\.windows\.net\//.test(url) || /\/\/production\.api\.recruiting-solutions\.org\/search\b/.test(url);
 }
 
 // Extract jobs from a plain JSON API response — captures any SPA that fires XHR/fetch with job arrays.
@@ -592,6 +633,9 @@ export async function scrapeSource(source) {
   const visitedUrls = new Set();
   const seenJobUrls = new Set();
   const nonJobLinks = new Set(); // link texts dropped as navigation/UI chrome
+  // The same posting read from the page and from an intercepted API under two
+  // different URLs (Rolls-Royce: page link vs. Workday apply link) — see job-identity.js.
+  const isCrossChannelDuplicate = createCrossChannelDedup();
   // Per-source knobs (config): an optional page limit on top of each
   // strategy's built-in cap, and how long one page load may take. The guard
   // also stops on empty streaks, failures and refused connections.
@@ -620,6 +664,7 @@ export async function scrapeSource(source) {
       // Pagination, legal links, "Stellenanzeige merken" … — never a job, and each
       // one would cost a detail-page fetch and a Claude call.
       if (!fromApi && isNonJobLink(job.title, source.name)) { nonJobLinks.add(job.title); continue; }
+      if (isCrossChannelDuplicate(job.url, fromApi ? 'api' : 'dom')) { dupes++; continue; }
       allJobs.push({ ...job, id: generateId(job.url, job.title, job.company), source: source.name });
       added++;
     }
@@ -646,7 +691,7 @@ export async function scrapeSource(source) {
     const apiJobsMap = new Map(); // applyUrl → job object
     let apiTotalCount = 0;
     page.on('response', async (res) => {
-      if (!res.url().includes('search.windows.net')) return;
+      if (!isAzureSearchApi(res.url())) return;
       try {
         const json = await res.json();
         if (!Array.isArray(json.value)) return;
@@ -672,7 +717,7 @@ export async function scrapeSource(source) {
     let apiQuery = null; // { url, totalHits, perPage } — for deterministic page-by-page replay (Bosch)
     let apiPaginationMeta = null; // { totalPages, pageSize } — fallback for Strategy 0 when DOM count absent
     page.on('response', async (res) => {
-      if (res.url().includes('search.windows.net')) return; // already handled above
+      if (isAzureSearchApi(res.url())) return; // already handled above
       const rt = res.request().resourceType();
       if (rt !== 'xhr' && rt !== 'fetch') return;
       const ct = res.headers()['content-type'] || '';
@@ -714,12 +759,13 @@ export async function scrapeSource(source) {
     visitedUrls.add(source.url);
     // Some sites (e.g. Rheinmetall) block domcontentloaded indefinitely via consent scripts.
     // Fall back to 'commit' (first bytes received) so the goto never hangs.
+    let firstResponse = null;
     try {
-      await page.goto(source.url, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
+      firstResponse = await page.goto(source.url, { waitUntil: 'domcontentloaded', timeout: gotoTimeout });
     } catch (e) {
       if (e.message.includes('Timeout')) {
         log(`  domcontentloaded timed out — retrying with commit`);
-        await page.goto(source.url, { waitUntil: 'commit', timeout: Math.min(15000, gotoTimeout) });
+        firstResponse = await page.goto(source.url, { waitUntil: 'commit', timeout: Math.min(15000, gotoTimeout) });
         await page.waitForTimeout(4000); // give JS time to render content
       } else {
         throw e;
@@ -733,6 +779,21 @@ export async function scrapeSource(source) {
     if (source.extraWait) await page.waitForTimeout(source.extraWait);
 
     const { jobs: firstPageJobs, paginationUrls } = await extractJobsAndPagination(page, source);
+
+    // A bot wall (Akamai "Access Denied", Cloudflare challenge, HTTP 403/429)
+    // is not "this employer has no jobs": report it as blocked so the run
+    // overview says so and expiry is skipped (Heidenhain).
+    if (firstPageJobs.length === 0 && generalApiJobs.size === 0 && apiJobsMap.size === 0) {
+      const wall = blockPageReason({
+        status: firstResponse?.status?.() ?? null,
+        title: await page.title().catch(() => ''),
+        text: await page.evaluate(() => document.body?.innerText || '').catch(() => ''),
+      });
+      if (wall) {
+        log(`  BLOCKIERT: ${wall}`);
+        return { jobs: [], duplicates: 0, siteTotal: null, blocked: true, error: wall };
+      }
+    }
     // apiOnly sources (e.g. Bosch) carry job data only in their JSON API; their DOM links use
     // different URLs than the API, so adding both would double-count. Skip DOM, trust the API.
     if (!source.apiOnly) addJobs(firstPageJobs);
@@ -833,7 +894,8 @@ export async function scrapeSource(source) {
     }
 
     // Read the total job count shown on the website (e.g. "67 Ergebnisse") for verification.
-    siteTotal = (await extractTotalCount(page)) ??
+    // An intercepted search API's own count is exact; page text can be misread.
+    siteTotal = (apiTotalCount > 0 ? apiTotalCount : null) ?? (await extractTotalCount(page)) ??
       (apiPaginationMeta ? (apiPaginationMeta.totalJobs || null) : null);
 
     log(`  Page 1: ${firstPageJobs.length} DOM job(s) found, ${paginationUrls.length} pagination link(s) detected${siteTotal ? `, ${siteTotal} announced on site` : ''}`);
@@ -941,12 +1003,20 @@ export async function scrapeSource(source) {
             anyStrategyWorked = true;
             await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
             await page.waitForTimeout(800);
-            const { jobs: visible } = await extractJobsAndPagination(page, source);
-            let added = source.apiOnly ? 0 : addJobs(visible, false);
-            // Also merge jobs from API responses fired by the click (e.g. Bosch /api/filter/query?page=N).
-            // Re-reading the cumulative maps is cheap — addJobs dedupes, so only genuinely new postings count.
-            if (generalApiJobs.size > 0) added += addJobs([...generalApiJobs.values()], false, true);
-            if (apiJobsMap.size > 0)     added += addJobs([...apiJobsMap.values()], false, true);
+            const harvest = async () => {
+              const { jobs: visible } = await extractJobsAndPagination(page, source);
+              let n = source.apiOnly ? 0 : addJobs(visible, false);
+              // Also merge jobs from API responses fired by the click (e.g. Bosch /api/filter/query?page=N).
+              // Re-reading the cumulative maps is cheap — addJobs dedupes, so only genuinely new postings count.
+              if (generalApiJobs.size > 0) n += addJobs([...generalApiJobs.values()], false, true);
+              if (apiJobsMap.size > 0)     n += addJobs([...apiJobsMap.values()], false, true);
+              return n;
+            };
+            let added = await harvest();
+            // The click can fire before the request does, so networkidle settles at
+            // once and the batch lands later (Karl Storz stopped at 45 of 58).
+            // Look once more before counting the click as empty.
+            if (added === 0) { await page.waitForTimeout(2500); added = await harvest(); }
             log(`  Load-more ${action}: +${added} new (${allJobs.length} total)`);
             guard.page(added, null);
             lastStepFailed = false;
