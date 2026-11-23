@@ -233,7 +233,7 @@
     },
     {
       "name": "Kärcher",
-      "url": "https://careers.kaercher.com/?locale=de_DE",
+      "url": "https://careers.kaercher.com/search/?q=&locale=de_DE&optionsFacetsDD_country=DE",
       "type": "careers-page"
     },
     {
@@ -259,12 +259,12 @@
     },
     {
       "name": "Karl Storz",
-      "url": "https://career.karlstorz.com/",
+      "url": "https://career.karlstorz.com/search/?q=&locale=de_DE",
       "type": "careers-page"
     },
     {
       "name": "Richard Wolf",
-      "url": "https://jobs.richard-wolf.com/RW",
+      "url": "https://jobs.richard-wolf.com/RW/search/?q=&locale=de_DE",
       "type": "careers-page"
     },
     {
@@ -399,7 +399,7 @@
     },
     {
       "name": "Bausch+Ströbel",
-      "url": "https://karriere.bausch-stroebel.com/de/stellenangebote/fach-fuehrungskraefte",
+      "url": "https://www.bausch-stroebel.com/de/karriere/ihre-bewerbung/unsere-jobs",
       "type": "careers-page"
     },
     {
