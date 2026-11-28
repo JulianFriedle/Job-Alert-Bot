@@ -44,7 +44,7 @@ import {
 } from './credentials.js';
 import { sessionPath, getAuthenticatedContext } from './platform-login.js';
 import { APP_ROOT, DATA_HOME, DATA_DIR, ENV_FILE, IS_DESKTOP } from './paths.js';
-import { launchPlatformBrowser } from './scrapers/browser.js';
+import { launchPlatformBrowser, isApplyDryRun } from './scrapers/browser.js';
 import { parseQuestions, applyAnswer, unansweredRequired } from './questions.js';
 import {
   createApplication, getApplications, getApplicationById, getApplicationEvents,
@@ -1193,7 +1193,7 @@ const server = http.createServer(async (req, res) => {
       if (method === 'GET' && m) {
         const app = getApplicationById(decodeURIComponent(m[1]));
         if (!app || app.client_id !== clientId) return sendJson(res, 404, { error: 'not found' });
-        return sendJson(res, 200, { application: app, events: getApplicationEvents(app.id), job: getJobById(clientId, app.job_id) });
+        return sendJson(res, 200, { application: app, events: getApplicationEvents(app.id), job: getJobById(clientId, app.job_id), dryRun: isApplyDryRun() });
       }
 
       // PUT /api/applications/:id { cover_letter?, answers? } — edit before approval

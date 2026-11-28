@@ -32,6 +32,12 @@ export function isTruthy(v) {
   return ['true', '1', 'on', 'yes'].includes(String(v || '').trim().toLowerCase());
 }
 
+// APPLY_DRY_RUN is ON whenever unset: forms are filled, never submitted.
+// The one definition the worker, the GUI and Telegram all read.
+export function isApplyDryRun(env = process.env) {
+  return env.APPLY_DRY_RUN == null ? true : isTruthy(env.APPLY_DRY_RUN);
+}
+
 // Context with a plausible desktop fingerprint. `storageState` (path or object)
 // restores a persisted login session when given.
 export async function newHardenedContext(browser, { storageState } = {}) {

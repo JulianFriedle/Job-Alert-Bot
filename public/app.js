@@ -377,12 +377,18 @@ function drawApplyPanel(job) {
     </details>` : '';
 
   const errHtml = app.error ? `<p class="ap-error">⚠ ${esc(app.error)}</p>` : '';
+  // A finished rehearsal (#21): say so, and name what the button does next.
+  const dryRun = apDetail?.dryRun !== false;
+  const dryHtml = app.dry_run_at && app.state === 'ready_for_review' ? `<p class="ap-dryrun">🧪 ${esc(
+    t(dryRun ? 'ap.dryRunDone' : 'ap.dryRunDoneLive').replace('{when}', new Date(app.dry_run_at).toLocaleString(locale())))}</p>` : '';
+  const approveLabel = !dryRun ? `✅ ${t('ap.approve')}`
+    : `🧪 ${t(app.dry_run_at ? 'ap.approveRehearseAgain' : 'ap.approveRehearse')}`;
 
   const buttons = [];
   if (editable && (questions.length || app.cover_letter))
     buttons.push(`<button class="btn" id="ap-save">${esc(t('btn.save'))}</button>`);
   if (app.state === 'ready_for_review')
-    buttons.push(`<button class="btn btn-primary" id="ap-approve">✅ ${esc(t('ap.approve'))}</button>`);
+    buttons.push(`<button class="btn btn-primary" id="ap-approve">${esc(approveLabel)}</button>`);
   if (app.state === 'failed' && (app.attempts || 0) < 3)
     buttons.push(`<button class="btn" id="ap-retry">↻ ${esc(t('ap.retry'))}</button>`);
   if (!['submitting', 'submitted'].includes(app.state))
@@ -393,7 +399,7 @@ function drawApplyPanel(job) {
       ${platformBadge(job)}<strong>${esc(t('ap.title'))}</strong>
       <span class="pill ap-${esc(app.state)}">${esc(apStateLabel(app.state))}</span>
     </div>
-    ${errHtml}${qHtml}${coverHtml}
+    ${errHtml}${dryHtml}${qHtml}${coverHtml}
     <div class="ap-actions">${buttons.join('')}</div>`;
 
   const collectAnswers = () => {
@@ -419,14 +425,14 @@ function drawApplyPanel(job) {
     catch (err) { toast(t('toast.error') + err.message); }
   });
   $('#ap-approve')?.addEventListener('click', async () => {
-    if (!confirm(t('ap.approveConfirm'))) return;
+    if (!confirm(t(dryRun ? 'ap.approveRehearseConfirm' : 'ap.approveConfirm'))) return;
     try {
       await saveEdits();
       const { application } = await api(`/api/applications/${encodeURIComponent(app.id)}/approve`, { method: 'POST' });
       apDetail.application = application;
       job.application_state = application.state;
       drawApplyPanel(job); renderJobs();
-      toast(t('ap.approvedToast'));
+      toast(t(dryRun ? 'ap.approvedRehearseToast' : 'ap.approvedToast'));
     } catch (err) { toast(t('toast.error') + err.message); }
   });
   $('#ap-retry')?.addEventListener('click', async () => {

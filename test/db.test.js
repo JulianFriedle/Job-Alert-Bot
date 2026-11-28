@@ -33,6 +33,28 @@ test('claimApplication: two claimants, exactly one wins', () => {
   assert.equal(db.getApplicationById(app.id).state, 'preparing');
 });
 
+test('a finished dry run is recorded and uses up the approval (#21)', () => {
+  const app = db.createApplication('default', 'job-dry', 'stepstone');
+  for (const [from, to] of [['queued', 'preparing'], ['preparing', 'ready_for_review'], ['ready_for_review', 'approved']])
+    assert.ok(db.claimApplication(app.id, from, to));
+  db.updateApplication(app.id, { approved_at: '2026-11-28T10:00:00.000Z' });
+  assert.ok(db.claimApplication(app.id, 'approved', 'submitting'));
+  // What the worker does after a successful rehearsal:
+  assert.ok(db.claimApplication(app.id, 'submitting', 'ready_for_review'));
+  const after = db.updateApplication(app.id, { dry_run_at: '2026-11-28T10:05:00.000Z', approved_at: null });
+  assert.equal(after.state, 'ready_for_review');
+  assert.equal(after.dry_run_at, '2026-11-28T10:05:00.000Z');
+  assert.equal(after.approved_at, null, 'the next send needs a fresh approval');
+  assert.equal(after.submitted_at, null);
+});
+
+test('isApplyDryRun: on whenever unset, off only when explicitly false', async () => {
+  const { isApplyDryRun } = await import('../src/scrapers/browser.js');
+  assert.equal(isApplyDryRun({}), true);
+  assert.equal(isApplyDryRun({ APPLY_DRY_RUN: 'true' }), true);
+  assert.equal(isApplyDryRun({ APPLY_DRY_RUN: 'false' }), false);
+});
+
 test('createApplication is idempotent per (client, job)', () => {
   const a = db.createApplication('default', 'job-dup', 'linkedin');
   const b = db.createApplication('default', 'job-dup', 'linkedin');

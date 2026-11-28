@@ -23,6 +23,7 @@ import {
   logApplicationEvent,
 } from './database.js';
 import { isTelegramEnabled } from './notifier.js';
+import { isApplyDryRun } from './scrapers/browser.js';
 import { parseQuestions, applyAnswer, unansweredRequired, hasChoices } from './questions.js';
 
 function log(msg) {
@@ -143,6 +144,14 @@ export async function sendReviewSummary(applicationId, botOverride = null) {
   if (app.cover_letter) {
     lines.push(``, `📝 *Anschreiben \\(Auszug\\):*`, esc(String(app.cover_letter).slice(0, 400) + '…'));
   }
+  // A finished rehearsal (#21) — and what the button does now.
+  const dryRun = isApplyDryRun();
+  if (app.dry_run_at) {
+    const when = new Date(app.dry_run_at).toLocaleString('de-DE');
+    lines.splice(1, 0, esc(dryRun
+      ? `🧪 Probelauf erfolgreich am ${when} — nichts gesendet.`
+      : `🧪 Probelauf erfolgreich am ${when}. APPLY_DRY_RUN ist aus — „Bewerben“ sendet wirklich.`));
+  }
 
   // Telegram rejects messages over 4096 chars — and the call site swallows the
   // error, so an oversized summary would silently cost the approval keyboard.
@@ -153,7 +162,7 @@ export async function sendReviewSummary(applicationId, botOverride = null) {
     parse_mode: 'MarkdownV2',
     reply_markup: {
       inline_keyboard: [[
-        { text: '✅ Bewerben', callback_data: `app:${app.id}:ok` },
+        { text: dryRun ? (app.dry_run_at ? '🧪 Erneut proben' : '🧪 Probelauf') : '✅ Bewerben', callback_data: `app:${app.id}:ok` },
         { text: '✏️ Ändern', callback_data: `app:${app.id}:edit` },
         { text: '❌ Verwerfen', callback_data: `app:${app.id}:no` },
       ]],
@@ -341,7 +350,9 @@ async function handleCallback(b, query) {
       updateApplication(app.id, { approved_at: new Date().toISOString() });
       logApplicationEvent(app.id, 'approved', 'via telegram');
       await b.answerCallbackQuery(query.id, { text: 'Freigegeben ✅' }).catch(() => {});
-      await b.sendMessage(chatId, esc('✅ Freigegeben — die Bewerbung wird in Kürze versendet.'), { parse_mode: 'MarkdownV2' });
+      await b.sendMessage(chatId, esc(isApplyDryRun()
+        ? '🧪 Freigegeben — der Probelauf startet in Kürze, gesendet wird nichts.'
+        : '✅ Freigegeben — die Bewerbung wird in Kürze versendet.'), { parse_mode: 'MarkdownV2' });
     } else {
       await b.answerCallbackQuery(query.id, { text: `Bereits erledigt (${getApplicationById(app.id)?.state ?? 'gelöscht'}).` }).catch(() => {});
     }

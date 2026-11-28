@@ -422,7 +422,7 @@ uses the plain text of that cover letter instead of generating a new one.
 Setup:
 1. `npm run generate-credentials-key` → put the key into `.env` as `CREDENTIALS_KEY` (or GUI → Einstellungen → Auto-Bewerbung).
 2. GUI → Profil → **Plattform-Zugänge**: enter the platform e-mail/password per client (stored AES-256-GCM-encrypted), optionally upload a CV (PDF), and enable *Auto-Bewerbung* for the client.
-3. Set `AUTO_APPLY_ENABLED=true`. Keep `APPLY_DRY_RUN=true` for the first runs — forms are filled and screenshotted (`data/apply-artifacts/`) but never submitted.
+3. Set `AUTO_APPLY_ENABLED=true`. Keep `APPLY_DRY_RUN=true` for the first runs — forms are filled and screenshotted (`data/apply-artifacts/`) but never submitted. A finished dry run is recorded on the application: it returns to *Bereit zur Freigabe* marked *„🧪 Probelauf erfolgreich am …“*, and the button (GUI and Telegram) reads *Erneut proben* while dry-run is on, *Bewerben* once `APPLY_DRY_RUN=false`. Each rehearsal and each real send needs its own approval.
 4. First login per platform may require 2FA — run once with `APPLY_HEADFUL=true` and complete it in the window; the session (`data/sessions/`) is then reused for weeks.
 
 **Telegram commands while an application is being prepared:**

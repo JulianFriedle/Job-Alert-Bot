@@ -4,7 +4,10 @@
 //   prepare: queued → preparing → (awaiting_answers | ready_for_review)
 //   submit:  approved → submitting → (submitted | failed)
 //   dry-run: approved → submitting → ready_for_review (form filled, NOT sent;
-//            re-approving runs another rehearsal until APPLY_DRY_RUN=false)
+//            dry_run_at records the rehearsal and approved_at is cleared —
+//            the approval was used up. GUI and Telegram show "Probelauf
+//            erfolgreich" and offer another rehearsal, or the real send once
+//            APPLY_DRY_RUN=false. Every send still needs a fresh approval.)
 //
 // Every state change goes through claimApplication (atomic compare-and-set),
 // so the GUI or Telegram acting on the same row at the same moment can never
@@ -26,7 +29,7 @@ import { renderDocumentHtml, toPlainText, documentFileName } from './markdown-do
 import { documentCss } from './application-docs.js';
 import { renderPdf } from './pdf.js';
 import { getAuthenticatedContext, LoginChallengeError, MissingCredentialsError, InvalidCredentialsError } from './platform-login.js';
-import { launchPlatformBrowser, isTruthy, jitter } from './scrapers/browser.js';
+import { launchPlatformBrowser, isTruthy, isApplyDryRun, jitter } from './scrapers/browser.js';
 import { parseQuestions, prefillFromLibrary, unansweredRequired, libraryRowsFromQuestions } from './questions.js';
 import { sendNextQuestion, sendReviewSummary, sendInfoToClient } from './telegram-bot.js';
 import * as stepstoneApplier from './appliers/stepstone.js';
@@ -51,7 +54,7 @@ function log(msg) {
 }
 
 const autoApplyEnabled = () => isTruthy(process.env.AUTO_APPLY_ENABLED);
-const dryRun = () => process.env.APPLY_DRY_RUN == null ? true : isTruthy(process.env.APPLY_DRY_RUN);
+const dryRun = () => isApplyDryRun();
 const cooldownMinutes = () => Number(process.env.APPLY_COOLDOWN_MINUTES) || 15;
 
 function effectiveDailyCap(client, platform) {
@@ -273,6 +276,7 @@ async function submitPass() {
 
     if (result.ok && result.dryRun) {
       claimApplication(app.id, 'submitting', 'ready_for_review');
+      updateApplication(app.id, { dry_run_at: new Date().toISOString(), approved_at: null, error: null });
       logApplicationEvent(app.id, 'dry_run_complete', 'Formular ausgefüllt, NICHT gesendet (APPLY_DRY_RUN)');
       await sendInfoToClient(client, `🧪 Probelauf abgeschlossen für "${job.title}" — nichts wurde gesendet. Zum echten Versand APPLY_DRY_RUN=false setzen.`).catch(() => {});
       log(`  Dry-Run fertig — Screenshot unter data/apply-artifacts/${app.id}/`);
