@@ -446,7 +446,10 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent);
   padding: 1px 7px; border-radius: 100px; margin-left: 4px;
 }
+/* The reason behind a problem (#41) — readable without hovering the pill. */
+.run-reason { font-size: .72rem; color: var(--muted); margin-top: 2px; white-space: normal; max-width: 46ch; overflow-wrap: anywhere; }
 .run-actions { text-align: right; white-space: nowrap; }
+.ap-dryrun { font-size: .82rem; color: var(--muted); margin: 0 0 10px; }
 .btn.btn-sm { padding: 3px 9px; font-size: .75rem; }
 .rp-hint { font-size: .82rem; color: var(--muted); margin: 0 0 14px; }
 .rp-field { margin-bottom: 12px; }

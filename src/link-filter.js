@@ -41,7 +41,7 @@ const NON_JOB_PATTERNS = [
 ];
 
 // A gender marker means a job title, whatever else the text looks like.
-const GENDER_MARKER = /\(\s*[mwdfx](\s*[\/|,*:]\s*(div|[mwdfx]))+\s*\)|\b(all genders?|alle geschlechter)\b|\(gn\)/;
+export const GENDER_MARKER = /\(\s*[mwdfx](\s*[\/|,*:]\s*(div|[mwdfx]))+\s*\)|\b(all genders?|alle geschlechter)\b|\(gn\)/;
 
 // Lowercase, collapse whitespace, drop surrounding quotes, arrows and trailing
 // punctuation ("Seite 2 ›", "»Impressum«", "ERGREIF DIE INITIATIVE!").

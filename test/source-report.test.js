@@ -24,6 +24,13 @@ test('classifySourceProblem: error > blocked > empty > fine', () => {
   assert.equal(classifySourceProblem({ found: 5 }), null);
 });
 
+test('classifySourceProblem: a bot wall is "blocked" even though it carries a reason', () => {
+  assert.equal(classifySourceProblem({ found: 0, blocked: true, challenge: true,
+    error: 'Zugriff verweigert (Bot-Schutz, HTTP 403)' }), 'blocked');
+  // A pagination failure (blocked, with a reason, no challenge) stays an error.
+  assert.equal(classifySourceProblem({ found: 21, blocked: true, error: 'Letzte Seite fehlgeschlagen' }), 'error');
+});
+
 test('sanitizeUrl keeps origin + path only', () => {
   assert.equal(sanitizeUrl('https://user:pw@jobs.example.com/de/karriere?q=pm&loc=münchen#top'),
     'https://jobs.example.com/de/karriere');

@@ -21,7 +21,7 @@ import { startTelegramBot } from './telegram-bot.js';
 import { isTruthy } from './scrapers/browser.js';
 import { isAborted, beginRun, endRun, exitRequested } from './run-control.js';
 import { LOGS_DIR } from './paths.js';
-import { classifySourceProblem } from './source-report.js';
+import { classifySourceProblem, problemLabel } from './source-report.js';
 import {
   normalizeTitle, createTitleFilter, createLocationFilter,
   NOT_ALLOWED_SUMMARY, WRONG_LOCATION_SUMMARY, MAX_REOPEN_PER_RUN,
@@ -40,7 +40,7 @@ function log(msg) {
   console.log(`[${new Date().toISOString()}] [scheduler] ${msg}`);
 }
 
-function printOverview(clientName, sources, sourceStats, relevantBySource, expiredCount = 0, thin = null) {
+function printOverview(clientName, sources, sourceStats, relevantBySource, expiredCount = 0, thin = null, problems = []) {
   const C1 = 28, C2 = 10, CW = 10, C3 = 9, C4 = 10, C5 = 11, C6 = 10, C7 = 10, C8 = 10;
   const WIDTH = C1 + C2 + CW + C3 + C4 + C5 + C6 + C7 + C8 + 2;
   const SEP  = '─'.repeat(WIDTH);
@@ -103,6 +103,14 @@ function printOverview(clientName, sources, sourceStats, relevantBySource, expir
   console.log(SEP);
   if (expiredCount > 0) {
     console.log(`  ❌ ${expiredCount} Job(s) nicht mehr ausgeschrieben — Benachrichtigung versendet`);
+    console.log(SEP);
+  }
+  // The reason per broken source, not just that it broke (#41).
+  if (problems.length > 0) {
+    console.log(`  ⚠ ${problems.length} Quelle(n) mit Problem:`);
+    for (const p of problems) {
+      console.log(`    • ${p.source}: ${problemLabel(p.problem)}${p.error ? ` — ${String(p.error).split('\n')[0].slice(0, 160)}` : ''}`);
+    }
     console.log(SEP);
   }
   if (thin?.total > 0) {
@@ -545,7 +553,17 @@ async function runClientPipeline(client) {
 
   // 10. Print overview + persist a snapshot for the GUI stats page
   const relevantBySource = getRelevantCountBySource(clientId);
-  printOverview(client.name, sources, sourceStats, relevantBySource, expiredCount, thin);
+  const problems = sources.map(source => ({
+    source: source.name,
+    problem: classifySourceProblem({
+      found: sourceStats[source.name]?.total || 0,
+      blocked: scrapeStats[source.name]?.blocked,
+      error: scrapeStats[source.name]?.error,
+      challenge: scrapeStats[source.name]?.challenge,
+    }),
+    error: scrapeStats[source.name]?.error ?? null,
+  })).filter(p => p.problem);
+  printOverview(client.name, sources, sourceStats, relevantBySource, expiredCount, thin, problems);
 
   try {
     const snapshotRows = sources.map(source => {
@@ -562,11 +580,7 @@ async function runClientPipeline(client) {
         notified:      s.notified || 0,
         // Why this source looks broken this run (null = fine) — the Run tab
         // offers a GitHub problem report for every row that has one.
-        problem:       classifySourceProblem({
-          found: s.total || 0,
-          blocked: scrapeStats[source.name]?.blocked,
-          error: scrapeStats[source.name]?.error,
-        }),
+        problem:       problems.find(p => p.source === source.name)?.problem ?? null,
         error:         scrapeStats[source.name]?.error ?? null,
       };
     });

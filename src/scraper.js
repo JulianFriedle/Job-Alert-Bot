@@ -13,6 +13,7 @@ import { isNonJobLink } from './link-filter.js';
 import { cleanJobTitle } from './title-cleanup.js';
 import { createPaginationGuard } from './pagination-guard.js';
 import { createCrossChannelDedup } from './job-identity.js';
+import { learnJobUrlPattern } from './job-url-pattern.js';
 import { isPersonioUrl, fetchPersonioJobs } from './scrapers/personio.js';
 import { CONFIG_DIR } from './paths.js';
 
@@ -778,7 +779,23 @@ export async function scrapeSource(source) {
     await waitForFirstJob(page);
     if (source.extraWait) await page.waitForTimeout(source.extraWait);
 
-    const { jobs: firstPageJobs, paginationUrls } = await extractJobsAndPagination(page, source);
+    let { jobs: firstPageJobs, paginationUrls } = await extractJobsAndPagination(page, source);
+
+    // No selector matched, but the page may still list postings under a path
+    // we don't know (Stellenwerk without its jobUrlPattern): learn the pattern
+    // from links titled like jobs ("… (m/w/d)") and read the page again with it.
+    // The learned pattern also applies to every further page of this source.
+    if (firstPageJobs.length === 0 && !source.jobUrlPattern && !source.apiOnly) {
+      const anchors = await page.evaluate(() => [...document.querySelectorAll('a[href]')]
+        .map(a => ({ href: a.href, text: (a.innerText || a.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300) })))
+        .catch(() => []);
+      const learned = learnJobUrlPattern(anchors);
+      if (learned) {
+        source = { ...source, jobUrlPattern: learned };
+        ({ jobs: firstPageJobs, paginationUrls } = await extractJobsAndPagination(page, source));
+        log(`  Stellen-URL-Muster aus der Seite abgeleitet: ${learned} → ${firstPageJobs.length} Stelle(n) auf Seite 1`);
+      }
+    }
 
     // A bot wall (Akamai "Access Denied", Cloudflare challenge, HTTP 403/429)
     // is not "this employer has no jobs": report it as blocked so the run
@@ -791,7 +808,7 @@ export async function scrapeSource(source) {
       });
       if (wall) {
         log(`  BLOCKIERT: ${wall}`);
-        return { jobs: [], duplicates: 0, siteTotal: null, blocked: true, error: wall };
+        return { jobs: [], duplicates: 0, siteTotal: null, blocked: true, challenge: true, error: wall };
       }
     }
     // apiOnly sources (e.g. Bosch) carry job data only in their JSON API; their DOM links use
@@ -1412,7 +1429,7 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
     try {
       // Platform sources (linkedin/stepstone/indeed) have dedicated scrapers;
       // everything else goes through the generic career-page heuristics.
-      const { jobs, duplicates, siteTotal, blocked, error: reported } = isPlatformSource(source)
+      const { jobs, duplicates, siteTotal, blocked, challenge, error: reported } = isPlatformSource(source)
         ? await scrapePlatform(source)
         : await scrapeCareerSource(source);
       allJobs.push(...jobs);
@@ -1423,6 +1440,9 @@ export async function scrapeAll(sources, concurrency = Number(process.env.SCRAPE
         // that it legitimately has no jobs.
         failed: Boolean(blocked) || Boolean(stats[source.name]?.failed),
         blocked: Boolean(blocked) || Boolean(stats[source.name]?.blocked),
+        // The page itself was a bot wall (not a pagination failure) — shown as
+        // "blockiert", with the reason, in the run overview.
+        challenge: Boolean(challenge) || Boolean(stats[source.name]?.challenge),
         // A scraper may explain an empty or partial result itself (Indeed: why
         // the search page had no cards); shown in the run overview.
         error: reported ?? stats[source.name]?.error ?? null,

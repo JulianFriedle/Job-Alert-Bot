@@ -364,6 +364,11 @@ function migrateSchema(db) {
   if (!runStatCols.includes('problem')) db.exec('ALTER TABLE run_stats ADD COLUMN problem TEXT');
   if (!runStatCols.includes('error'))   db.exec('ALTER TABLE run_stats ADD COLUMN error   TEXT');
 
+  // When the last dry run of an application succeeded (#21) — without it a
+  // finished rehearsal looked exactly like an application never tried.
+  const appCols = db.prepare("PRAGMA table_info(applications)").all().map(r => r.name);
+  if (!appCols.includes('dry_run_at')) db.exec('ALTER TABLE applications ADD COLUMN dry_run_at TEXT');
+
   const runCols = db.prepare("PRAGMA table_info(runs)").all().map(r => r.name);
   if (!runCols.includes('client_id')) {
     db.exec(`ALTER TABLE runs ADD COLUMN client_id TEXT DEFAULT '${DEFAULT_CLIENT_ID}'`);
@@ -935,7 +940,7 @@ export function getTotals(clientId) {
 // compare-and-set guard.
 const APPLICATION_FIELDS = [
   'cover_letter', 'questions_json', 'error', 'attempts',
-  'prepared_at', 'approved_at', 'submitted_at',
+  'prepared_at', 'approved_at', 'submitted_at', 'dry_run_at',
 ];
 
 export function createApplication(clientId, jobId, platform) {
