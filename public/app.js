@@ -1724,7 +1724,7 @@ function renderRecentRuns(runs) {
         <tbody>${run.rows.map(r => `<tr class="${r.problem ? 'run-row-problem' : ''}">
           <td class="t-name">${esc(r.source)}${r.problem
             ? ` <span class="run-problem" title="${esc(r.error || '')}">${esc(t(`run.problem.${r.problem}`))}</span>`
-            : ''}</td>
+            : ''}${r.problem && r.error ? `<div class="run-reason">${esc(r.error)}</div>` : ''}</td>
           <td>${r.found}</td><td>${r.analyzed}</td>
           <td class="${r.newRelevant ? 'hl' : ''}">${r.newRelevant}</td>
           <td class="strong">${r.totalRelevant}</td><td>${r.notified}</td>

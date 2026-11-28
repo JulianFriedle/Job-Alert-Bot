@@ -28,14 +28,21 @@ const PROBLEM_LABELS = {
   empty:   '0 Stellen gefunden',
 };
 
-// Why a source looks broken this run, or null when it's fine. An exception wins
-// over a block, a block over an empty result. Zero jobs always counts: a career
-// page with genuinely no openings is rare, a broken selector is not.
-export function classifySourceProblem({ found = 0, blocked = false, error = null } = {}) {
+// Why a source looks broken this run, or null when it's fine. A bot wall
+// (`challenge`: the page itself refused us, its reason in `error`) is a block;
+// otherwise an exception wins over a block, a block over an empty result. Zero
+// jobs always counts: a career page with genuinely no openings is rare, a
+// broken selector is not.
+export function classifySourceProblem({ found = 0, blocked = false, error = null, challenge = false } = {}) {
+  if (challenge) return 'blocked';
   if (error) return 'error';
   if (blocked) return 'blocked';
   if (!(Number(found) > 0)) return 'empty';
   return null;
+}
+
+export function problemLabel(problem) {
+  return PROBLEM_LABELS[problem] || problem;
 }
 
 export function issueRepo(env = process.env) {
